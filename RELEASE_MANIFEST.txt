@@ -1,0 +1,51 @@
+# RELEASE_MANIFEST.txt — Allowlist for ARIA release packaging
+#
+# Only files matching patterns below are included in the release tarball.
+# Lines starting with # are comments. Empty lines ignored.
+# Each line is a glob relative to the project root.
+# ! at start = negation (exclude even if matched by a later pattern)
+#
+# When adding new files: add a pattern here BEFORE committing.
+#   Never:  tar czf . from workdir
+#   Always: build_release.py -> staging copy -> RELEASE_MANIFEST.txt filter -> tar
+#
+# Deny-list (applied automatically by build_release.py):
+#   .env, .env.*, *.key, *.pem, *.cert, __pycache__, .venv, node_modules, .git
+
+# ── Core configs (root level) ──
+dod_verify.py
+dod_verify.json
+RELEASE_MANIFEST.txt
+RELEASE_CHECKLIST.md
+README.md
+build_release.py
+start_aria.bat
+
+# ── Backend ──
+backend/*.py
+backend/**/*.py
+backend/*.toml
+backend/*.txt
+backend/**/*.toml
+backend/aria/tools/handlers/**/*.py
+backend/aria/prompts/*.md
+backend/aria/integrations/mcp_server/*.py
+backend/**/*.txt
+backend/scripts/*.py
+backend/tests/**/*.py
+backend/tests/fixtures/*
+backend/data/vault/**/*.md
+backend/.env.example
+
+# ── Desktop (frontend) ──
+desktop/*.json
+desktop/tsconfig*.json
+desktop/vite.config.*
+desktop/*.html
+desktop/public/**/*
+desktop/src/*
+desktop/src/**/*
+desktop/src-tauri/Cargo.toml
+desktop/src-tauri/tauri.conf.json
+desktop/src-tauri/src/**/*.rs
+desktop/src-tauri/icons/**/*

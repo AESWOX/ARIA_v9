@@ -1,0 +1,50 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Frontend
+node_modules/
+desktop/node_modules/
+desktop/node_modules/.cache/
+desktop/dist/
+
+# Build artifacts
+build/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.spec
+# Nested copies (patterns with a slash are anchored to repo root — cover the
+# real paths under desktop/ and backend/ explicitly, otherwise git add -A
+# walks gigabytes of Rust cache / PyInstaller output).
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+backend/dist/
+backend/build/
+backend/.pytest_cache/
+
+# Bundled backend binaries should stay in git
+!src-tauri/bin/
+!src-tauri/bin/*.exe
+
+# Databases — must never be in version control
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+data/
+
+# Logs
+logs/
+*.log
+
+# Zips — intermediate artifacts
+*.zip
+
+# Secrets — must never be in version control
+.env
+.env.*
+*.env
+!*.env.example

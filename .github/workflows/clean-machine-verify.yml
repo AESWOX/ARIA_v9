@@ -1,0 +1,266 @@
+# clean-machine-verify.yml
+#
+# Verifies the ARIA desktop build on a FRESH GitHub-hosted windows-latest
+# runner — a machine that has never seen the dev environment (no WebView2
+# custom state, no registry leftovers, no dev-only processes). This closes the
+# "works on the author's machine" gap from the same-origin SPA refactor report:
+# the same 8 DoD checks that pass locally must pass here, unattended.
+#
+# Triggers:
+#   - workflow_dispatch  (manual "Run workflow" button — controlled verification)
+#   - release:published  (automatic check on every new release tag)
+#
+# If any check diverges from local behaviour, DO NOT patch it as a "CI quirk" —
+# it means a real environment difference (e.g. missing WebView2 runtime) and
+# should be fixed as such.
+
+name: clean-machine-verify
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  verify:
+    name: Verify on fresh windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      # ── 3.1 Checkout + toolchain ──────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      # WebView2 runtime — present on github-hosted windows-latest, but make it
+      # explicit: if the image ever drops it, the evergreen bootstrapper
+      # installs it instead of failing the SPA load with a blank window.
+      - name: Ensure WebView2 Runtime
+        shell: pwsh
+        run: |
+          $reg = Get-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" -ErrorAction SilentlyContinue
+          if ($reg -and $reg.pv) {
+            Write-Output "WebView2 Runtime already present: $($reg.pv)"
+          } else {
+            Write-Output "WebView2 Runtime missing — installing Evergreen bootstrapper"
+            $boot = Join-Path $env:TEMP "webview2.exe"
+            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $boot
+            $p = Start-Process -FilePath $boot -ArgumentList "/silent /install" -Wait -PassThru
+            Write-Output "bootstrapper exit: $($p.ExitCode)"
+            if ($p.ExitCode -ne 0) { throw "WebView2 install failed: $($p.ExitCode)" }
+          }
+
+      # ── Build (full in-CI build; no release artifact exists yet) ──────────
+      - name: Install frontend deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build frontend (vite)
+        working-directory: desktop
+        run: npm run build
+
+      - name: Install backend deps + PyInstaller
+        working-directory: backend
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build backend sidecar (PyInstaller onefile)
+        working-directory: backend
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean backend.spec
+          Test-Path dist/backend.exe | Out-Null
+
+      - name: Stage sidecar for Tauri (externalBin name)
+        shell: pwsh
+        run: |
+          Copy-Item backend/dist/backend.exe desktop/src-tauri/bin/backend-x86_64-pc-windows-msvc.exe -Force
+          Get-Item desktop/src-tauri/bin/backend-x86_64-pc-windows-msvc.exe | Select-Object Name, Length
+
+      - name: Build Tauri MSI
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          npx tauri build --bundles msi
+          Get-ChildItem src-tauri/target/release/bundle/msi/*.msi | Select-Object FullName, Length
+
+      # ── 3.2 Silent per-user install (no admin rights) ─────────────────────
+      - name: Install MSI (per-user, no elevation)
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem "desktop/src-tauri/target/release/bundle/msi/*.msi" | Select-Object -First 1).FullName
+          Write-Output "Installing: $msi"
+          $log = Join-Path $env:RUNNER_TEMP "install.log"
+          $p = Start-Process msiexec -ArgumentList "/i `"$msi`" /qn ALLUSERS=2 MSIINSTALLPERUSER=1 /L*v `"$log`"" -Wait -PassThru
+          Write-Output "msiexec exit: $($p.ExitCode)"
+          Write-Output "--- install.log (tail) ---"
+          if (Test-Path $log) { Get-Content $log -Tail 40 }
+          if ($p.ExitCode -ne 0) { throw "MSI install failed: $($p.ExitCode)" }
+
+      # ── 3.3 Locate install dir + launch exe, wait for backend ─────────────
+      - name: Locate install dir and launch app
+        shell: pwsh
+        run: |
+          # Resolve real install location (registry first, then LOCALAPPDATA scan)
+          $installDir = $null
+          $keys = @(
+            "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          foreach ($k in $keys) {
+            Get-ItemProperty $k -ErrorAction SilentlyContinue |
+              Where-Object { $_.DisplayName -eq "Local Agent Desktop" } |
+              ForEach-Object {
+                if ($_.InstallLocation -and (Test-Path $_.InstallLocation)) {
+                  $installDir = $_.InstallLocation
+                  Write-Output "InstallLocation from registry: $installDir"
+                }
+              }
+          }
+          if (-not $installDir) {
+            $exe = Get-ChildItem $env:LOCALAPPDATA -Recurse -Filter "local-agent-ui.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($exe) { $installDir = $exe.DirectoryName; Write-Output "Install dir from scan: $installDir" }
+          }
+          if (-not $installDir) { throw "Could not locate installed local-agent-ui.exe" }
+
+          # Launch the app; its stderr carries the sidecar "started on port N" line
+          $stdoutLog = Join-Path $env:RUNNER_TEMP "backend-stdout.log"
+          $stderrLog = Join-Path $env:RUNNER_TEMP "backend-stderr.log"
+          $appExe = Join-Path $installDir "local-agent-ui.exe"
+          $proc = Start-Process -FilePath $appExe -WorkingDirectory $installDir `
+            -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
+          Write-Output "app pid: $($proc.Id)  exe: $appExe"
+
+          # Wait for the sidecar port announcement (poll the log, not blind retries)
+          $port = $null
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Get-Date) -lt $deadline) {
+            if ($proc.HasExited) { throw "app exited early: $($proc.ExitCode)" }
+            $stderr = ""
+            if (Test-Path $stderrLog) { $stderr = Get-Content $stderrLog -Raw -ErrorAction SilentlyContinue }
+            if ($stderr -match "started on port (\d+)") { $port = [int]$Matches[1]; break }
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not $port) {
+            Write-Output "--- backend-stderr.log ---"; if (Test-Path $stderrLog) { Get-Content $stderrLog }
+            Write-Output "--- backend-stdout.log ---"; if (Test-Path $stdoutLog) { Get-Content $stdoutLog -Tail 40 }
+            throw "sidecar port not announced within 60s"
+          }
+          Write-Output "sidecar port: $port"
+
+          # Health poll (with logging, mirrors local ConnectionRefused diagnosis)
+          $base = "http://127.0.0.1:$port"
+          $healthy = $false
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $r = Invoke-WebRequest -Uri "$base/api/status" -UseBasicParsing -TimeoutSec 3
+              if ($r.StatusCode -eq 200) { $healthy = $true; break }
+            } catch { Write-Output "health poll: $($_.Exception.Message)" }
+            Start-Sleep -Milliseconds 1000
+          }
+          if (-not $healthy) { throw "backend not healthy at $base/api/status" }
+          Write-Output "backend healthy at $base"
+
+          # Stash port for later steps
+          Add-Content -Path $env:GITHUB_ENV -Value "ARIA_PORT=$port"
+          Add-Content -Path $env:GITHUB_ENV -Value "ARIA_BASE_URL=$base"
+          Write-Output "ARIA_PORT=$port"
+
+      # ── 3.4 The 8 DoD checks, one visible step each ───────────────────────
+      - name: "DoD 1: GET / serves SPA with runtime-token meta"
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 1 -BaseUrl "$env:ARIA_BASE_URL"
+
+      - name: "DoD 2: SPA fallback route returns index.html"
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 2 -BaseUrl "$env:ARIA_BASE_URL"
+
+      - name: "DoD 3: hashed JS asset serves 200"
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 3 -BaseUrl "$env:ARIA_BASE_URL"
+
+      - name: "DoD 4: public /api/status (no token) -> 200"
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 4 -BaseUrl "$env:ARIA_BASE_URL"
+
+      - name: "DoD 5: /api/model/info -> 401 without token, 200 with"
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 5 -BaseUrl "$env:ARIA_BASE_URL" -Token "$env:ARIA_RUNTIME_TOKEN"
+
+      - name: "DoD 6: /api/nonexistent -> 404 JSON"
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 6 -BaseUrl "$env:ARIA_BASE_URL"
+
+      - name: "DoD 7: OPTIONS rejected, no CORS headers"
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 7 -BaseUrl "$env:ARIA_BASE_URL"
+
+      # ── 3.5 Zero OPTIONS on real front-end traffic (headless Chromium) ───
+      - name: Setup Playwright (Chromium)
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          npm i --no-save playwright@1.45.0
+          npx playwright install chromium
+
+      - name: "DoD 0-OPTIONS: no preflight in real page traffic"
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          node scripts/check-zero-options.mjs "$env:ARIA_BASE_URL" 8000
+
+      # ── 3.6 DoD 8 LAST: /system/shutdown kills the backend ────────────────
+      # Must stay the final verification step — it terminates the sidecar.
+      - name: "DoD 8: POST /system/shutdown -> 200, backend exits"
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 8 -BaseUrl "$env:ARIA_BASE_URL" -Token "$env:ARIA_RUNTIME_TOKEN"
+
+      # ── 3.7 Collect logs on failure ────────────────────────────────────────
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-logs
+          path: |
+            ${{ runner.temp }}/install.log
+            ${{ runner.temp }}/backend-stdout.log
+            ${{ runner.temp }}/backend-stderr.log
+          if-no-files-found: warn
+
+      # ── cleanup: stop app + uninstall (habit for a future self-hosted move) ─
+      - name: Stop app and uninstall
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process local-agent-ui, backend -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*","HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
+            Where-Object { $_.GetValue("DisplayName") -eq "Local Agent Desktop" } |
+            ForEach-Object {
+              $code = $_.PSChildName
+              Write-Output "uninstalling product: $code"
+              $p = Start-Process msiexec -ArgumentList "/x $code /qn /norestart" -Wait -PassThru
+              Write-Output "uninstall exit: $($p.ExitCode)"
+            }

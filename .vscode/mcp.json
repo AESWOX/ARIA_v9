@@ -1,0 +1,12 @@
+{
+    "servers": {
+        "aria": {
+            "type": "stdio",
+            "command": "python",
+            "args": [
+                "backend/aria/integrations/mcp_server/server.py"
+            ],
+            "cwd": "${workspaceFolder}"
+        }
+    }
+}
