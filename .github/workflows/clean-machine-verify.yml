@@ -117,6 +117,16 @@ jobs:
           if (Test-Path $log) { Get-Content $log -Tail 40 }
           if ($p.ExitCode -ne 0) { throw "MSI install failed: $($p.ExitCode)" }
 
+      # ── 3.4a Playwright BEFORE launch (0-OPTIONS check runs inside the
+      # launch step below; the runner kills child process trees when a step
+      # ends, so all DoD checks must execute while the backend is alive).
+      - name: Setup Playwright (Chromium)
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          npm i --no-save playwright@1.45.0
+          npx playwright install chromium
+
       # ── 3.3 Locate install dir + launch exe, wait for backend ─────────────
       - name: Locate install dir and launch app
         shell: pwsh
@@ -253,59 +263,46 @@ jobs:
           }
           Write-Output "backend survived 10s probe"
 
-          # Stash port for later steps
+          # Stash port for later steps (failure-logs upload still references env)
           Add-Content -Path $env:GITHUB_ENV -Value "ARIA_PORT=$port"
           Add-Content -Path $env:GITHUB_ENV -Value "ARIA_BASE_URL=$base"
           Write-Output "ARIA_PORT=$port"
 
-      # ── 3.4 The 8 DoD checks, one visible step each ───────────────────────
-      - name: "DoD 1: GET / serves SPA with runtime-token meta"
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 1 -BaseUrl "$env:ARIA_BASE_URL"
+          # ── All DoD checks run HERE, in the SAME step as the launch. The
+          # GitHub Windows runner tears down each step's child process tree
+          # when the step ends: reproduced across runs 2/3/4/6 — backend
+          # healthy inside the step (even past a 10s probe), connection
+          # refused seconds later in a separate step, backend-stderr.log ends
+          # without any traceback (external kill, not a crash). File redirects
+          # fixed the EPIPE variant; the teardown kill needs checks to run
+          # while this step is still alive. DoD 8 (shutdown) stays LAST.
+          # ── DoD 1-7 (no token needed yet; token extracted when reaching 5)
+          foreach ($chk in 1..7) {
+            Write-Output "=== DoD $chk ==="
+            if ($chk -eq 5) {
+              if (-not $token) {
+                $idx = Invoke-WebRequest -Uri "$base/" -UseBasicParsing -TimeoutSec 10
+                if ($idx.Content -match 'content="([^"]+)"') { $token = $Matches[1] }
+                else { throw "could not extract runtime-token from index.html" }
+                Write-Output "runtime token extracted: $($token.Substring(0,8))..."
+              }
+              powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check $chk -BaseUrl "$base" -Token "$token"
+            } else {
+              powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check $chk -BaseUrl "$base"
+            }
+            if ($LASTEXITCODE -ne 0) { throw "DoD $chk failed (exit $LASTEXITCODE)" }
+          }
 
-      - name: "DoD 2: SPA fallback route returns index.html"
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 2 -BaseUrl "$env:ARIA_BASE_URL"
+          # ── 0-OPTIONS: real front-end traffic, headless Chromium ──────────
+          Write-Output "=== DoD 0-OPTIONS ==="
+          node desktop/scripts/check-zero-options.mjs "$base" 8000
+          if ($LASTEXITCODE -ne 0) { throw "DoD 0-OPTIONS failed (exit $LASTEXITCODE)" }
 
-      - name: "DoD 3: hashed JS asset serves 200"
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 3 -BaseUrl "$env:ARIA_BASE_URL"
-
-      - name: "DoD 4: public /api/status (no token) -> 200"
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 4 -BaseUrl "$env:ARIA_BASE_URL"
-
-      - name: "DoD 5: /api/model/info -> 401 without token, 200 with"
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 5 -BaseUrl "$env:ARIA_BASE_URL" -Token "$env:ARIA_RUNTIME_TOKEN"
-
-      - name: "DoD 6: /api/nonexistent -> 404 JSON"
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 6 -BaseUrl "$env:ARIA_BASE_URL"
-
-      - name: "DoD 7: OPTIONS rejected, no CORS headers"
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 7 -BaseUrl "$env:ARIA_BASE_URL"
-
-      # ── 3.5 Zero OPTIONS on real front-end traffic (headless Chromium) ───
-      - name: Setup Playwright (Chromium)
-        working-directory: desktop
-        shell: pwsh
-        run: |
-          npm i --no-save playwright@1.45.0
-          npx playwright install chromium
-
-      - name: "DoD 0-OPTIONS: no preflight in real page traffic"
-        working-directory: desktop
-        shell: pwsh
-        run: |
-          node scripts/check-zero-options.mjs "$env:ARIA_BASE_URL" 8000
-
-      # ── 3.6 DoD 8 LAST: /system/shutdown kills the backend ────────────────
-      # Must stay the final verification step — it terminates the sidecar.
-      - name: "DoD 8: POST /system/shutdown -> 200, backend exits"
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 8 -BaseUrl "$env:ARIA_BASE_URL" -Token "$env:ARIA_RUNTIME_TOKEN"
+          # ── DoD 8 LAST: /system/shutdown kills the backend ────────────────
+          Write-Output "=== DoD 8 (LAST) ==="
+          powershell -ExecutionPolicy Bypass -File .github/scripts/verify-step.ps1 -Check 8 -BaseUrl "$base" -Token "$token"
+          if ($LASTEXITCODE -ne 0) { throw "DoD 8 failed (exit $LASTEXITCODE)" }
+          Write-Output "ALL CHECKS GREEN (8/8 DoD + 0-OPTIONS)"
 
       # ── 3.7 Collect logs on failure ────────────────────────────────────────
       - name: Upload failure logs
