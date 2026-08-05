@@ -155,11 +155,9 @@ jobs:
           if (-not (Test-Path $backendExe)) { throw "backend.exe not found in $installDir" }
 
           # Exclude the install dir from Windows Defender real-time scanning.
-          # Observed twice on a clean runner: the unsigned PyInstaller onefile
-          # exe starts fine (uvicorn announces, health poll 200), then gets
-          # killed ~6s later with NO traceback in backend-stderr.log — classic
-          # Defender flag on unpacked onefile payloads. Local runs pass because
-          # the dev machine already trusts the build.
+          # (Kept as cheap insurance; run 4 proved Defender was NOT the cause
+          # — the real culprit is the Start-Process stdout/stderr PIPE, see
+          # the launch block below.)
           Add-MpPreference -ExclusionPath $installDir -ErrorAction SilentlyContinue
           Add-MpPreference -ExclusionProcess "backend.exe" -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
@@ -175,9 +173,19 @@ jobs:
           $env:HTTP_PORT = $port.ToString()
           $env:LOCAL_AGENT_RUNTIME_TOKEN = $runtimeToken
           $env:LOCAL_AGENT_DISABLE_BOOTSTRAP_WRITE = "1"
-          $proc = Start-Process -FilePath $backendExe -WorkingDirectory $installDir `
-            -ArgumentList "--port", $port.ToString() `
-            -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
+
+          # CRITICAL: do NOT use Start-Process -RedirectStandardOutput/-Error.
+          # That creates a pipe owned by pwsh; when this step ends, pwsh dies,
+          # the pipe closes, and the backend's next uvicorn access-log write
+          # hits a dead stdout -> EPIPE crash with NO traceback (stderr is
+          # also dead). Observed in every run: healthy poll inside the step,
+          # connection refused ~6s later in DoD 1. Local runs pass because the
+          # dev terminal stays alive. Launch via cmd.exe with FILE redirection
+          # so backend.exe owns its log files directly and survives teardown.
+          $launchCmd = "`"$backendExe`" --port $port > `"$stdoutLog`" 2> `"$stderrLog`""
+          $proc = Start-Process -FilePath "cmd.exe" `
+            -ArgumentList "/c", $launchCmd `
+            -WorkingDirectory $installDir -WindowStyle Hidden -PassThru
           Write-Output "backend pid: $($proc.Id)  exe: $backendExe  port: $port"
 
           # Wait for Uvicorn to announce itself (backend writes it to stderr)
@@ -210,6 +218,25 @@ jobs:
           }
           if (-not $healthy) { throw "backend not healthy at $base/api/status" }
           Write-Output "backend healthy at $base"
+
+          # Survivability probe: the pipe-kill class of bug kills the backend
+          # within ~6s of THIS step ending. Wait 10s here, then prove the
+          # process and endpoint are still alive BEFORE the DoD steps run.
+          Start-Sleep -Seconds 10
+          if ($proc.HasExited) {
+            Write-Output "--- backend-stderr.log ---"; if (Test-Path $stderrLog) { Get-Content $stderrLog }
+            Write-Output "--- backend-stdout.log ---"; if (Test-Path $stdoutLog) { Get-Content $stdoutLog -Tail 40 }
+            throw "backend exited during survivability probe (exit code $($proc.ExitCode))"
+          }
+          try {
+            $r = Invoke-WebRequest -Uri "$base/api/status" -UseBasicParsing -TimeoutSec 3
+            if ($r.StatusCode -ne 200) { throw "status $($r.StatusCode)" }
+          } catch {
+            Write-Output "--- backend-stderr.log ---"; if (Test-Path $stderrLog) { Get-Content $stderrLog }
+            Write-Output "--- backend-stdout.log ---"; if (Test-Path $stdoutLog) { Get-Content $stdoutLog -Tail 40 }
+            throw "backend unreachable after survivability probe: $($_.Exception.Message)"
+          }
+          Write-Output "backend survived 10s probe"
 
           # Stash port for later steps
           Add-Content -Path $env:GITHUB_ENV -Value "ARIA_PORT=$port"
