@@ -154,6 +154,16 @@ jobs:
           $backendExe = Join-Path $installDir "backend.exe"
           if (-not (Test-Path $backendExe)) { throw "backend.exe not found in $installDir" }
 
+          # Exclude the install dir from Windows Defender real-time scanning.
+          # Observed twice on a clean runner: the unsigned PyInstaller onefile
+          # exe starts fine (uvicorn announces, health poll 200), then gets
+          # killed ~6s later with NO traceback in backend-stderr.log — classic
+          # Defender flag on unpacked onefile payloads. Local runs pass because
+          # the dev machine already trusts the build.
+          Add-MpPreference -ExclusionPath $installDir -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess "backend.exe" -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+
           # Pick a free port (same approach as Rust find_free_port)
           $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
           $listener.Start()
