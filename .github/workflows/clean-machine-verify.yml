@@ -180,12 +180,27 @@ jobs:
           # hits a dead stdout -> EPIPE crash with NO traceback (stderr is
           # also dead). Observed in every run: healthy poll inside the step,
           # connection refused ~6s later in DoD 1. Local runs pass because the
-          # dev terminal stays alive. Launch via cmd.exe with FILE redirection
+          # dev terminal stays alive. Also do NOT inline the redirect into
+          # Start-Process -ArgumentList: PS 7.3+ quotes it and escapes inner
+          # quotes as \" which cmd.exe does not understand (backend exited
+          # early: 1 instantly). Launch via a .bat file with FILE redirection
           # so backend.exe owns its log files directly and survives teardown.
-          $launchCmd = "`"$backendExe`" --port $port > `"$stdoutLog`" 2> `"$stderrLog`""
-          $proc = Start-Process -FilePath "cmd.exe" `
-            -ArgumentList "/c", $launchCmd `
-            -WorkingDirectory $installDir -WindowStyle Hidden -PassThru
+          $launchBat = Join-Path $env:RUNNER_TEMP "launch-backend.bat"
+          "@echo off" | Out-File -FilePath $launchBat -Encoding ascii
+          "`"$backendExe`" --port $port > `"$stdoutLog`" 2> `"$stderrLog`"" |
+            Out-File -FilePath $launchBat -Append -Encoding ascii
+          # Use .NET ProcessStartInfo: Start-Process -ArgumentList in PS 7.3+
+          # re-quotes and escapes inner quotes (\" breaks cmd.exe). ArgumentList
+          # here has no spaces (RUNNER_TEMP = D:\a\_temp), so cmd gets clean
+          # args and executes the .bat, which in turn owns the FILE redirects.
+          $psi = [System.Diagnostics.ProcessStartInfo]::new()
+          $psi.FileName = "cmd.exe"
+          $psi.ArgumentList.Add("/c")
+          $psi.ArgumentList.Add($launchBat)
+          $psi.WorkingDirectory = $installDir
+          $psi.UseShellExecute = $false
+          $psi.CreateNoWindow = $true
+          $proc = [System.Diagnostics.Process]::Start($psi)
           Write-Output "backend pid: $($proc.Id)  exe: $backendExe  port: $port"
 
           # Wait for Uvicorn to announce itself (backend writes it to stderr)
