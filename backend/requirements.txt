@@ -1,0 +1,16 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+sqlalchemy==2.0.42
+pydantic-settings==2.10.1
+httpx==0.28.1
+redis==6.2.0
+python-multipart==0.0.20
+python-dotenv==1.2.2
+alembic==1.13.3
+
+# Optional, only needed if CODEX_ENABLED=true in .env. Not pinned here on
+# purpose -- it's a 120MB+ prebuilt binary download, not a real Python dep,
+# and forcing it on everyone who runs `pip install -r requirements.txt`
+# defeats the "cheap by default" point. Install by hand when you actually
+# want it:
+#   pip install openai-codex-cli-bin

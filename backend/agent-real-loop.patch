@@ -1,0 +1,629 @@
+diff --git a/app/config.py b/app/config.py
+index 77b1c47..2f674d4 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -79,7 +79,64 @@ class Settings(BaseSettings):
+     ollama_base_url: str = "http://localhost:11434/v1"
+     deepseek_base_url: str = "https://api.deepseek.com/v1"
+     deepseek_api_key: str = ""
++
++    # Legacy single-key fallback (used only if GEMINI_API_KEYS is empty).
+     gemini_api_key: str = ""
++    # Main rotation pool used for actual agent answers, e.g.:
++    # GEMINI_API_KEYS=key1,key2,key3,...,key9
++    gemini_api_keys: str = ""
++    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
++
++    groq_api_key: str = ""
++    # GROQ_API_KEYS=key1,key2,...,key10
++    groq_api_keys: str = ""
++    groq_base_url: str = "https://api.groq.com/openai/v1"
++
++    # --- Compression: separate key pool, separate rotation cursor from the
++    # main answer pool above. Does NOT share state with gemini_api_keys. ---
++    compression_enabled: bool = True
++    compression_gemini_api_keys: str = ""  # falls back to gemini_api_keys if empty
++    compression_model: str = "gemini-2.5-flash"
++    compression_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
++    compression_timeout_sec: int = 120
++    # message-count based trigger (token-based can replace this later):
++    # once history exceeds this many messages, compress everything except
++    # the first N and last N into a single summary message.
++    compression_hard_message_limit: int = 60
++    compression_protect_first_n: int = 3
++    compression_protect_last_n: int = 15
++    compression_target_ratio: float = 0.2
++
++    agent_sandbox_root: str = "./data/sandbox"
++
++    @field_validator("gemini_api_keys", "groq_api_keys", "compression_gemini_api_keys", mode="before")
++    @classmethod
++    def _normalize_key_list(cls, value: str | None) -> str:
++        return value or ""
++
++    def _parse_keys(self, raw: str) -> list[str]:
++        return [k.strip() for k in raw.split(",") if k.strip()]
++
++    @property
++    def gemini_api_keys_list(self) -> list[str]:
++        keys = self._parse_keys(self.gemini_api_keys)
++        if keys:
++            return keys
++        return self._parse_keys(self.gemini_api_key)
++
++    @property
++    def groq_api_keys_list(self) -> list[str]:
++        keys = self._parse_keys(self.groq_api_keys)
++        if keys:
++            return keys
++        return self._parse_keys(self.groq_api_key)
++
++    @property
++    def compression_gemini_api_keys_list(self) -> list[str]:
++        keys = self._parse_keys(self.compression_gemini_api_keys)
++        if keys:
++            return keys
++        return self.gemini_api_keys_list
+ 
+     # --- Codex exec bridge (cheap-path integration, see app/agents/codex_exec_bridge.py) ---
+     # Off by default: with this false, /tasks/{id}/start keeps using the
+diff --git a/app/core/loop.py b/app/core/loop.py
+index b56f130..1c62c4b 100644
+--- a/app/core/loop.py
++++ b/app/core/loop.py
+@@ -16,6 +16,7 @@ from app.config import get_settings
+ from app.core import approvals
+ from app.core.audit import run_audit
+ from app.core.events import event_bus
++from app.llm import compression
+ from app.core.roles import get_role
+ from app.db import models as m
+ from app.db import repository as repo
+@@ -92,7 +93,8 @@ async def run_task(task_id: uuid.UUID, router: ProviderRouter, sandbox_root: str
+                 logger.info("task %s paused awaiting_attention, stopping loop iteration", task_id)
+                 return  # loop будет продолжен вызовом resume_after_approval
+ 
+-            history = repo.list_messages(db, session.id)
++            await compression.maybe_compress(db, session)
++            history = repo.list_messages_for_prompt(db, session.id)
+             messages = _build_messages(role_prompt, history)
+ 
+         try:
+diff --git a/app/db/models.py b/app/db/models.py
+index 1a913cb..e911338 100644
+--- a/app/db/models.py
++++ b/app/db/models.py
+@@ -111,6 +111,12 @@ class Message(Base):
+     source_trust: Mapped[SourceTrust] = mapped_column(SAEnum(SourceTrust), default=SourceTrust.trusted)
+     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+     token_estimate: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    # Компрессия (app/llm/compression.py): вместо удаления/перезаписи строк
++    # (нарушает аудируемость истории) старые сообщения помечаются
++    # compressed_out=True и исключаются из промпта, но остаются в БД.
++    # Их место в промпте занимает одно новое сообщение role="system" с
++    # content_json={"type": "compression_summary", ...}.
++    compressed_out: Mapped[bool] = mapped_column(Boolean, default=False)
+ 
+     session: Mapped[Session] = relationship(back_populates="messages", foreign_keys=[session_id])
+ 
+diff --git a/app/db/repository.py b/app/db/repository.py
+index dfacf7c..8606864 100644
+--- a/app/db/repository.py
++++ b/app/db/repository.py
+@@ -6,7 +6,7 @@ from __future__ import annotations
+ import uuid
+ from datetime import datetime, timedelta, timezone
+ 
+-from sqlalchemy import select, func
++from sqlalchemy import select, func, update
+ from sqlalchemy.orm import Session as OrmSession
+ 
+ from app.db import models as m
+@@ -121,6 +121,26 @@ def list_messages(db: OrmSession, session_id: uuid.UUID, limit: int = 200) -> li
+     return list(db.execute(stmt).scalars().all())
+ 
+ 
++def list_messages_for_prompt(db: OrmSession, session_id: uuid.UUID, limit: int = 500) -> list[m.Message]:
++    """Как list_messages, но без строк, ушедших под компрессию — это то,
++    что реально уходит в контекст LLM. Полная история остаётся в БД для
++    аудита/UI (см. list_messages)."""
++    stmt = (
++        select(m.Message)
++        .where(m.Message.session_id == session_id, m.Message.compressed_out.is_(False))
++        .order_by(m.Message.seq_no.asc())
++        .limit(limit)
++    )
++    return list(db.execute(stmt).scalars().all())
++
++
++def mark_messages_compressed(db: OrmSession, message_ids: list[uuid.UUID]) -> None:
++    if not message_ids:
++        return
++    db.execute(update(m.Message).where(m.Message.id.in_(message_ids)).values(compressed_out=True))
++    db.flush()
++
++
+ # ---------- tool calls ----------
+ 
+ def start_tool_call(db: OrmSession, session: m.Session, task: m.Task | None, tool_name: str, role: str, risk_level: str, input_json: dict, source_trust_snapshot: str = "trusted", attempt_no: int = 1) -> m.ToolCall:
+diff --git a/app/llm/compression.py b/app/llm/compression.py
+new file mode 100644
+index 0000000..b50a094
+--- /dev/null
++++ b/app/llm/compression.py
+@@ -0,0 +1,138 @@
++"""app/llm/compression.py
++
++Компрессия истории сообщений — ОТДЕЛЬНАЯ подсистема от основной ротации
++ответов агента (app/llm/router.py). Собственный KeyPool, собственный
++курсор ротации 1-3-5-...-9 по Gemini-ключам, не пересекается с тем,
++каким ключом отвечает агент прямо сейчас.
++
++Правила (из старого config.yaml, reference-config/compression-settings.yaml):
++  - protect_first_n / protect_last_n сообщений не трогаем никогда
++  - если сообщений в сессии больше compression_hard_message_limit —
++    средний диапазон схлопывается в одну summary-запись
++  - оригиналы НЕ удаляются из БД (compressed_out=True), только исключаются
++    из промпта (list_messages_for_prompt) — аудируемость сохраняется
++  - вызывается через Gemini 2.5 Flash (дешёвая быстрая модель)
++
++Точка входа: maybe_compress(db, session) — вызывается в начале каждой
++итерации loop.py, до сборки messages для LLM.
++"""
++from __future__ import annotations
++
++import logging
++
++import httpx
++
++from app.config import get_settings
++from app.db import models as m
++from app.db import repository as repo
++from app.llm.key_pool import KeyPool, NoAvailableKeys
++
++logger = logging.getLogger("local_agent.compression")
++
++_compression_pool: KeyPool | None = None
++
++
++def _get_compression_pool() -> KeyPool | None:
++    """Ленивая инициализация — свой собственный, полностью независимый
++    от router.py курсор ротации по тому же (или отдельно заданному)
++    списку Gemini-ключей."""
++    global _compression_pool
++    settings = get_settings()
++    if not settings.compression_enabled:
++        return None
++    keys = settings.compression_gemini_api_keys_list
++    if not keys:
++        return None
++    if _compression_pool is None:
++        _compression_pool = KeyPool(keys, name="compression")
++    return _compression_pool
++
++
++async def _summarize(text_block: str) -> str:
++    settings = get_settings()
++    pool = _get_compression_pool()
++    if pool is None:
++        raise RuntimeError("compression pool not configured (no compression keys)")
++
++    prompt = (
++        "Сожми диалог ниже в краткое фактологическое summary для памяти агента. "
++        "Сохрани: принятые решения, важные факты, незавершённые задачи. "
++        "Не сохраняй: технический шум, повторы, приветствия.\n\n"
++        f"{text_block}"
++    )
++
++    last_error: Exception | None = None
++    for _ in range(len(pool)):
++        try:
++            key = pool.next_key()
++        except NoAvailableKeys as exc:
++            last_error = exc
++            break
++        try:
++            async with httpx.AsyncClient(timeout=settings.compression_timeout_sec) as client:
++                resp = await client.post(
++                    f"{settings.compression_base_url}/chat/completions",
++                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
++                    json={
++                        "model": settings.compression_model,
++                        "messages": [{"role": "user", "content": prompt}],
++                    },
++                )
++                resp.raise_for_status()
++                data = resp.json()
++                return data["choices"][0]["message"]["content"] or ""
++        except httpx.HTTPStatusError as exc:
++            status = exc.response.status_code
++            if status == 429:
++                pool.mark_rate_limited(key)
++                last_error = exc
++                continue
++            if status in (401, 403):
++                pool.mark_dead(key)
++                last_error = exc
++                continue
++            raise
++    raise last_error or NoAvailableKeys("compression pool exhausted")
++
++
++async def maybe_compress(db, session: m.Session) -> bool:
++    """Возвращает True если сжатие реально произошло в этом вызове."""
++    settings = get_settings()
++    if not settings.compression_enabled:
++        return False
++
++    history = repo.list_messages_for_prompt(db, session.id, limit=10_000)
++    if len(history) <= settings.compression_hard_message_limit:
++        return False
++
++    first_n = settings.compression_protect_first_n
++    last_n = settings.compression_protect_last_n
++    if len(history) <= first_n + last_n:
++        return False
++
++    middle = history[first_n : len(history) - last_n]
++    if not middle:
++        return False
++
++    text_block = "\n".join(f"[{msg.role}] {msg.content}" for msg in middle if msg.content)
++
++    try:
++        summary_text = await _summarize(text_block)
++    except Exception as exc:  # noqa: BLE001
++        logger.warning("compression failed for session %s, leaving history uncompressed: %s", session.id, exc)
++        return False
++
++    repo.append_message(
++        db,
++        session,
++        role="system",
++        content=f"[compression summary of {len(middle)} messages]\n{summary_text}",
++        content_json={
++            "type": "compression_summary",
++            "compressed_message_count": len(middle),
++            "compressed_seq_range": [middle[0].seq_no, middle[-1].seq_no],
++        },
++    )
++    repo.mark_messages_compressed(db, [msg.id for msg in middle])
++    logger.info("session %s: compressed %d messages into 1 summary", session.id, len(middle))
++    return True
+diff --git a/app/llm/key_pool.py b/app/llm/key_pool.py
+new file mode 100644
+index 0000000..45cb6c3
+--- /dev/null
++++ b/app/llm/key_pool.py
+@@ -0,0 +1,82 @@
++"""app/llm/key_pool.py
++
++Простая ротация API-ключей round-robin (1 -> 2 -> 3 -> ... -> N -> 1 -> ...).
++
++Два разных исхода ошибки:
++  - 429 (rate limit)      -> ключ уходит в cooldown на `cooldown_sec`,
++                              пробуем следующий по кругу.
++  - 401/403 (auth/invalid)-> ключ помечается dead навсегда (в рамках
++                              текущего процесса), больше не выбирается.
++
++Один KeyPool = один независимый курсор ротации. Компрессия и основной
++ответ агента используют РАЗНЫЕ инстансы KeyPool (см. router.py и
++compression.py), поэтому они не делят состояние друг с другом даже если
++физически указывают на один и тот же список ключей.
++"""
++from __future__ import annotations
++
++import itertools
++import logging
++import threading
++import time
++
++logger = logging.getLogger("local_agent.key_pool")
++
++
++class NoAvailableKeys(Exception):
++    pass
++
++
++class KeyPool:
++    def __init__(self, keys: list[str], name: str = "key_pool", cooldown_sec: float = 60.0):
++        if not keys:
++            raise ValueError(f"KeyPool '{name}' created with an empty key list")
++        self.name = name
++        self.cooldown_sec = cooldown_sec
++        self._keys = list(keys)
++        self._dead: set[str] = set()
++        self._cooldown_until: dict[str, float] = {}
++        self._cycle = itertools.cycle(range(len(self._keys)))
++        self._lock = threading.Lock()
++
++    def __len__(self) -> int:
++        return len(self._keys)
++
++    def _is_usable(self, key: str) -> bool:
++        if key in self._dead:
++            return False
++        until = self._cooldown_until.get(key)
++        if until and until > time.monotonic():
++            return False
++        return True
++
++    def next_key(self) -> str:
++        """Возвращает следующий доступный ключ по кругу. Бросает
++        NoAvailableKeys если все ключи мертвы или в cooldown."""
++        with self._lock:
++            for _ in range(len(self._keys)):
++                idx = next(self._cycle)
++                key = self._keys[idx]
++                if self._is_usable(key):
++                    return key
++            raise NoAvailableKeys(f"pool '{self.name}': all {len(self._keys)} keys dead/cooling down")
++
++    def mark_rate_limited(self, key: str) -> None:
++        with self._lock:
++            self._cooldown_until[key] = time.monotonic() + self.cooldown_sec
++        logger.warning("pool '%s': key ...%s rate-limited, cooldown %.0fs", self.name, key[-4:], self.cooldown_sec)
++
++    def mark_dead(self, key: str) -> None:
++        with self._lock:
++            self._dead.add(key)
++        logger.error("pool '%s': key ...%s marked dead (auth error)", self.name, key[-4:])
++
++    def status(self) -> dict:
++        with self._lock:
++            now = time.monotonic()
++            return {
++                "name": self.name,
++                "total": len(self._keys),
++                "dead": len(self._dead),
++                "cooling_down": sum(1 for until in self._cooldown_until.values() if until > now),
++            }
+diff --git a/app/llm/providers/openai_compatible.py b/app/llm/providers/openai_compatible.py
+index 2f8f5e2..5ee14f5 100644
+--- a/app/llm/providers/openai_compatible.py
++++ b/app/llm/providers/openai_compatible.py
+@@ -4,31 +4,64 @@ import json
+ 
+ import httpx
+ 
++from app.llm.key_pool import KeyPool, NoAvailableKeys
+ from app.llm.providers.base import ChatMessage, LlmProvider, LlmResponse, ToolCallRequest
+ 
+ 
+ class OpenAICompatibleProvider(LlmProvider):
+     """Общий клиент для любого /v1/chat/completions-совместимого backend'а:
+-    Ollama (локально), DeepSeek, и т.д. — отличаются только base_url/api_key/model."""
++    Ollama (локально), DeepSeek, Gemini (openai-compat endpoint), Groq и т.д. —
++    отличаются только base_url/model и набором ключей.
+ 
+-    def __init__(self, provider_id: str, provider_class: str, base_url: str, model: str, api_key: str | None = None):
++    Ключи можно передать двумя способами:
++      - api_key=str          -> старое поведение, один статичный ключ (Ollama/DeepSeek).
++      - key_pool=KeyPool(...) -> ротация по кругу с обработкой 429/401/403.
++    Если задано и то и другое, используется key_pool.
++    """
++
++    def __init__(
++        self,
++        provider_id: str,
++        provider_class: str,
++        base_url: str,
++        model: str,
++        api_key: str | None = None,
++        key_pool: KeyPool | None = None,
++    ):
+         self.provider_id = provider_id
+         self.provider_class = provider_class
+         self.base_url = base_url.rstrip("/")
+         self.model = model
+         self.api_key = api_key
++        self.key_pool = key_pool
+ 
+-    def _headers(self) -> dict:
++    def _headers(self, key: str | None) -> dict:
+         headers = {"Content-Type": "application/json"}
+-        if self.api_key:
+-            headers["Authorization"] = f"Bearer {self.api_key}"
++        if key:
++            headers["Authorization"] = f"Bearer {key}"
+         return headers
+ 
++    def _max_attempts(self) -> int:
++        return len(self.key_pool) if self.key_pool else 1
++
++    def _current_key(self) -> str | None:
++        if self.key_pool:
++            return self.key_pool.next_key()
++        return self.api_key
++
+     async def check_connectivity(self, timeout_sec: float) -> bool:
+-        """§12.3: DNS/HTTP check timeout 2 сек (default), без бесконечного перебора."""
++        """§12.3: DNS/HTTP check timeout 2 сек (default), без бесконечного перебора.
++        С пулом ключей: пробуем текущий ключ пула, не гоняем весь пул на health-check
++        (это делает route_chat -> chat() при реальном вызове)."""
+         try:
++            key = self.api_key
++            if self.key_pool:
++                try:
++                    key = self.key_pool.next_key()
++                except NoAvailableKeys:
++                    return False
+             async with httpx.AsyncClient(timeout=timeout_sec) as client:
+-                resp = await client.get(f"{self.base_url}/models", headers=self._headers())
++                resp = await client.get(f"{self.base_url}/models", headers=self._headers(key))
+                 return resp.status_code < 500
+         except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPError):
+             return False
+@@ -41,13 +74,40 @@ class OpenAICompatibleProvider(LlmProvider):
+         if tools:
+             payload["tools"] = tools
+ 
+-        async with httpx.AsyncClient(timeout=timeout_sec) as client:
+-            resp = await client.post(
+-                f"{self.base_url}/chat/completions", headers=self._headers(), json=payload
+-            )
+-            resp.raise_for_status()
+-            data = resp.json()
++        last_error: Exception | None = None
++
++        for _ in range(self._max_attempts()):
++            try:
++                key = self._current_key()
++            except NoAvailableKeys as exc:
++                last_error = exc
++                break
++
++            try:
++                async with httpx.AsyncClient(timeout=timeout_sec) as client:
++                    resp = await client.post(
++                        f"{self.base_url}/chat/completions", headers=self._headers(key), json=payload
++                    )
++                    resp.raise_for_status()
++                    data = resp.json()
++            except httpx.HTTPStatusError as exc:
++                status = exc.response.status_code
++                if self.key_pool and key is not None:
++                    if status == 429:
++                        self.key_pool.mark_rate_limited(key)
++                        last_error = exc
++                        continue
++                    if status in (401, 403):
++                        self.key_pool.mark_dead(key)
++                        last_error = exc
++                        continue
++                raise
++            else:
++                return self._parse_response(data)
++
++        raise last_error or NoAvailableKeys(f"provider '{self.provider_id}': no usable key")
+ 
++    def _parse_response(self, data: dict) -> LlmResponse:
+         choice = data["choices"][0]["message"]
+         raw_tool_calls = choice.get("tool_calls") or []
+         tool_calls = []
+diff --git a/app/llm/router.py b/app/llm/router.py
+index 4b35ba7..5db80dc 100644
+--- a/app/llm/router.py
++++ b/app/llm/router.py
+@@ -121,6 +121,7 @@ def build_default_router() -> ProviderRouter:
+     """Собирает роутер из env-конфигурации: Ollama как free_tier (локальный, бесплатный),
+     DeepSeek как standard/premium если задан ключ. Если внешние провайдеры не
+     настроены/недоступны, всегда остаётся deterministic stub для smoke/MVP."""
++    from app.llm.key_pool import KeyPool
+     from app.llm.providers.openai_compatible import OpenAICompatibleProvider
+     from app.llm.providers.stub import StubProvider
+ 
+@@ -159,24 +160,75 @@ def build_default_router() -> ProviderRouter:
+             )
+         )
+ 
+-    if settings.gemini_api_key:
++    # Порядок регистрации внутри одного provider_class = порядок fallback
++    # в _pick_available(): Gemini первый, Groq — если Gemini недоступен
++    # или весь его пул ключей исчерпан (see KeyPool.mark_rate_limited/mark_dead).
++    gemini_keys = settings.gemini_api_keys_list
++    if gemini_keys:
+         has_any_real_provider = True
++        gemini_pool_flash = KeyPool(gemini_keys, name="gemini-answers")
++        gemini_pool_pro = KeyPool(gemini_keys, name="gemini-answers")  # свой курсор на класс
+         router.register(
+             OpenAICompatibleProvider(
+                 provider_id="gemini-flash",
+                 provider_class="free_tier_reasoning",
+-                base_url="https://generativelanguage.googleapis.com/v1beta/openai",
++                base_url=settings.gemini_base_url,
+                 model="gemini-2.0-flash",
+-                api_key=settings.gemini_api_key,
++                key_pool=gemini_pool_flash,
+             )
+         )
+         router.register(
+             OpenAICompatibleProvider(
+                 provider_id="gemini-pro",
+                 provider_class="standard_reasoning",
+-                base_url="https://generativelanguage.googleapis.com/v1beta/openai",
++                base_url=settings.gemini_base_url,
+                 model="gemini-2.5-pro",
+-                api_key=settings.gemini_api_key,
++                key_pool=gemini_pool_pro,
++            )
++        )
++        # DeepSeek приоритет для premium_reasoning; если DeepSeek не задан/недоступен —
++        # полный фолбэк на Gemini, тем же объектом что и standard_reasoning (свой key_pool).
++        router.providers_by_class.setdefault("premium_reasoning", []).append(
++            OpenAICompatibleProvider(
++                provider_id="gemini-pro-premium-fallback",
++                provider_class="premium_reasoning",
++                base_url=settings.gemini_base_url,
++                model="gemini-2.5-pro",
++                key_pool=KeyPool(gemini_keys, name="gemini-answers"),
++            )
++        )
++
++    groq_keys = settings.groq_api_keys_list
++    if groq_keys:
++        has_any_real_provider = True
++        groq_pool_free = KeyPool(groq_keys, name="groq-answers")
++        groq_pool_standard = KeyPool(groq_keys, name="groq-answers")
++        router.register(
++            OpenAICompatibleProvider(
++                provider_id="groq-llama-fast",
++                provider_class="free_tier_reasoning",
++                base_url=settings.groq_base_url,
++                model="llama-3.1-8b-instant",
++                key_pool=groq_pool_free,
++            )
++        )
++        router.register(
++            OpenAICompatibleProvider(
++                provider_id="groq-llama-versatile",
++                provider_class="standard_reasoning",
++                base_url=settings.groq_base_url,
++                model="llama-3.3-70b-versatile",
++                key_pool=groq_pool_standard,
++            )
++        )
++        # Последнее звено цепи "DeepSeek -> Gemini -> Groq" для premium_reasoning.
++        router.providers_by_class.setdefault("premium_reasoning", []).append(
++            OpenAICompatibleProvider(
++                provider_id="groq-llama-versatile-premium-fallback",
++                provider_class="premium_reasoning",
++                base_url=settings.groq_base_url,
++                model="llama-3.3-70b-versatile",
++                key_pool=KeyPool(groq_keys, name="groq-answers"),
+             )
+         )
+ 
+diff --git a/app/main.py b/app/main.py
+index 0c0db27..34b713d 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -16,6 +16,7 @@ from app.db import repository as repo
+ from app.db.base import init_db, session_scope
+ from app.db.enums import ApprovalStatus, AuditVerdict, ProviderStatus, SessionStatus, SourceTrust, TaskStatus, ToolStatus
+ from app.db import models as m
++from app.core.loop import run_task as run_agent_loop
+ from app.llm.router import build_default_router
+ from app.storage import obsidian_vault
+ 
+@@ -475,13 +476,18 @@ async def start_task(
+         if task.status in (TaskStatus.draft, TaskStatus.awaiting_clarification, TaskStatus.needs_rework):
+             repo.set_task_status(db, task, TaskStatus.approved)
+     settings = get_settings()
+-    if settings.codex_enabled:
++    execution_mode = (payload or {}).get("mode") or ("codex" if settings.codex_enabled else "real")
++
++    if execution_mode == "codex":
+         from app.agents.codex_exec_bridge import run_codex_task
+ 
+         model = (payload or {}).get("model")
+         await run_codex_task(task_id, model=model)
+-    else:
++    elif execution_mode == "demo":
++        # explicit opt-in only now — больше не дефолт, см. §3.3 backend-аудита
+         await _run_demo_task(task_id)
++    else:
++        await run_agent_loop(task_id, router, settings.agent_sandbox_root)
+     return {"ok": True}
+ 
+ 
