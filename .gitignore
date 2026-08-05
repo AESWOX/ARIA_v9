@@ -15,7 +15,6 @@ build/
 dist/
 src-tauri/target/
 src-tauri/gen/
-*.spec
 # Nested copies (patterns with a slash are anchored to repo root — cover the
 # real paths under desktop/ and backend/ explicitly, otherwise git add -A
 # walks gigabytes of Rust cache / PyInstaller output).
