@@ -144,30 +144,48 @@ jobs:
           }
           if (-not $installDir) { throw "Could not locate installed local-agent-ui.exe" }
 
-          # Launch the app; its stderr carries the sidecar "started on port N" line
+          # Launch backend.exe DIRECTLY, not via Tauri UI: on the headless
+          # GitHub runner the WebView2 window can die shortly after loading and
+          # Tauri takes the sidecar down with it (observed: SPA loaded fine,
+          # backend killed ~6s later, no traceback). The backend alone serves
+          # the SPA + API and must outlive the UI process for the DoD checks.
           $stdoutLog = Join-Path $env:RUNNER_TEMP "backend-stdout.log"
           $stderrLog = Join-Path $env:RUNNER_TEMP "backend-stderr.log"
-          $appExe = Join-Path $installDir "local-agent-ui.exe"
-          $proc = Start-Process -FilePath $appExe -WorkingDirectory $installDir `
-            -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
-          Write-Output "app pid: $($proc.Id)  exe: $appExe"
+          $backendExe = Join-Path $installDir "backend.exe"
+          if (-not (Test-Path $backendExe)) { throw "backend.exe not found in $installDir" }
 
-          # Wait for the sidecar port announcement (poll the log, not blind retries)
-          $port = $null
+          # Pick a free port (same approach as Rust find_free_port)
+          $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+          $listener.Start()
+          $port = ($listener.LocalEndpoint).Port
+          $listener.Stop()
+
+          $runtimeToken = [guid]::NewGuid().ToString("N")
+          $env:HTTP_HOST = "127.0.0.1"
+          $env:HTTP_PORT = $port.ToString()
+          $env:LOCAL_AGENT_RUNTIME_TOKEN = $runtimeToken
+          $env:LOCAL_AGENT_DISABLE_BOOTSTRAP_WRITE = "1"
+          $proc = Start-Process -FilePath $backendExe -WorkingDirectory $installDir `
+            -ArgumentList "--port", $port.ToString() `
+            -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
+          Write-Output "backend pid: $($proc.Id)  exe: $backendExe  port: $port"
+
+          # Wait for Uvicorn to announce itself (backend writes it to stderr)
+          $announced = $false
           $deadline = (Get-Date).AddSeconds(60)
           while ((Get-Date) -lt $deadline) {
-            if ($proc.HasExited) { throw "app exited early: $($proc.ExitCode)" }
+            if ($proc.HasExited) { throw "backend exited early: $($proc.ExitCode)" }
             $stderr = ""
             if (Test-Path $stderrLog) { $stderr = Get-Content $stderrLog -Raw -ErrorAction SilentlyContinue }
-            if ($stderr -match "started on port (\d+)") { $port = [int]$Matches[1]; break }
+            if ($stderr -match "Uvicorn running on") { $announced = $true; break }
             Start-Sleep -Milliseconds 500
           }
-          if (-not $port) {
+          if (-not $announced) {
             Write-Output "--- backend-stderr.log ---"; if (Test-Path $stderrLog) { Get-Content $stderrLog }
             Write-Output "--- backend-stdout.log ---"; if (Test-Path $stdoutLog) { Get-Content $stdoutLog -Tail 40 }
-            throw "sidecar port not announced within 60s"
+            throw "backend not announced within 60s"
           }
-          Write-Output "sidecar port: $port"
+          Write-Output "backend announced: port $port"
 
           # Health poll (with logging, mirrors local ConnectionRefused diagnosis)
           $base = "http://127.0.0.1:$port"
