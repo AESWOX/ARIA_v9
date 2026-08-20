@@ -282,7 +282,7 @@ jobs:
             if ($chk -eq 5) {
               if (-not $token) {
                 $idx = Invoke-WebRequest -Uri "$base/" -UseBasicParsing -TimeoutSec 10
-                if ($idx.Content -match 'content="([^"]+)"') { $token = $Matches[1] }
+                if ($idx.Content -match '<meta name="runtime-token" content="([^"]+)"') { $token = $Matches[1] }
                 else { throw "could not extract runtime-token from index.html" }
                 Write-Output "runtime token extracted: $($token.Substring(0,8))..."
               }

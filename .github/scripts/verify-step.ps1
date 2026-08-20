@@ -66,7 +66,7 @@ switch ($Check) {
         if ($r.Status -ne 200) { Fail "status $($r.Status), expected 200" }
         if ($r.Body -notmatch '<meta name="runtime-token"') { Fail "no runtime-token meta in HTML" }
         # persist token for later steps via GITHUB_ENV when available
-        if ($r.Body -match 'content="([^"]+)"') {
+        if ($r.Body -match '<meta name="runtime-token" content="([^"]+)"') {
             $env:ARIA_RUNTIME_TOKEN = $Matches[1]
             $envFile = $env:GITHUB_ENV
             if ($envFile) {
