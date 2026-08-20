@@ -166,6 +166,10 @@ class ToolCallGuardrailController:
             warnings.append(f"same call failed {exact_count}x")
         if same_count >= self.config.same_tool_failure_warn_after:
             warnings.append(f"{tool_name} failed {same_count}x")
+        if tool_name in self.config.idempotent_tools:
+            record = self._no_progress.get(signature)
+            if record is not None and record[1] >= self.config.no_progress_warn_after:
+                warnings.append(f"read-only call returned the same result {record[1]}x")
 
         if warnings and self.config.warnings_enabled:
             return ToolGuardrailDecision(

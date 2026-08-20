@@ -11,6 +11,9 @@ Verdict строится в два прохода:
 """
 from __future__ import annotations
 
+import json
+import re
+
 from sqlalchemy.orm import Session as OrmSession
 
 from aria.config import get_settings
@@ -35,6 +38,69 @@ def _structural_check(tool_calls: list[m.ToolCall]) -> tuple[bool, list[str]]:
         missing.append(f"{len(unresolved_attention)} tool call(s) остались needs_attention без резолюции.")
 
     return (len(missing) == 0), missing
+
+
+def _tool_calls_detail(tool_calls: list[m.ToolCall]) -> str:
+    """Компактное представление реальных input/output tool calls для qa_auditor —
+    без него LLM не может подтвердить, что артефакт соответствует objective."""
+    lines: list[str] = []
+    for c in tool_calls:
+        entry: dict = {"tool": c.tool_name, "status": str(c.status)}
+        if c.input_json:
+            entry["input"] = c.input_json
+        if c.output_json:
+            entry["output"] = c.output_json
+        lines.append(json.dumps(entry, ensure_ascii=False))
+    return "\n".join(lines)
+
+
+def _parse_audit_verdict(text: str) -> tuple[AuditVerdict, list[str]]:
+    """Парсит ответ qa_auditor в (verdict, issues).
+
+    Основной путь — JSON-обёртка, которую просит система в промпте. Фолбэк —
+    keyword-эвристика для моделей, проигнорировавших формат. Неоднозначный
+    ответ трактуем консервативно: needs_rework (§25 DoD п.8 — отсутствие
+    явного pass не маскируется под успех).
+    """
+    candidates: list[str] = []
+    for block in re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL):
+        candidates.append(block.strip())
+    if not candidates:
+        candidates.append(text.strip())
+
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        verdict_raw = str(data.get("verdict", "")).strip().lower()
+        raw_issues = data.get("issues", data.get("недостатки", []))
+        if isinstance(raw_issues, str):
+            raw_issues = [raw_issues]
+        issues = [str(i).strip() for i in (raw_issues or []) if str(i).strip()]
+        if verdict_raw in ("pass", "ok", "yes", "success"):
+            # pass с замечаниями — противоречие, трактуем как needs_rework
+            return (AuditVerdict.needs_rework, issues) if issues else (AuditVerdict.pass_, [])
+        if verdict_raw in ("fail", "needs_rework", "rework", "no", "not_ok", "error"):
+            return AuditVerdict.needs_rework, issues
+        break  # JSON распознан, но verdict неизвестен — уходим в эвристику
+
+    low = text.lower()
+    fail_markers = (
+        "недостат", "ошибк", "не соответств", "проблем", "исправь",
+        "не выполн", "rework", "not ok",
+    )
+    if any(m in low for m in fail_markers):
+        lines = [ln.strip(" -*\t") for ln in text.splitlines() if ln.strip(" -*\t")]
+        return AuditVerdict.needs_rework, [ln for ln in lines if ln][:5]
+
+    pass_markers = ("ok", "pass", "yes", "success", "соответств")
+    if any(m in low for m in pass_markers):
+        return AuditVerdict.pass_, []
+
+    return AuditVerdict.needs_rework, ["Неоднозначный ответ qa_auditor — требуется ручная проверка."]
 
 
 async def run_audit(
@@ -104,14 +170,28 @@ async def run_audit(
                 messages = [
                     ChatMessage(
                         role="system",
-                        content="Ты qa_auditor. Проверь, соответствует ли результат objective задачи. Ответь коротко: OK или список недостатков.",
+                        content=(
+                            "Ты qa_auditor. Проверь, соответствует ли результат objective задачи.\n"
+                            "Ответь строго в формате JSON: "
+                            "{\"verdict\": \"pass\" | \"needs_rework\", \"issues\": [\"недостаток 1\", \"...\"]}. "
+                            "pass — только если результат полностью соответствует objective и замечаний нет."
+                        ),
                     ),
-                    ChatMessage(role="user", content=f"Objective: {task.objective}\nTool calls: {tool_success_summary}"),
+                    ChatMessage(
+                        role="user",
+                        content=(
+                            f"Objective: {task.objective}\n"
+                            f"Tool calls summary: {tool_success_summary}\n"
+                            f"Tool calls detail: {_tool_calls_detail(tool_calls)}"
+                        ),
+                    ),
                 ]
                 result = await router.route_chat("standard_reasoning", messages, tools=[], allow_degrade=True, db=db)
                 auditor_model = result.provider_id
                 budget_degraded = result.degraded_to_free
-                verdict = AuditVerdict.pass_
+                verdict, parsed_issues = _parse_audit_verdict(result.response.text)
+                if parsed_issues:
+                    patch_suggestions = [f"QA: {issue}" for issue in parsed_issues]
             except ProviderUnavailable:
                 verdict = AuditVerdict.unaudited
                 budget_degraded = True

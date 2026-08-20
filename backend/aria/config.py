@@ -16,7 +16,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     OBSIDIAN_VAULT_PATH: str = "./data/vault"
     B2_BUCKET: str = ""
     B2_KEY_ID: str = ""
-    B2_APPLICATION_KEY: str = ""
+    B2_APPLICATION_KEY: str = Field(default="", validation_alias=AliasChoices("B2_APPLICATION_KEY", "B2_APP_KEY"))
 
     # --- §23.1 canonical keys / v7 default profile ---
     # §2.9 TZ v1.1: optimistic lock TTL (file-lock + DB)

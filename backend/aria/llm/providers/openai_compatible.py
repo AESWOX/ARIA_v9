@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -111,8 +112,10 @@ class OpenAICompatibleProvider(LlmProvider):
             payload["tools"] = tools
 
         last_error: Exception | None = None
+        _404_attempts = 0
+        max_404_retries = 4
 
-        for _ in range(self._max_attempts()):
+        for _ in range(max(self._max_attempts(), max_404_retries)):
             try:
                 key = self._current_key()
             except NoAvailableKeys as exc:
@@ -137,6 +140,17 @@ class OpenAICompatibleProvider(LlmProvider):
                         self.key_pool.mark_dead(key)
                         last_error = exc
                         continue
+                    if status == 404:
+                        # Провайдер отдаёт 404 на ключ без доступа к модели
+                        # (напр. Gemini "model no longer available to new users").
+                        # Транзиентная ошибка: прокси сам ротирует upstream-ключи,
+                        # поэтому не сажаем ключ в cooldown, а делаем короткий retry.
+                        _404_attempts += 1
+                        last_error = exc
+                        if _404_attempts < max_404_retries:
+                            await asyncio.sleep(0.7)
+                            continue
+                        raise
                 raise
             else:
                 return self._parse_response(data)

@@ -7,6 +7,9 @@ redis==6.2.0
 python-multipart==0.0.20
 python-dotenv==1.2.2
 alembic==1.13.3
+pytest==8.3.5
+pytest-cov==6.0.0
+pytest-asyncio==0.25.3
 
 # Optional, only needed if CODEX_ENABLED=true in .env. Not pinned here on
 # purpose -- it's a 120MB+ prebuilt binary download, not a real Python dep,

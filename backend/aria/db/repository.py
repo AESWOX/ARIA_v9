@@ -257,20 +257,22 @@ def start_tool_call(db: OrmSession, session: m.Session, task: m.Task | None, too
 
 
 def finish_tool_call(db: OrmSession, call: m.ToolCall, status: ToolStatus, output_json: dict | None = None, error_code: str | None = None, error_message: str | None = None) -> m.ToolCall:
-    call.status = status
-    call.finished_at = _now()
-    started = call.started_at
-    finished = call.finished_at
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=timezone.utc)
-    call.duration_ms = int((finished - started).total_seconds() * 1000)
-    call.output_json = output_json
-    call.error_code = error_code
-    call.error_message = error_message
     if status not in TERMINAL_TOOL_STATUSES:
         raise ValueError(f"finish_tool_call called with non-terminal status {status}")
+    # call may be detached (created in a previous session_scope); re-fetch by PK
+    persisted = db.get(m.ToolCall, call.id) or call
+    persisted.status = status
+    persisted.finished_at = _now()
+    started = persisted.started_at
+    finished = persisted.finished_at
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    persisted.duration_ms = int((finished - started).total_seconds() * 1000)
+    persisted.output_json = output_json
+    persisted.error_code = error_code
+    persisted.error_message = error_message
     db.flush()
-    return call
+    return persisted
 
 
 def list_tool_calls(db: OrmSession, task_id: uuid.UUID) -> list[m.ToolCall]:

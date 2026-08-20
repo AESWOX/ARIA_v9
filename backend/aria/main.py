@@ -62,7 +62,7 @@ _root_logger.setLevel(logging.INFO)
 for _uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
     logging.getLogger(_uvicorn_logger_name).addHandler(_file_handler)
 
-app = FastAPI(title="Local Agent v7.1", version="0.1.0")
+app = FastAPI(title="Local Agent v7.1", version="0.9.0")
 settings = get_settings()
 router = build_default_router()
 app.state.router = router
@@ -224,3 +224,41 @@ async def startup() -> None:
             _app_logger.exception("provider catalog refresh failed")
 
     _background_tasks["catalog_refresh"] = asyncio.create_task(_bg_refresh_catalog())
+
+    # Periodic scheduler: TTL-expiry of stale attention items + provider catalog
+    # refresh. Fix 0.3 — раньше expire_stale_attention_items_job нигде не
+    # запускался (watchdog отсутствовал): stuck awaiting_attention задачи
+    # висели бесконечно.
+    from aria.scheduler.jobs import expire_stale_attention_items_job, refresh_provider_models_job
+
+    _SCHEDULER_INTERVAL_SEC = 120
+
+    async def _scheduler_loop() -> None:
+        _app_logger.info("background scheduler started (interval=%ss)", _SCHEDULER_INTERVAL_SEC)
+        while True:
+            try:
+                expired = await expire_stale_attention_items_job()
+                if expired:
+                    _app_logger.info("expired %d stale attention item(s)", expired)
+                count = await refresh_provider_models_job(router)
+                _app_logger.debug("provider catalog refresh: %s models", count)
+            except Exception:
+                _app_logger.exception("scheduler tick failed")
+            await asyncio.sleep(_SCHEDULER_INTERVAL_SEC)
+
+    _background_tasks["scheduler_loop"] = asyncio.create_task(_scheduler_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    _app_logger.info("shutting down %d background task(s)", len(_background_tasks))
+    for name, task in list(_background_tasks.items()):
+        task.cancel()
+    for name, task in list(_background_tasks.items()):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            _app_logger.exception("background task %s failed during shutdown", name)
+    _background_tasks.clear()

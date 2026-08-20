@@ -117,18 +117,43 @@ class TestStage3Execute:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestStage4Audit:
+    def _db_fixture(self, plan_json):
+        import os
+        from aria.db.base import init_db, session_scope, get_engine
+
+        get_engine().dispose()
+        db_path = os.path.join(os.path.dirname(__file__), "__pycache__", "e2e_stage4.db")
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        try:
+            os.remove(db_path)
+        except OSError:
+            pass
+        init_db(f"sqlite:///{db_path}", create_all=True)
+
+        from aria.db import models as m
+        with session_scope() as db:
+            sess = m.Session(title="E2E Stage4", current_task_id=None)
+            db.add(sess)
+            db.flush()
+            task = m.Task(session_id=sess.id, objective="test")
+            db.add(task)
+            db.flush()
+            plan = m.TaskPlan(task_id=task.id, plan_json=plan_json)
+            db.add(plan)
+            db.flush()
+            return db, task, plan
+
     def test_empty_plan_no_flags(self):
-        plan = type("FakePlan", (), {"steps": [], "plan_json": []})()
-        flags = _stage4_audit(plan, [])
+        db, task, plan = self._db_fixture([])
+        flags = asyncio.run(_stage4_audit(db, task, plan, [], router=None))
         assert len(flags) == 0
 
     def test_mock_calls_no_naebal(self):
-        plan = type("FakePlan", (), {
-            "steps": [{"step_id": "s1", "objective": "test", "role": "coder", "tool_ref": "terminal"}],
-            "plan_json": [{"step_id": "s1", "objective": "test", "role": "coder", "tool_ref": "terminal"}],
-        })()
+        db, task, plan = self._db_fixture(
+            [{"step_id": "s1", "objective": "test", "role": "coder", "tool_ref": "terminal"}]
+        )
         calls = [{"tool_name": "terminal", "output_json": {"stdout": "ok"}, "status": "ok"}]
-        flags = _stage4_audit(plan, calls)
+        flags = asyncio.run(_stage4_audit(db, task, plan, calls, router=None))
         naebal = [f for f in flags if f.kind == "naebal"]
         assert len(naebal) == 0
 

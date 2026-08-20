@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""ARIA v8 start — гарантированно загружает .env и запускает uvicorn."""
+"""ARIA v9 start — гарантированно загружает .env и запускает uvicorn."""
 import os
 import sys
 

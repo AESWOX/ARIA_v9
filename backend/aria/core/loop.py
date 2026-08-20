@@ -67,7 +67,7 @@ def _load_persona() -> str:
     import os
     p = os.path.join(os.path.dirname(__file__), "..", "prompts", "persona.md")
     try:
-        with open(p) as f:
+        with open(p, encoding="utf-8") as f:
             return "\n" + f.read()
     except FileNotFoundError:
         logger.warning("persona.md not found at %s", p)
@@ -255,6 +255,15 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                     )
                 continue
 
+            if guardrail_decision.action == "warn":
+                # Встроить warning в историю, чтобы LLM сменил стратегию на следующей итерации.
+                with session_scope() as db:
+                    session = repo.get_session(db, task.session_id)
+                    repo.append_message(
+                        db, session, role="tool",
+                        content=f"{spec.tool_name} -> guardrail_warning: {guardrail_decision.message}",
+                    )
+
             output, status, error_code, error_message = await _execute_tool(spec, call.arguments, sandbox_root)
 
             # После tool call — guardrail recording для loop detection
@@ -384,4 +393,4 @@ async def resume_after_approval(task_id: uuid.UUID, router: ProviderRouter, sand
         repo.append_message(db, session, role="tool", content_json={"tool_name": "shell_execute", "output": output, "status": status.value}, content=f"shell_execute (approved) -> {status.value}")
         event_bus.emit("tool_call.updated", {"id": str(tool_call_row.id), "status": status.value}, session_id=session.id, task_id=task.id, db=db)
 
-    await run_task(task_id, router, sandbox_root)
+    await execute_agent_loop(task_id, router, sandbox_root)

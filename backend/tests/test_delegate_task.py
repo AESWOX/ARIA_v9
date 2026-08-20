@@ -52,6 +52,8 @@ class DelegateTaskTests(unittest.TestCase):
         )
         self.stub_subagent.push(final_answer("Done: wrote hello.txt"))
         # qa_auditor's own chat call inside run_audit (also standard_reasoning).
+        # One per audited task: parent orchestrator + child coder.
+        self.stub_standard.push(final_answer("OK"))
         self.stub_standard.push(final_answer("OK"))
 
         with session_scope() as db:

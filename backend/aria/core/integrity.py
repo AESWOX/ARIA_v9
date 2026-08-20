@@ -68,6 +68,10 @@ def assert_file_changed(tc_input: dict, tc_output: dict) -> bool:
     tool_call. Если hash_before отсутствует — считаем, что проверка
     невозможна, возвращаем False (НАЕБАЛ по умолчанию).
 
+    Fallback: executor кладёт hash_before/hash_after только в output_json
+    (file_write handler), input_json хешей не содержит — поэтому при
+    отсутствии hash_before во input берём его из output.
+
     Args:
         tc_input: input_json из ToolCall.
         tc_output: output_json из ToolCall.
@@ -75,7 +79,7 @@ def assert_file_changed(tc_input: dict, tc_output: dict) -> bool:
     Returns:
         False — если файл не изменился или хеш недоступен.
     """
-    h_before = tc_input.get("hash_before")
+    h_before = tc_input.get("hash_before") or tc_output.get("hash_before")
     h_after = tc_output.get("hash_after")
     if not h_before or not h_after:
         return False
@@ -178,8 +182,8 @@ def detect_naebal(tool_calls: list[dict]) -> list[IntegrityFlag]:
         out = tc.get("output_json", {}) or {}
         tc_id = tc.get("id")
 
-        # 1. terminal с pytest
-        if tool_name in ("terminal",) and "pytest" in json.dumps(inp):
+        # 1. terminal / shell_execute с pytest
+        if tool_name in ("terminal", "shell_execute") and "pytest" in json.dumps(inp):
             exit_code = get_exit_code(out)
             junit = has_junit_artifact(out)
             claimed_pass = "passed" in json.dumps(out)
@@ -190,11 +194,11 @@ def detect_naebal(tool_calls: list[dict]) -> list[IntegrityFlag]:
                     tool_call_id=str(tc_id) if tc_id else None,
                 ))
 
-        # 2. write_file / patch — файл должен измениться
-        if tool_name in ("write_file", "patch"):
+        # 2. write_file / file_write / patch — файл должен измениться
+        if tool_name in ("write_file", "file_write", "patch"):
             if not assert_file_changed(inp, out):
                 flags.append(IntegrityFlag.NAEBAL(
-                    reason="write_file/patch выполнен, но hash_before == hash_after",
+                    reason="write_file/file_write/patch выполнен, но hash_before == hash_after",
                     tool_call_id=str(tc_id) if tc_id else None,
                 ))
 

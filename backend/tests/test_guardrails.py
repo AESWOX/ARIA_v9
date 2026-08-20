@@ -143,3 +143,22 @@ class TestToolCallGuardrailController:
         # Warns because past warn threshold — never blocks because hard_stop disabled
         assert decision.action == "warn"
         assert controller.halt_decision is None  # No block decision set
+
+    def test_idempotent_no_progress_warns_when_hard_stop_disabled(self):
+        """Successful idempotent call returning the same result should WARN (not block)
+        once no_progress_warn_after is reached, even with hard_stop disabled."""
+        config = GuardrailConfig(
+            hard_stop_enabled=False,
+            no_progress_warn_after=2,
+            no_progress_block_after=5,
+            idempotent_tools=frozenset({"list_vault"}),
+        )
+        controller = ToolCallGuardrailController(config=config)
+
+        # Two identical successful calls with identical results
+        controller.after_call("list_vault", {"max_results": 20}, {"files": ["a.md", "b.md"]})
+        controller.after_call("list_vault", {"max_results": 20}, {"files": ["a.md", "b.md"]})
+        # Third identical call must be warned, not allowed
+        decision = controller.before_call("list_vault", {"max_results": 20})
+        assert decision.action == "warn"
+        assert "same result" in decision.message

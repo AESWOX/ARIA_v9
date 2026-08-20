@@ -48,3 +48,8 @@ logs/
 *.env
 !*.env.example
 *.tar.gz
+
+# DoD verification artifacts
+.dod_verify.json
+dod_verify.json
+backend/.coverage

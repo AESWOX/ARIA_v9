@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 
 from aria.api.auth import token_store
+from aria.config import get_settings
 from aria.storage import obsidian_vault
 from aria.storage.b2_client import B2ConfigError, BackblazeB2Client
 

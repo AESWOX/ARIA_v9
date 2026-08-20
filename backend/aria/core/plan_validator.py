@@ -20,6 +20,7 @@ class PlanStep(BaseModel):
     role: str = "coder"
     tool_ref: str | None = None
     skill_ref: str | None = None
+    path: str | None = None
     status: Literal["pending", "in_progress", "done", "failed"] = "pending"
     tool_call_ids: list[uuid.UUID] = []
 

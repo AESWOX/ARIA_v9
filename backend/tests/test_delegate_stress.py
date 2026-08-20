@@ -57,8 +57,9 @@ class DelegateTaskStressTests(unittest.TestCase):
         )
         stub_sub.push(final_answer("Written."))
 
-        # audit (standard_reasoning)
+        # audit (standard_reasoning) — one per audited task (parent + child)
         stub_std = self.router.providers_by_class["standard_reasoning"][0]
+        stub_std.push(final_answer("OK"))
         stub_std.push(final_answer("OK"))
 
     def _create_and_run(self, iteration: int) -> uuid.UUID:
