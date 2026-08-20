@@ -79,7 +79,7 @@ def smoke_groq_chat():
         provider_id="smoke-groq",
         provider_class="test",
         base_url=settings.groq_base_url,
-        model="llama-3.1-8b-instant",
+        model="qwen/qwen3.6-27b",
         key_pool=pool,
     )
     chat = provider.provider_id
@@ -94,7 +94,7 @@ def smoke_groq_chat():
         resp = client.post(
             f"{base}/chat/completions",
             json={
-                "model": "llama-3.1-8b-instant",
+                "model": "qwen/qwen3.6-27b",
                 "messages": [{"role": "user", "content": "Say exactly: hello from aria smoke test"}],
                 "max_tokens": 20,
             },
@@ -182,7 +182,7 @@ def main():
     test("web_search", smoke_duckduckgo)
 
     # 2. Groq chat completion
-    print("\n[2] Groq Chat (llama-3.1-8b-instant)")
+    print("\n[2] Groq Chat (qwen/qwen3.6-27b)")
     if settings.groq_api_keys_list:
         test("groq_chat", smoke_groq_chat)
     else:
