@@ -12,12 +12,14 @@ class AuthBootstrapTests(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         os.environ['RUNTIME_TOKEN_PATH'] = os.path.join(self.tmpdir.name, 'bootstrap.json')
+        os.environ['ONBOARDED_MARKER_PATH'] = os.path.join(self.tmpdir.name, '.onboarded')
         os.environ['LOCAL_AGENT_UI_PIN'] = '654321'
         config_module.get_settings.cache_clear()
 
     def tearDown(self):
         config_module.get_settings.cache_clear()
         os.environ.pop('RUNTIME_TOKEN_PATH', None)
+        os.environ.pop('ONBOARDED_MARKER_PATH', None)
         os.environ.pop('LOCAL_AGENT_UI_PIN', None)
         self.tmpdir.cleanup()
 
@@ -32,6 +34,24 @@ class AuthBootstrapTests(unittest.TestCase):
         self.assertEqual(payload['runtimeToken'], token)
         self.assertEqual(payload['pinRequired'], True)
         self.assertNotIn('pin', payload)
+
+    def test_first_run_marker_independent_of_disabled_bootstrap_write(self):
+        # Regression: with LOCAL_AGENT_DISABLE_BOOTSTRAP_WRITE=1 (Tauri shell)
+        # bootstrap.json is never written, so first_run must come from a
+        # separate marker file — otherwise onboarding shows on every launch.
+        os.environ['LOCAL_AGENT_DISABLE_BOOTSTRAP_WRITE'] = '1'
+        try:
+            first = RuntimeTokenStore()
+            token, _ = first.issue()
+            self.assertTrue(first.first_run())
+            self.assertFalse(os.path.exists(os.environ['RUNTIME_TOKEN_PATH']))
+            self.assertTrue(os.path.exists(os.environ['ONBOARDED_MARKER_PATH']))
+
+            second = RuntimeTokenStore()
+            second.issue()
+            self.assertFalse(second.first_run())
+        finally:
+            os.environ.pop('LOCAL_AGENT_DISABLE_BOOTSTRAP_WRITE', None)
 
 
 if __name__ == '__main__':

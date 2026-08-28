@@ -439,19 +439,20 @@ export default function App() {
   }, []);
 
   // First-run onboarding. The backend is the source of truth: it embeds
-  // <meta name="first-run"> only when no runtime-token bootstrap file existed
-  // at startup (i.e. the PIN/lock state is NOT configured yet). Gating on the
+  // <meta name="first-run"> only when no onboarded marker file existed at
+  // startup (i.e. this profile was never launched before). Gating on the
   // backend snapshot — and NOT on webview localStorage — gives the product
   // behavior from the spec:
-  //   * delete bootstrap.json → next launch reports first-run again → the
-  //     overlay reappears even though the webview profile (localStorage) is
-  //     the same;
-  //   * a brand-new webview profile on a machine where bootstrap.json already
+  //   * the marker is written unconditionally on every issue(), so first-run
+  //     is false on every launch after the first — even when Tauri disables
+  //     the bootstrap.json handshake (LOCAL_AGENT_DISABLE_BOOTSTRAP_WRITE=1);
+  //   * a brand-new webview profile on a machine where the marker already
   //     exists → first-run is false → the overlay stays hidden even though
   //     the profile has no localStorage state.
-  // Dismissal is session-only (in-memory): it hides the overlay for the rest
-  // of this SPA session but is never persisted, so it cannot contradict the
-  // backend's bootstrap state on a later launch.
+  // The marker is deliberately separate from bootstrap.json: deleting
+  // bootstrap.json (PIN re-setup) must not re-trigger onboarding, and vice
+  // versa. Dismissal is session-only (in-memory): it hides the overlay for
+  // the rest of this SPA session but is never persisted.
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const dismissOnboarding = useCallback(() => setOnboardingDismissed(true), []);
   const isMobile = useBelowBreakpoint(1024);

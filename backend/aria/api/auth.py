@@ -42,6 +42,21 @@ def write_bootstrap_file(runtime_token: str, first_run: bool) -> Path:
     return path
 
 
+def write_onboarded_marker() -> Path:
+    """Record that this profile has been launched at least once.
+
+    Independent of bootstrap.json and NEVER gated by DISABLE_BOOTSTRAP_WRITE_ENV
+    (that flag only disables the bootstrap handshake for the old Rust-invoke
+    scheme). Written unconditionally on every issue() so first_run flips to
+    False on the second launch even when Tauri never writes bootstrap.json.
+    """
+    settings = get_settings()
+    path = Path(settings.onboarded_marker_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(time.strftime("%Y-%m-%dT%H:%M:%S"), encoding="utf-8")
+    return path
+
+
 class RuntimeTokenStore:
     def __init__(self):
         self._token: str | None = None
@@ -55,7 +70,8 @@ class RuntimeTokenStore:
         self._token = env_token or generate_runtime_token()
         self._pin = settings.LOCAL_AGENT_UI_PIN.strip() or generate_pin()
         self._failed_attempts = 0
-        self._first_run = not Path(settings.runtime_token_path).expanduser().exists()
+        self._first_run = not Path(settings.onboarded_marker_path).expanduser().exists()
+        write_onboarded_marker()
         if os.getenv(DISABLE_BOOTSTRAP_WRITE_ENV, "0") != "1":
             write_bootstrap_file(self._token, self._first_run)
         return self._token, self._pin
@@ -71,9 +87,10 @@ class RuntimeTokenStore:
         return self._token or ""
 
     def first_run(self) -> bool:
-        """True when no runtime-token bootstrap file existed before issue() —
-        i.e. the first launch of this profile. Lets main.py embed a
-        ``first-run`` meta tag so the SPA can show onboarding once."""
+        """True when no onboarded marker file existed before issue() — i.e.
+        the first launch of this profile. Lets main.py embed a ``first-run``
+        meta tag so the SPA can show onboarding once. Independent of the
+        bootstrap.json handshake: the marker is written unconditionally."""
         return self._first_run
 
     def verify_pin(self, presented: str | None) -> bool:

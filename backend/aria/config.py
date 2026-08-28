@@ -79,17 +79,27 @@ class Settings(BaseSettings):
     # (~/.local-agent-ui/bootstrap.json). Tauri reads this file directly instead
     # of relying on independently-configured env defaults (fixes §10.4 gap).
     runtime_token_path: str = str(Path.home() / ".local-agent-ui" / "bootstrap.json")
+    # First-launch marker, deliberately independent of bootstrap.json: written
+    # unconditionally on every issue() even when the Tauri shell disables the
+    # bootstrap handshake (LOCAL_AGENT_DISABLE_BOOTSTRAP_WRITE=1), so onboarding
+    # fires exactly once. Deleting bootstrap.json (PIN re-setup) must not
+    # re-trigger onboarding, and vice versa.
+    onboarded_marker_path: str = str(Path.home() / ".local-agent-ui" / ".onboarded")
     ws_backfill_limit: int = 500
 
-    @field_validator("runtime_token_path", mode="before")
+    @field_validator("runtime_token_path", "onboarded_marker_path", mode="before")
     @classmethod
-    def _default_runtime_token_path_if_blank(cls, value: str | None) -> str:
+    def _default_path_if_blank(cls, value: str | None, info) -> str:
         # RUNTIME_TOKEN_PATH= (blank) in .env is meant to mean "use the
         # default", but pydantic-settings treats a blank env value as an
         # explicit empty-string override, which resolves to "." and crashes
         # the backend on startup (IsADirectoryError). Treat blank as unset.
         if not value:
-            return str(Path.home() / ".local-agent-ui" / "bootstrap.json")
+            defaults = {
+                "runtime_token_path": str(Path.home() / ".local-agent-ui" / "bootstrap.json"),
+                "onboarded_marker_path": str(Path.home() / ".local-agent-ui" / ".onboarded"),
+            }
+            return defaults.get(info.field_name, value)
         return value
 
     # --- §16.3 Security UX: idle-lock PIN. No hardcoded default — if unset,
