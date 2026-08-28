@@ -246,6 +246,9 @@ async def startup() -> None:
     seed_database()
     from aria.db.skills_seed import seed_skills
     seed_skills()
+    # L2 prod-release: дефолтные scheduler_jobs при первом старте (идемпотентно)
+    from aria.scheduler.jobs import seed_default_scheduler_jobs
+    seed_default_scheduler_jobs()
     # Register real providers from router into DB health table
     with session_scope() as db:
         for pclass, providers in router.providers_by_class.items():

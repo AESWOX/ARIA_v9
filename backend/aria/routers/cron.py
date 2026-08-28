@@ -13,7 +13,7 @@ import os
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from aria.api.auth import require_runtime_token
 from aria.db import models as m
@@ -157,12 +157,30 @@ async def resume_cron_job(
 @router.post("/cron/jobs/{job_id}/trigger")
 async def trigger_cron_job(
     job_id: uuid.UUID,
+    request: Request,
     _: str = Depends(require_runtime_token),
 ) -> dict[str, Any]:
-    """Best-effort trigger: records a run. No background executor exists yet."""
+    """Trigger job: dispatches to a real runner by name (L2 prod-release).
+
+    Known jobs (``expire_stale_attention_items``, ``refresh_provider_models``)
+    are executed via ``aria.scheduler.jobs.run_scheduler_job_by_name``; unknown
+    names fall back to recording the run (best-effort)."""
+    from aria.scheduler.jobs import run_scheduler_job_by_name
+
+    router = getattr(request.app.state, "router", None)
+    with session_scope() as db:
+        row = repo.get_scheduler_job(db, job_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="job not found")
+        job_name = row.name
+    try:
+        result = await run_scheduler_job_by_name(job_name, router=router)
+    except Exception as exc:
+        result = {"ok": False, "job": job_name, "error": str(exc)}
+    last_run_status = "ok" if result.get("ok") else "error"
     with session_scope() as db:
         row = repo.update_scheduler_job(
-            db, job_id, enabled=True, last_run_at=utc_now(), last_run_status="triggered"
+            db, job_id, enabled=True, last_run_at=utc_now(), last_run_status=last_run_status
         )
         if row is None:
             raise HTTPException(status_code=404, detail="job not found")

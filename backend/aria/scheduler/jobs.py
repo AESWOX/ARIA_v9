@@ -12,10 +12,69 @@ from aria.db import repository as repo
 from aria.db.base import session_scope
 
 
-def expire_stale_attention_items_job() -> int:
-    """Expire pending attention items whose TTL elapsed."""
+DEFAULT_SCHEDULER_JOBS: list[dict] = [
+    {
+        "name": "expire_stale_attention_items",
+        "schedule": "*/5 * * * *",
+        "objective": "TTL watchdog: expire pending attention items whose expires_at elapsed.",
+        "allowed_tools": [],
+    },
+    {
+        "name": "refresh_provider_models",
+        "schedule": "*/30 * * * *",
+        "objective": "Refresh provider model catalog (upsert + purge stale providers).",
+        "allowed_tools": [],
+    },
+]
+
+
+def seed_default_scheduler_jobs() -> int:
+    """L2 prod-release: создать дефолтные scheduler_jobs при старте, если их ещё нет.
+
+    Идемпотентно: при повторном запуске не создаёт дубликаты с тем же именем.
+    """
+    created = 0
     with session_scope() as db:
-        return repo.expire_stale_attention_items(db)
+        existing = {row.name for row in repo.list_scheduler_jobs(db)}
+        for spec in DEFAULT_SCHEDULER_JOBS:
+            if spec["name"] in existing:
+                continue
+            repo.create_scheduler_job(db, **spec)
+            created += 1
+    return created
+
+
+def expire_stale_attention_items_job() -> int:
+    """Expire pending attention items whose TTL elapsed.
+
+    Реальный результат (expired>0) фиксируется событием ``scheduler.job_run``
+    в таблице ``events`` — критерий L2: job реально вызывается и наблюдаем.
+    """
+    with session_scope() as db:
+        expired = repo.expire_stale_attention_items(db)
+        if expired:
+            repo.persist_event(
+                db,
+                "scheduler.job_run",
+                {"job": "expire_stale_attention_items", "expired": expired},
+            )
+        return expired
+
+
+async def run_scheduler_job_by_name(name: str, router=None) -> dict:
+    """L2: реальный запуск job'а по имени (для POST /api/cron/jobs/{id}/trigger).
+
+    Неизвестные имена — best-effort (только запись run, без executor).
+    """
+    if name == "expire_stale_attention_items":
+        expired = expire_stale_attention_items_job()
+        return {"ok": True, "job": name, "expired": expired}
+    if name == "refresh_provider_models":
+        if router is None:
+            return {"ok": False, "job": name, "error": "router unavailable"}
+        count = await refresh_provider_models_job(router)
+        return {"ok": True, "job": name, "models": count}
+    return {"ok": True, "job": name, "note": "no registered runner (best-effort)"}
 
 
 def list_scheduler_jobs_payload() -> list[dict]:
