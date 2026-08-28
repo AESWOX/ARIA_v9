@@ -1,0 +1,135 @@
+﻿{
+    "completed":  "2026-08-27 21:42:47",
+    "results":  [
+                    {
+                        "Test":  "diag-net",
+                        "Status":  "PASS",
+                        "Detail":  "guest -\u003e aka.ms/webview2bootstrap ok=True"
+                    },
+                    {
+                        "Test":  "diag-webview2",
+                        "Status":  "INFO",
+                        "Detail":  "missing"
+                    },
+                    {
+                        "Test":  "P2-webview2-ready",
+                        "Status":  "INFO",
+                        "Detail":  "webview2 ready=True (present (ver 151.0.4129.107))"
+                    },
+                    {
+                        "Test":  "P2-install",
+                        "Status":  "PASS",
+                        "Detail":  "exit=0 dur=8.1s exe=C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Local Agent Desktop\\local-agent-ui.exe"
+                    },
+                    {
+                        "Test":  "P2-launch",
+                        "Status":  "PASS",
+                        "Detail":  "port=49874 health={\"overall\":\"online\",\"ws_connected\":false,\"reconnect_mode\":\"live\",\"checked_at\":\"2026-08-27T18:41:06.205543+00:00\",\"components\":[{\"key\":\"backend\",\"label\":\"Backend API\",\"status\":\"online\",\"detail\":\"FastAPI running\"},{\"key\":\"postgres\",\"label\":\"Database\",\"status\":\"online\",\"detail\":\"sqlite:///./data/local_agent.db\"},{\"key\":\"redis\",\"label\":\"Redis\",\"status\":\"reduced\",\"detail\":\"redis://localhost:6379/0\"}],\"provider_health\":[{\"id\":\"stub-local\",\"label\":\"Stub local\",\"provider_class\":\"free_tier_reasoning\",\"status\":\"active\",\"failure_rate_pct\":0,\"usage_pct\":12},{\"id\":\"stub-free\",\"label\":\"stub-free\",\"provider_class\":\"free_tier_reasoning\",\"status\":\"active\",\"failure_rate_pct\":0,\"usage_pct\":0},{\"id\":\"stub-standard\",\"label\":\"stub-standard\",\"provider_class\":\"standard_reasoning\",\"status\":\"active\",\"failure_rate_pct\":0,\"usage_pct\":0},{\"id\":\"stub-premium\",\"label\":\"stub-premium\",\"provider_class\":\"premium_reasoning\",\"status\":\"active\",\"failure_rate_pct\":0,\"usage_pct\":0},{\"id\":\"stub-subagent\",\"label\":\"stub-subagent\",\"provider_class\":\"subagent_execution\",\"status\":\"active\",\"failure_rate_pct\":0,\"usage_pct\":0}]}"
+                    },
+                    {
+                        "Test":  "P2-meta-first-run",
+                        "Status":  "INFO",
+                        "Detail":  "launch1 first-run=true"
+                    },
+                    {
+                        "Test":  "P2-skills",
+                        "Status":  "INFO",
+                        "Detail":  "skills count=33"
+                    },
+                    {
+                        "Test":  "P2-tables",
+                        "Status":  "INFO",
+                        "Detail":  "ok (18 tables)"
+                    },
+                    {
+                        "Test":  "P3-bootstrap-after-L1",
+                        "Status":  "INFO",
+                        "Detail":  "bootstrap.json exists=False path=C:\\Users\\WDAGUtilityAccount\\.local-agent-ui\\bootstrap.json"
+                    },
+                    {
+                        "Test":  "P3-meta-first-run",
+                        "Status":  "INFO",
+                        "Detail":  "launch2 first-run=true (TZ expects false after onboarding)"
+                    },
+                    {
+                        "Test":  "P1-respawn",
+                        "Status":  "INFO",
+                        "Detail":  "respawn intervals (s): 10, 7.1, 8.6, 8.6 [4 crashes]"
+                    },
+                    {
+                        "Test":  "P1-same-port",
+                        "Status":  "INFO",
+                        "Detail":  "port stable: 49929"
+                    },
+                    {
+                        "Test":  "P1-same-token",
+                        "Status":  "INFO",
+                        "Detail":  "runtime-token stable across respawns=True (tokens=c5271fd0-9693-4058-9395-60d577abba41,c5271fd0-9693-4058-9395-60d577abba41,c5271fd0-9693-4058-9395-60d577abba41,c5271fd0-9693-4058-9395-60d577abba41)"
+                    },
+                    {
+                        "Test":  "P6-graceful-close",
+                        "Status":  "PASS",
+                        "Detail":  "orphan backend after graceful close=False"
+                    },
+                    {
+                        "Test":  "P6-crash-in-flight",
+                        "Status":  "PASS",
+                        "Detail":  "orphan backend after in-flight close=False"
+                    },
+                    {
+                        "Test":  "P5-version",
+                        "Status":  "INFO",
+                        "Detail":  "installed=0.1.0 product=0.1.0 (TZ target 0.1.1)"
+                    },
+                    {
+                        "Test":  "P5-updater",
+                        "Status":  "BLOCKED",
+                        "Detail":  "updater endpoints in tauri.conf.json = placeholder github.com/\u003cOWNER\u003e/\u003cREPO\u003e; offline sandbox cannot fetch real release; plugin present but not wired"
+                    },
+                    {
+                        "Test":  "P4-uninstall",
+                        "Status":  "INFO",
+                        "Detail":  "exit=0 timedOut=False"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "install-dir exists=True"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "appdata-com-ident exists=True"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "appdata-product exists=False"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "localappdata-product exists=True"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "localappdata-ui-aria exists=False"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "home-local-agent-ui exists=False"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "home-bootstrap-json exists=False"
+                    },
+                    {
+                        "Test":  "P4-no-orphan",
+                        "Status":  "PASS",
+                        "Detail":  "no backend process after uninstall"
+                    }
+                ]
+}

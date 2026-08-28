@@ -21,6 +21,20 @@ function readRuntimeToken(): string | null {
   return (window as any).__RUNTIME_TOKEN__ ?? null;
 }
 
+/**
+ * True when the backend embedded <meta name="first-run" content="true"> into
+ * the served HTML. The backend emits this snapshot whenever no runtime-token
+ * bootstrap file existed at startup — i.e. the PIN/lock state is not yet
+ * configured. The SPA shows the onboarding overlay while this is true; because
+ * the flag comes from the backend (not webview localStorage), the overlay
+ * reappears after bootstrap.json is deleted and stays hidden on machines where
+ * the PIN is already configured.
+ */
+export function readFirstRun(): boolean {
+  if (typeof window === "undefined") return false;
+  return document.querySelector('meta[name="first-run"]')?.getAttribute("content") === "true";
+}
+
 export async function initRuntimeBaseUrl(): Promise<string> {
   if (_runtimeBaseUrl) return _runtimeBaseUrl;
   _runtimeToken = readRuntimeToken();

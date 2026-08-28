@@ -812,4 +812,22 @@ export const en: Translations = {
     logTruncated: "(showing last 100 KB — full log at ",
     logAt: ")",
   },
+  onboarding: {
+    welcomeTitle: "Welcome to ARIA",
+    welcomeBody:
+      "Your local agent runtime is up. This quick walkthrough shows you how the security model and access token work — it takes about a minute.",
+    pinTitle: "Your PIN lock",
+    pinBody:
+      "ARIA auto-locks after inactivity. On the first launch a 6-digit PIN was generated and written to your config. You can change it anytime under Keys → LOCAL_AGENT_UI_PIN.",
+    pinHint: "If you forget the PIN, delete the lock state in your config directory.",
+    openKeys: "Open Keys",
+    tokenTitle: "Your runtime token",
+    tokenBody:
+      "The runtime token authenticates this app against the local backend. It lives in the bootstrap file next to your config and is rotated on every launch.",
+    tokenHint: "Keep it private — anyone with the token controls your local agent.",
+    skip: "Skip",
+    back: "Back",
+    next: "Next",
+    done: "Get started",
+  },
 };

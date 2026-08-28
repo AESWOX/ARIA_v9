@@ -27,6 +27,14 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:* https://tauri.localhost"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM0QURFOEVBNDAxNUFDNUYKUldSZnJCVkE2dWl0eFA1bmhUNVc1d3Y3NWEyRXc5MzhxUVQvb0FnNmFuYlkvTlJnbnM4WHpQc2sK",
+      "endpoints": [
+        "https://github.com/<OWNER>/<REPO>/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

@@ -1,0 +1,20 @@
+[package]
+name = "local-agent-ui"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "=5.0.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

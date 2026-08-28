@@ -27,16 +27,28 @@ from pathlib import Path
 from aria.api.auth import token_store
 from aria.config import get_settings
 from aria.db import repository as repo
-from aria.db.base import init_db, session_scope
+from aria.db.base import init_db, run_migrations, session_scope
 from aria.db.enums import ProviderStatus
 from aria.http_utils import seed_database
 from aria.llm.router import build_default_router
+from aria.routers.actions import router as actions_router
+from aria.routers.analytics import router as analytics_router
+from aria.routers.auth import router as auth_router
 from aria.routers.config import router as config_router
+from aria.routers.cron import router as cron_router
+from aria.routers.env import router as env_router
+from aria.routers.files import router as files_router
+from aria.routers.logs import router as logs_router
+from aria.routers.model import router as model_router
+from aria.routers.profiles import router as profiles_router
 from aria.routers.providers import router as providers_router
 from aria.routers.sessions import router as sessions_router
+from aria.routers.skills import router as skills_router
 from aria.routers.storage import router as storage_router
+from aria.routers.stubs import router as stubs_router
 from aria.routers.system import router as system_router
 from aria.routers.tasks import router as tasks_router
+from aria.routers.tools import router as tools_router
 from aria.routers.vault import router as vault_router
 
 # --- Файловое логирование (иначе история живёт только в scrollback консоли
@@ -101,16 +113,26 @@ app.add_middleware(
 )
 
 # ── Strip /api prefix (Vite proxy equivalent in production) ──
-@app.middleware("http")
-async def strip_api_prefix(request, call_next):
-    path = request.url.path
-    if path.startswith("/api/"):
-        request.scope["orig_path"] = path  # preserved for the SPA fallback check
-        request.scope["path"] = path[4:]
-    elif path == "/api":
-        request.scope["orig_path"] = path
-        request.scope["path"] = "/"
-    return await call_next(request)
+# Raw ASGI middleware, not @app.middleware("http"): BaseHTTPMiddleware
+# bypasses WebSocket scopes, which left the frontend's /api/ws upgrade
+# unmatched against the /ws route (live-updates dead in Tauri mode).
+class _StripApiPrefixMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            path = scope.get("path", "")
+            if path.startswith("/api/"):
+                scope["orig_path"] = path  # preserved for the SPA fallback check
+                scope["path"] = path[4:]
+            elif path == "/api":
+                scope["orig_path"] = path
+                scope["path"] = "/"
+        return await self.app(scope, receive, send)
+
+
+app.add_middleware(_StripApiPrefixMiddleware)
 
 
 _app_logger = logging.getLogger("local_agent.main")
@@ -131,7 +153,27 @@ async def allow_private_network(request, call_next):
     return response
 
 
-for _r in (providers_router, storage_router, sessions_router, system_router, config_router, tasks_router, vault_router):
+for _r in (
+    actions_router,
+    analytics_router,
+    auth_router,
+    config_router,
+    cron_router,
+    env_router,
+    files_router,
+    logs_router,
+    model_router,
+    profiles_router,
+    providers_router,
+    sessions_router,
+    skills_router,
+    storage_router,
+    stubs_router,
+    system_router,
+    tasks_router,
+    tools_router,
+    vault_router,
+):
     app.include_router(_r)
 
 
@@ -167,7 +209,10 @@ def _render_index() -> str:
             )
         _index_html = index_path.read_text(encoding="utf-8")
     token = token_store.current_token()
-    meta = f'<meta name="runtime-token" content="{token}">'
+    metas = [f'<meta name="runtime-token" content="{token}">']
+    if token_store.first_run():
+        metas.append('<meta name="first-run" content="true">')
+    meta = "\n  ".join(metas)
     if "</head>" in _index_html:
         return _index_html.replace("</head>", meta + "</head>")
     return meta + _index_html
@@ -195,9 +240,12 @@ async def spa_fallback(request: Request, full_path: str) -> FileResponse | HTMLR
 
 @app.on_event("startup")
 async def startup() -> None:
-    init_db(create_all=True)
+    init_db()
+    run_migrations()
     token_store.issue()
     seed_database()
+    from aria.db.skills_seed import seed_skills
+    seed_skills()
     # Register real providers from router into DB health table
     with session_scope() as db:
         for pclass, providers in router.providers_by_class.items():
@@ -237,7 +285,7 @@ async def startup() -> None:
         _app_logger.info("background scheduler started (interval=%ss)", _SCHEDULER_INTERVAL_SEC)
         while True:
             try:
-                expired = await expire_stale_attention_items_job()
+                expired = expire_stale_attention_items_job()
                 if expired:
                     _app_logger.info("expired %d stale attention item(s)", expired)
                 count = await refresh_provider_models_job(router)

@@ -68,6 +68,7 @@ import { SidebarStatusStrip, gatewayLine } from "@/components/SidebarStatusStrip
 import { useBelowBreakpoint } from "@vendor/ui/hooks/use-below-breakpoint";
 import { useSidebarStatus } from "@/hooks/useSidebarStatus";
 import { AuthWidget } from "@/components/AuthWidget";
+import { OnboardingOverlay } from "@/components/OnboardingOverlay";
 import { PageHeaderProvider } from "@/contexts/PageHeaderProvider";
 import { ProfileProvider } from "@/contexts/ProfileProvider";
 import { useProfileScope } from "@/contexts/useProfileScope";
@@ -83,7 +84,7 @@ import { PluginPage, PluginSlot, usePlugins } from "@/plugins";
 import type { PluginManifest } from "@/plugins";
 import { useTheme } from "@/themes";
 import { isDashboardEmbeddedChatEnabled } from "@/lib/dashboard-flags";
-import { api } from "@/lib/api";
+import { api, readFirstRun } from "@/lib/api";
 import type { StatusResponse } from "@/lib/api";
 
 /**
@@ -436,6 +437,23 @@ export default function App() {
       return next;
     });
   }, []);
+
+  // First-run onboarding. The backend is the source of truth: it embeds
+  // <meta name="first-run"> only when no runtime-token bootstrap file existed
+  // at startup (i.e. the PIN/lock state is NOT configured yet). Gating on the
+  // backend snapshot — and NOT on webview localStorage — gives the product
+  // behavior from the spec:
+  //   * delete bootstrap.json → next launch reports first-run again → the
+  //     overlay reappears even though the webview profile (localStorage) is
+  //     the same;
+  //   * a brand-new webview profile on a machine where bootstrap.json already
+  //     exists → first-run is false → the overlay stays hidden even though
+  //     the profile has no localStorage state.
+  // Dismissal is session-only (in-memory): it hides the overlay for the rest
+  // of this SPA session but is never persisted, so it cannot contradict the
+  // backend's bootstrap state on a later launch.
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const dismissOnboarding = useCallback(() => setOnboardingDismissed(true), []);
   const isMobile = useBelowBreakpoint(1024);
   const isDesktopCollapsed = collapsed && !isMobile;
   const tooltipWarmRef = useRef(0);
@@ -544,6 +562,14 @@ export default function App() {
     mql.addEventListener("change", onChange);
     return () => mql.removeEventListener("change", onChange);
   }, []);
+
+  // Read the backend's first-run snapshot once at mount and derive visibility
+  // from it; dismissal only clears it for the current session.
+  const [firstRun, setFirstRun] = useState(false);
+  useEffect(() => {
+    setFirstRun(readFirstRun());
+  }, []);
+  const onboardingVisible = firstRun && !onboardingDismissed;
 
   return (
     <ProfileProvider>
@@ -914,6 +940,7 @@ export default function App() {
       </div>
 
       <PluginSlot name="overlay" />
+      {onboardingVisible && <OnboardingOverlay onDone={dismissOnboarding} />}
     </div>
     </ProfileProvider>
   );
