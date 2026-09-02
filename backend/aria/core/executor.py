@@ -280,6 +280,18 @@ async def run_task(
             # ЗАБЫЛ/ПРОЕБАЛ + исчерпаны retry → escalation
             task.status = TaskStatus.failed
             task_plan.status = PlanStatus.escalated.value
+            reason = "; ".join(f.reason for f in retryable_flags) or "bounded retry exhausted"
+            if notifier:
+                try:
+                    await notifier.send_escalation(
+                        task_id=task_id,
+                        objective=task.objective,
+                        claimed_result="bounded retry exhausted",
+                        audit_findings=reason,
+                        iteration=task_plan.iteration_count,
+                    )
+                except Exception as e:
+                    logger.warning("Notifier failed for task %s: %s", task_id[:8], e)
             session.flush()
             return {
                 "status": "escalated",

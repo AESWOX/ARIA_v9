@@ -16,6 +16,10 @@ from aria.core.notifiers.protocol import Notifier, NotifierError
 
 logger = logging.getLogger(__name__)
 
+# Идемпотентность: отправленные (task_id, iteration) — защита от дублирования
+# эскалации при повторном прогоне той же задачи в рамках процесса.
+_SENT_ESCALATIONS: set[str] = set()
+
 
 class TelegramNotifier:
     """Отправляет escalation-сообщения в Telegram.
@@ -78,6 +82,14 @@ class TelegramNotifier:
         Raises:
             NotifierError: если все retry исчерпаны.
         """
+        key = self._idempotency_key(task_id, iteration)
+        if key in _SENT_ESCALATIONS:
+            logger.info(
+                "Telegram escalation SKIPPED for task %s iter %d (already sent)",
+                task_id[:8], iteration,
+            )
+            return
+
         text = self._format_message(
             task_id, objective, claimed_result, audit_findings,
             iteration, tool_call_log_url,
@@ -100,6 +112,7 @@ class TelegramNotifier:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     resp = await client.post(url, json=payload)
                     if resp.status_code == 200:
+                        _SENT_ESCALATIONS.add(key)
                         logger.info(
                             "Telegram escalation sent for task %s (attempt %d)",
                             task_id[:8], attempt + 1,

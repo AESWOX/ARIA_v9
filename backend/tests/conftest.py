@@ -20,6 +20,12 @@ _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 _SRC_DB = _BACKEND_ROOT / "data" / "local_agent.db"
 _TEST_DB_PATH = os.path.join(tempfile.gettempdir(), "aria_test_local_agent.db")
 
+# Always start from a clean throwaway DB: a stale file left by a previous
+# run (e.g. when _SRC_DB did not exist) leaks state like scheduler_jobs
+# and makes seed_default_scheduler_jobs() report 0 created rows.
+if os.path.exists(_TEST_DB_PATH):
+    os.remove(_TEST_DB_PATH)
+
 if _SRC_DB.exists():
     # WAL-safe consistent snapshot: sqlite3 backup API, not a raw file copy.
     src = sqlite3.connect(str(_SRC_DB))
