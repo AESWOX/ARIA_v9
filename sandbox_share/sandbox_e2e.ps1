@@ -428,7 +428,18 @@ Log '--- P5: updater ---'
 $appExe = Get-AppExe
 $ver = (Get-Item $appExe -ErrorAction SilentlyContinue).VersionInfo
 Record 'P5-version' 'INFO' "installed=$($ver.FileVersion) product=$($ver.ProductVersion) (TZ target 0.1.1)"
-Record 'P5-updater' 'BLOCKED' "updater endpoints in tauri.conf.json = placeholder github.com/<OWNER>/<REPO>; offline sandbox cannot fetch real release; plugin present but not wired"
+$updCfg = Join-Path 'C:\ARIA' 'tauri.conf.json'
+if (Test-Path $updCfg) {
+    $updRaw = Get-Content $updCfg -Raw -ErrorAction SilentlyContinue
+    if ($updRaw -match '<OWNER>|<REPO>') {
+        Record 'P5-updater' 'BLOCKED' "updater endpoints in tauri.conf.json still placeholder github.com/<OWNER>/<REPO>; offline sandbox cannot fetch real release"
+    } else {
+        $ep = ([regex]::Match($updRaw, '"https://github.com/[^"]+"')).Value
+        Record 'P5-updater' 'INFO' "updater endpoints=$ep (no placeholder); offline sandbox cannot fetch real release; runtime check not triggered in sandbox"
+    }
+} else {
+    Record 'P5-updater' 'BLOCKED' "tauri.conf.json not present in sandbox share ($updCfg); cannot verify endpoint from inside sandbox"
+}
 
 # ---------------------------------------------------------------------------
 # P4: uninstall hygiene
