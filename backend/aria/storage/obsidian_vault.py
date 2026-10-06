@@ -15,6 +15,33 @@ def vault_root() -> Path:
     return root
 
 
+def _is_inside(root: Path, target: Path) -> bool:
+    """True if ``target`` is ``root`` or lives under it.
+
+    Uses real path semantics (not ``str.startswith``): a sibling directory
+    such as ``vault-evil`` shares the string prefix of ``vault`` but is NOT
+    inside it.
+    """
+    try:
+        return target.resolve().is_relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def _safe_note_name(note_name: str) -> str:
+    name = (note_name or "").strip()
+    if not name or name in (".", "..") or any(c in name for c in "/\\\0"):
+        raise ValueError(f"invalid note name: {note_name!r}")
+    return name
+
+
+def _safe_folder(root: Path, folder: str) -> Path:
+    target = (root / (folder or "").lstrip("/\\")).resolve()
+    if not _is_inside(root, target):
+        raise ValueError("path escapes vault root")
+    return target
+
+
 def _parse_frontmatter(text: str) -> dict:
     """Ported from local-agent-max toolbox/obsidian_tool.py: minimal YAML
     frontmatter parser (key: value lines between --- markers)."""
@@ -37,7 +64,11 @@ def _extract_wiki_links(text: str) -> list[str]:
 
 def read_note(note_name: str) -> dict:
     root = vault_root()
-    candidates = list(root.rglob(f"{note_name}.md"))
+    note_name = _safe_note_name(note_name)
+    candidates = [
+        c for c in root.rglob(f"{note_name}.md")
+        if not any(part.startswith(".") for part in c.relative_to(root).parts)
+    ]
     if not candidates:
         return {"found": False, "content": None, "path": None}
     path = candidates[0]
@@ -53,11 +84,11 @@ def read_note(note_name: str) -> dict:
 
 def write_note(note_name: str, content: str, folder: str = "00-TASKS") -> dict:
     root = vault_root()
-    target_dir = root / folder
+    target_dir = _safe_folder(root, folder)
     target_dir.mkdir(parents=True, exist_ok=True)
-    path = target_dir / f"{note_name}.md"
+    path = target_dir / f"{_safe_note_name(note_name)}.md"
     path.write_text(content, encoding="utf-8")
-    return {"path": str(path.relative_to(root)), "bytes_written": len(content)}
+    return {"path": str(path.relative_to(root.resolve())), "bytes_written": len(content)}
 
 
 def write_note_atomic(note_name: str, content: str, folder: str = "00-TASKS") -> dict:
@@ -67,13 +98,13 @@ def write_note_atomic(note_name: str, content: str, folder: str = "00-TASKS") ->
     Используется Stage 7 (Delivery) с file-lock из core/locking.py.
     """
     root = vault_root()
-    target_dir = root / folder
+    target_dir = _safe_folder(root, folder)
     target_dir.mkdir(parents=True, exist_ok=True)
-    path = target_dir / f"{note_name}.md"
+    path = target_dir / f"{_safe_note_name(note_name)}.md"
     tmp = path.with_suffix(f".md.tmp.{uuid4().hex[:8]}")
     tmp.write_text(content, encoding="utf-8")
-    tmp.rename(path)  # атомарно на NTFS/Ext4
-    return {"path": str(path.relative_to(root)), "bytes_written": len(content)}
+    tmp.replace(path)  # атомарно; replace() (не rename) перезаписывает на Windows
+    return {"path": str(path.relative_to(root.resolve())), "bytes_written": len(content)}
 
 
 def _normalize_note_path(note_path: str) -> Path:
@@ -87,7 +118,7 @@ def resolve_note_path(note_path: str, create_parent: bool = False) -> Path:
     root = vault_root().resolve()
     normalized = _normalize_note_path(note_path)
     target = (root / normalized).resolve()
-    if not str(target).startswith(str(root)):
+    if not _is_inside(root, target):
         raise ValueError("path escapes vault root")
     if create_parent:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -144,7 +175,7 @@ def _sanitize_asset_name(file_name: str) -> str:
 def save_binary_asset(file_name: str, content: bytes, subdir: str = ".assets") -> dict:
     root = vault_root().resolve()
     assets_dir = (root / Path(subdir.lstrip("/"))).resolve()
-    if not str(assets_dir).startswith(str(root)):
+    if not _is_inside(root, assets_dir):
         raise ValueError("path escapes vault root")
     assets_dir.mkdir(parents=True, exist_ok=True)
 
@@ -223,7 +254,7 @@ def list_vault_tree(subdir: str = "") -> dict:
     target_dir = (root / subdir) if subdir else root
     target_dir = target_dir.resolve()
 
-    if not str(target_dir).startswith(str(root.resolve())):
+    if not _is_inside(root, target_dir):
         return {"error": "path escapes vault root"}
     if not target_dir.exists() or not target_dir.is_dir():
         return {"error": f"directory not found: {subdir}"}
@@ -231,7 +262,7 @@ def list_vault_tree(subdir: str = "") -> dict:
     dirs = sorted(d.name for d in target_dir.iterdir() if d.is_dir() and not d.name.startswith("."))
     notes = sorted(f.name for f in target_dir.glob("*.md"))
     return {
-        "path": str(target_dir.relative_to(root)).replace("\\", "/") if subdir else "",
+        "path": str(target_dir.relative_to(root.resolve())).replace("\\", "/") if subdir else "",
         "dirs": dirs,
         "notes": notes,
         "total_notes": len(notes),
