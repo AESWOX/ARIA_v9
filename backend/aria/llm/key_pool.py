@@ -61,10 +61,17 @@ class KeyPool:
                     return key
             raise NoAvailableKeys(f"pool '{self.name}': all {len(self._keys)} keys dead/cooling down")
 
-    def mark_rate_limited(self, key: str) -> None:
+    def mark_rate_limited(self, key: str, cooldown_sec: float | None = None) -> None:
+        """Put the key on cooldown (default ``self.cooldown_sec``).
+
+        ``cooldown_sec`` lets callers back off longer for daily quotas or when
+        the server sent Retry-After. Never shortens an existing cooldown.
+        """
+        seconds = self.cooldown_sec if cooldown_sec is None else max(0.0, float(cooldown_sec))
+        until = time.monotonic() + seconds
         with self._lock:
-            self._cooldown_until[key] = time.monotonic() + self.cooldown_sec
-        logger.warning("pool '%s': key ...%s rate-limited, cooldown %.0fs", self.name, key[-4:], self.cooldown_sec)
+            self._cooldown_until[key] = max(until, self._cooldown_until.get(key, 0.0))
+        logger.warning("pool '%s': key ...%s cooldown %.0fs", self.name, key[-4:], seconds)
 
     def mark_dead(self, key: str) -> None:
         with self._lock:

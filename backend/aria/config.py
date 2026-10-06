@@ -133,6 +133,12 @@ class Settings(BaseSettings):
     # GEMINI_API_KEYS=key1,key2,key3,...,key9
     gemini_api_keys: str = ""
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    # Model ids are configurable because Google moves models between the free
+    # and paid tiers. Defaults are Flash for BOTH classes so a free key never
+    # hits a paid-only model. With billing enabled set e.g.
+    # GEMINI_PRO_MODEL=gemini-2.5-pro in .env.
+    gemini_flash_model: str = "gemini-2.5-flash"
+    gemini_pro_model: str = "gemini-2.5-flash"
 
     groq_api_key: str = ""
     # GROQ_API_KEYS=key1,key2,...,key10

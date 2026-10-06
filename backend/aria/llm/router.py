@@ -175,7 +175,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="gemini-flash",
                 provider_class="free_tier_reasoning",
                 base_url=settings.gemini_base_url,
-                model="gemini-2.5-flash",
+                model=settings.gemini_flash_model,
                 key_pool=gemini_pool_flash,
             )
         )
@@ -184,7 +184,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="gemini-pro",
                 provider_class="standard_reasoning",
                 base_url=settings.gemini_base_url,
-                model="gemini-3.1-pro",
+                model=settings.gemini_pro_model,
                 key_pool=gemini_pool_pro,
             )
         )
@@ -195,7 +195,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="gemini-pro-premium-fallback",
                 provider_class="premium_reasoning",
                 base_url=settings.gemini_base_url,
-                model="gemini-3.1-pro",
+                model=settings.gemini_pro_model,
                 key_pool=KeyPool(gemini_keys, name="gemini-answers"),
             )
         )
@@ -244,7 +244,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="gemini-vision",
                 provider_class="vision_multimodal",
                 base_url=settings.gemini_base_url,
-                model="gemini-2.5-flash",
+                model=settings.gemini_flash_model,
                 key_pool=vision_pool,
             )
         )
