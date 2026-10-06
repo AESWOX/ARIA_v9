@@ -32,6 +32,14 @@ if _SRC_DB.exists():
     dst = sqlite3.connect(_TEST_DB_PATH)
     with dst:
         src.backup(dst)
+    # The dev DB gets default scheduler_jobs seeded on every backend start,
+    # which would make test_seed_creates_default_jobs see 0 newly created rows.
+    # Tests expect a fresh scheduler_jobs table -> clear it in the throwaway copy only.
+    try:
+        with dst:
+            dst.execute("DELETE FROM scheduler_jobs")
+    except sqlite3.OperationalError:
+        pass  # table not present in an older snapshot
     dst.close()
     src.close()
 
