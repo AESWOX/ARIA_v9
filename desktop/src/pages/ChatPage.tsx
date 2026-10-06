@@ -24,7 +24,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "@vendor/ui/ui/components/button";
 import { Typography } from "@vendor/ui/ui/components/typography/index";
-import { buildWsAuthParam, getRuntimeToken, resolveBase } from "@/lib/api";
+import { buildWsAuthParam, getRuntimeToken, resolveBase, wsOrigin } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Copy, PanelRight, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -49,7 +49,6 @@ async function buildWsUrl(
   profile: string,
 ): Promise<string> {
   const base = await resolveBase();
-  const proto = base.startsWith("https:") ? "wss:" : "ws:";
   // ``authParam`` is ``["token", <session>]`` in loopback mode and
   // ``["ticket", <minted>]`` in gated mode. The server-side helper
   // ``_ws_auth_ok`` picks whichever shape matches the current gate state.
@@ -59,7 +58,7 @@ async function buildWsUrl(
   // selected profile, so the conversation runs with that profile's model,
   // skills, memory, and sessions (see web_server._resolve_chat_argv).
   if (profile) qs.set("profile", profile);
-  return `${proto}//${base.replace(/^https?:\/\//, "")}/api/pty?${qs.toString()}`;
+  return `${wsOrigin(base)}/api/pty?${qs.toString()}`;
 }
 
 // Channel id ties this chat tab's PTY child (publisher) to its sidebar

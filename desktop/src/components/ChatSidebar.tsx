@@ -33,7 +33,7 @@ import { ModelReloadConfirm } from "@/components/ModelReloadConfirm";
 import { ReasoningPicker } from "@/components/ReasoningPicker";
 import { ToolCall, type ToolEntry } from "@/components/ToolCall";
 import { GatewayClient, type ConnectionState } from "@/lib/gatewayClient";
-import { api, buildWsAuthParam, resolveBase } from "@/lib/api";
+import { api, buildWsAuthParam, resolveBase, wsOrigin } from "@/lib/api";
 import { titleFromSessionInfoPayload } from "@/lib/chat-title";
 
 import { cn } from "@/lib/utils";
@@ -248,10 +248,9 @@ export function ChatSidebar({
         return;
       }
       const base = await resolveBase();
-      const proto = base.startsWith("https:") ? "wss:" : "ws:";
       const qs = new URLSearchParams({ [authName]: authValue, channel });
       ws = new WebSocket(
-        `${proto}//${base.replace(/^https?:\/\//, "")}/api/events?${qs.toString()}`,
+        `${wsOrigin(base)}/api/events?${qs.toString()}`,
       );
 
       // `unmounting` suppresses the banner during cleanup — `ws.close()`

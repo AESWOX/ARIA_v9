@@ -60,6 +60,16 @@ async function resolveBase(): Promise<string> {
 
 export { resolveBase };
 
+/** WebSocket origin (``ws://host:port``) for a given base. In same-origin
+ * mode base is "" — derive from window.location (otherwise ``ws:///api/..``
+ * is parsed by the browser as host "api"). */
+export function wsOrigin(base: string): string {
+  if (base) {
+    return `${base.startsWith("https:") ? "wss:" : "ws:"}//${base.replace(/^https?:\/\//, "")}`;
+  }
+  return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+}
+
 function readBasePath(): string {
   if (typeof window === "undefined") return "";
   // Same-origin mode: the webview loads http://127.0.0.1:<port>/ directly
