@@ -6,6 +6,8 @@ built-in profile backed by the backend working dir and cannot be deleted.
 """
 from __future__ import annotations
 
+from aria import paths
+
 import re
 import shutil
 from pathlib import Path
@@ -19,9 +21,9 @@ from aria.config import get_settings
 
 router = APIRouter(tags=["profiles"])
 
-_PROFILES_ROOT = Path(__file__).resolve().parents[2] / "data" / "profiles"
-_STATE_FILE = Path(__file__).resolve().parents[2] / "data" / "profile_state.json"
-_SKILLS_ROOT = Path(__file__).resolve().parent.parent / "data" / "skills"
+_PROFILES_ROOT = paths.data_dir() / "profiles"
+_STATE_FILE = paths.data_dir() / "profile_state.json"
+_SKILLS_ROOT = paths.skills_dir()
 
 _NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 

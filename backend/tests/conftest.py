@@ -1,69 +1,68 @@
-"""pytest configuration — enables anyio for async test functions.
+"""pytest configuration - hermetic test environment.
 
-DB isolation: tests MUST NOT touch the real backend database
-(backend/data/local_agent.db). POSTGRES_DSN is pointed at a THROWAWAY COPY
-of the real DB (via sqlite3 backup API, WAL-safe) BEFORE any `aria` module
-is imported, so Settings() picks up the test DSN on first instantiation
-(config.get_settings is lru_cached).
+Every test run gets its OWN throw-away data directory (ARIA_DATA_DIR): a fresh
+sqlite DB built from scratch via init_db + migrations, a fixture skills dir and
+a fixture Obsidian vault. Nothing is copied from, or written to, the developer's
+real backend/data, backend/.env or vault - so a clean `git clone` and a
+developer machine give the same result, and a green run means the CODE works,
+not that someone's local data happened to be present.
 
-Why a copy instead of a fresh empty DB: the integration tests in this suite
-were designed against a populated DB (skills_meta imported via
-import_skills.py, friend_memory, existing sessions). A fresh DB would break
-them; a copy keeps all green while the real DB stays untouched.
+All env vars are set BEFORE any `aria` module is imported, because
+config.get_settings is lru_cached.
 """
+import atexit
 import os
-import sqlite3
+import shutil
 import tempfile
 from pathlib import Path
 
-_BACKEND_ROOT = Path(__file__).resolve().parent.parent
-_SRC_DB = _BACKEND_ROOT / "data" / "local_agent.db"
-_TEST_DB_PATH = os.path.join(tempfile.gettempdir(), "aria_test_local_agent.db")
+_TEST_ROOT = Path(tempfile.mkdtemp(prefix="aria_test_"))
+atexit.register(shutil.rmtree, _TEST_ROOT, ignore_errors=True)
 
-# Always start from a clean throwaway DB: a stale file left by a previous
-# run (e.g. when _SRC_DB did not exist) leaks state like scheduler_jobs
-# and makes seed_default_scheduler_jobs() report 0 created rows.
-if os.path.exists(_TEST_DB_PATH):
-    os.remove(_TEST_DB_PATH)
+# Never inherit the developer's configuration or real provider keys.
+for _name in (
+    "ARIA_SKILLS_DIR", "OBSIDIAN_VAULT_PATH", "GEMINI_API_KEY", "GEMINI_API_KEYS", "GROQ_API_KEY",
+    "GROQ_API_KEYS", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
+    "GEMINI_FLASH_MODEL", "GEMINI_PRO_MODEL", "VISION_GEMINI_API_KEYS", "COMPRESSION_GEMINI_API_KEYS",
+):
+    os.environ.pop(_name, None)
 
-if _SRC_DB.exists():
-    # WAL-safe consistent snapshot: sqlite3 backup API, not a raw file copy.
-    src = sqlite3.connect(str(_SRC_DB))
-    dst = sqlite3.connect(_TEST_DB_PATH)
-    with dst:
-        src.backup(dst)
-    # The dev DB gets default scheduler_jobs seeded on every backend start,
-    # which would make test_seed_creates_default_jobs see 0 newly created rows.
-    # Tests expect a fresh scheduler_jobs table -> clear it in the throwaway copy only.
-    try:
-        with dst:
-            dst.execute("DELETE FROM scheduler_jobs")
-    except sqlite3.OperationalError:
-        pass  # table not present in an older snapshot
-    dst.close()
-    src.close()
+os.environ["ARIA_DATA_DIR"] = str(_TEST_ROOT)
+os.environ["POSTGRES_DSN"] = "sqlite:///" + (_TEST_ROOT / "local_agent.db").as_posix()
 
-os.environ["POSTGRES_DSN"] = f"sqlite:///{_TEST_DB_PATH}"
+FIXTURE_SKILLS = {
+    "web-research": "# Web research\nSearch, read, summarise.",
+    "code-review": "# Code review\nRead the diff, list risks.",
+    "obsidian-notes": "# Obsidian notes\nRead and write notes in the vault.",
+}
+FIXTURE_VAULT = {
+    "00-RAW/inbox.md": "# Inbox\nraw capture fixture-token",
+    "03-PROJECTS/aria.md": "---\nstatus: active\n---\n# ARIA\nsee [[decision-1]] fixture-token",
+    "AGENTS/oracle.md": "# Oracle\nplanner agent",
+    "VAULT/index.md": "# Index\nentry point",
+    "DECISIONS/decision-1.md": "# Decision 1\nuse sqlite",
+}
+
+for _name, _text in FIXTURE_SKILLS.items():
+    _d = _TEST_ROOT / "skills" / _name
+    _d.mkdir(parents=True, exist_ok=True)
+    (_d / "SKILL.md").write_text(_text, encoding="utf-8")
+for _rel, _text in FIXTURE_VAULT.items():
+    _f = _TEST_ROOT / "vault" / _rel
+    _f.parent.mkdir(parents=True, exist_ok=True)
+    _f.write_text(_text, encoding="utf-8")
 
 import pytest
 
 
 def pytest_configure(config):
-    """Ensure schema + skills exist even on a clean machine (no dev-DB).
-
-    When local_agent.db is absent we still need skills_meta populated,
-    otherwise integration tests fail with 'no such table: skills_meta'.
-    init_db(create_all=True) is a no-op on the cloned dev-DB, and
-    seed_skills() only inserts missing rows (idempotent).
-    """
+    """Build the schema from scratch and seed the fixture skills."""
     from aria.db.base import init_db, run_migrations
     from aria.db.skills_seed import seed_skills
 
     init_db()
     run_migrations()
-    n = seed_skills()
-    if n:
-        print(f"[conftest] seeded {n} skills")
+    seed_skills()
 
 
 def pytest_collection_modifyitems(items):

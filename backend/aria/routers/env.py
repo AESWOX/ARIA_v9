@@ -7,6 +7,8 @@ GET; POST /api/env/reveal returns the raw value under runtime-token auth.
 """
 from __future__ import annotations
 
+from aria import paths
+
 import os
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,7 @@ from aria.api.auth import require_runtime_token
 
 router = APIRouter(tags=["env"])
 
-_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+_ENV_FILE = paths.env_file()
 
 
 def _mask(value: str | None) -> str | None:

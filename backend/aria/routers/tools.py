@@ -8,6 +8,8 @@ persist to ``data/toolsets.json``; env var presence is read live from
 """
 from __future__ import annotations
 
+from aria import paths
+
 import json
 import os
 import threading
@@ -21,7 +23,7 @@ from aria.routers import actions as actions_module
 
 router = APIRouter(tags=["tools"])
 
-_STATE_FILE = Path(__file__).resolve().parent.parent / "data" / "toolsets.json"
+_STATE_FILE = paths.pkg_data_dir() / "toolsets.json"
 _state_lock = threading.Lock()
 
 

@@ -16,7 +16,10 @@ from typing import Any
 from dotenv import load_dotenv
 
 # Load .env BEFORE anything else — settings depend on it
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
+from aria import paths as _paths
+
+_paths.ensure_user_data()
+load_dotenv(_paths.env_file())
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,7 +56,7 @@ from aria.routers.vault import router as vault_router
 
 # --- Файловое логирование (иначе история живёт только в scrollback консоли
 # и теряется при закрытии/переполнении терминала) ---
-_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
+_LOG_DIR = str(_paths.log_dir())
 os.makedirs(_LOG_DIR, exist_ok=True)
 _LOG_FILE = os.path.join(_LOG_DIR, "backend.log")
 

@@ -7,6 +7,8 @@ so a restart keeps the chosen models.
 """
 from __future__ import annotations
 
+from aria import paths
+
 import json
 import threading
 from pathlib import Path
@@ -20,7 +22,7 @@ from aria.db.base import session_scope
 
 router = APIRouter(tags=["model"])
 
-_STATE_FILE = Path(__file__).resolve().parent.parent / "data" / "model_assignment.json"
+_STATE_FILE = paths.data_dir() / "model_assignment.json"
 _state_lock = threading.Lock()
 
 # Auxiliary task slots surfaced by the UI (ModelsPage AUX_TASKS).

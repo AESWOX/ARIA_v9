@@ -18,24 +18,12 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from aria import paths
 from aria.db.base import session_scope
 from aria.db.enums import SkillStatus
 from aria.db.models import SkillMeta
 
-if getattr(sys, "frozen", False):
-    # PyInstaller: бандл лежит рядом с exe (onedir) или в _MEIPASS (onefile).
-    # Path(__file__) внутри frozen указывает на _internal/aria/db/, а не на
-    # дерево исходников — поэтому берём базовую директорию бандла явно.
-    _BASE = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
-    SKILLS_ROOT = Path(
-        os.environ.get("ARIA_SKILLS_DIR")
-        or (_BASE / "data" / "skills")
-    )
-else:
-    SKILLS_ROOT = Path(
-        os.environ.get("ARIA_SKILLS_DIR")
-        or (Path(__file__).resolve().parent.parent.parent / "data" / "skills")
-    )
+SKILLS_ROOT = paths.skills_dir()
 
 
 def seed_skills() -> int:

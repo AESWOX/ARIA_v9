@@ -8,6 +8,8 @@ data/config.yaml and applied to the cached Settings instance immediately.
 """
 from __future__ import annotations
 
+from aria import paths
+
 import json
 import re
 import threading
@@ -27,7 +29,7 @@ router = APIRouter(tags=["config"])
 # Config store — nested overrides persisted to data/config.yaml.
 # ---------------------------------------------------------------------------
 
-_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DATA_DIR = paths.data_dir()
 _CONFIG_PATH = _DATA_DIR / "config.yaml"
 _DASHBOARD_PATH = _DATA_DIR / "dashboard.json"
 

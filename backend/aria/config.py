@@ -20,17 +20,19 @@ from pathlib import Path
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from aria import paths
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=paths.env_file_setting(), extra="ignore")
 
     # --- §23.2 env naming convention ---
     # Default value points at a local sqlite file so the backend runs with zero
     # external infra out of the box (§18 dev profile). Set POSTGRES_DSN in .env
     # to point at real Postgres for production (canonical key name per §23.2).
-    POSTGRES_DSN: str = "sqlite:///./data/local_agent.db"
+    POSTGRES_DSN: str = paths.default_dsn()
     REDIS_URL: str = "redis://localhost:6379/0"
-    OBSIDIAN_VAULT_PATH: str = "./data/vault"
+    OBSIDIAN_VAULT_PATH: str = paths.default_vault_path()
     B2_BUCKET: str = ""
     B2_KEY_ID: str = ""
     B2_APPLICATION_KEY: str = Field(default="", validation_alias=AliasChoices("B2_APPLICATION_KEY", "B2_APP_KEY"))
@@ -62,6 +64,19 @@ class Settings(BaseSettings):
         return value if value is not None else False
 
     backup_retention_days: int = 30
+
+    @field_validator("POSTGRES_DSN", "OBSIDIAN_VAULT_PATH", "agent_sandbox_root", mode="before")
+    @classmethod
+    def _blank_means_default(cls, value: object, info) -> object:
+        # ``KEY=`` in .env must mean "use the default", not an empty path
+        # (an empty vault path silently resolves to the current directory).
+        if isinstance(value, str) and not value.strip():
+            return {
+                "POSTGRES_DSN": paths.default_dsn(),
+                "OBSIDIAN_VAULT_PATH": paths.default_vault_path(),
+                "agent_sandbox_root": paths.default_sandbox_path(),
+            }[info.field_name]
+        return value
 
     # --- §8.2 approval TTLs (default implementation profile) ---
     approval_ttl_default_hours: int = 24
@@ -139,7 +154,7 @@ class Settings(BaseSettings):
     compression_protect_last_n: int = 15
     compression_target_ratio: float = 0.2
 
-    agent_sandbox_root: str = "./data/sandbox"
+    agent_sandbox_root: str = paths.default_sandbox_path()
 
     @field_validator("gemini_api_keys", "groq_api_keys", "compression_gemini_api_keys", mode="before")
     @classmethod
@@ -238,4 +253,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    # Installed app: make sure the persistent user dir (db, vault, skills,
+    # logs) exists and bundled skills are copied before anything touches it.
+    paths.ensure_user_data()
     return Settings()

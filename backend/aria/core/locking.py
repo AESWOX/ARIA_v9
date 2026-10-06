@@ -104,7 +104,9 @@ def _lock_dir(vault_root: Path | None = None) -> Path:
     Создаёт её при необходимости.
     """
     if vault_root is None:
-        vault_root = Path("data/vault")
+        from aria.storage.obsidian_vault import vault_root as _vault_root
+
+        vault_root = _vault_root()
     lock_dir = vault_root / LOCK_DIR
     lock_dir.mkdir(parents=True, exist_ok=True)
     return lock_dir

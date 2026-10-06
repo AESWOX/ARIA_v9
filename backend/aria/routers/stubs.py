@@ -10,6 +10,8 @@ credentials) persist to data/*.json instead of returning empty lists.
 """
 from __future__ import annotations
 
+from aria import paths
+
 import json
 import os
 import platform
@@ -22,7 +24,7 @@ from aria.api.auth import require_runtime_token
 
 router = APIRouter(tags=["stubs"])
 
-_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DATA_DIR = paths.data_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +255,7 @@ def _db_path() -> Path:
         if dsn and dsn.startswith("sqlite:///"):
             raw = dsn.replace("sqlite:///", "", 1)
             candidate = Path(raw) if Path(raw).is_absolute() else Path.cwd() / raw
-            if candidate.exists() or raw != "./data/local_agent.db":
+            if candidate.exists() or raw != "./data/local_agent.db":  # legacy relative default
                 return candidate
     except Exception:
         pass
@@ -526,7 +528,7 @@ async def plugins_visibility(name: str, payload: dict[str, Any], _: str = Depend
 @router.get("/messaging/platforms")
 async def messaging_platforms(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
     return {
-        "env_path": str(Path(__file__).resolve().parent.parent / ".env"),
+        "env_path": str(paths.env_file()),
         "gateway_start_command": "",
         "platforms": [],
     }

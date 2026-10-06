@@ -8,6 +8,8 @@ no results, so the SkillsPage renders and installs/uninstalls locally.
 """
 from __future__ import annotations
 
+from aria import paths
+
 import os
 import re
 from pathlib import Path
@@ -24,10 +26,7 @@ from aria.routers import actions as actions_module
 
 router = APIRouter(tags=["skills"])
 
-SKILLS_ROOT = Path(
-    os.environ.get("ARIA_SKILLS_DIR")
-    or (Path(__file__).resolve().parent.parent / "data" / "skills")
-)
+SKILLS_ROOT = paths.skills_dir()
 
 # Hub identifiers use "source:name" (e.g. "local:web-research"). The local
 # and aria-index sources both point at SKILLS_ROOT.
