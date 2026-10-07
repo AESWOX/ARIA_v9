@@ -153,17 +153,17 @@ async def oauth_cancel(session_id: str, _: str = Depends(require_runtime_token))
 
 @router.post("/gateway/start")
 async def gateway_start(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return _action("gateway-start", True, "gateway is a no-op in the local build")
+    return _action("gateway-start", False, "gateway is not implemented in the local build")
 
 
 @router.post("/gateway/stop")
 async def gateway_stop(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return _action("gateway-stop", True, "gateway is a no-op in the local build")
+    return _action("gateway-stop", False, "gateway is not implemented in the local build")
 
 
 @router.post("/gateway/restart")
 async def gateway_restart(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return _action("gateway-restart", True, "gateway is a no-op in the local build")
+    return _action("gateway-restart", False, "gateway is not implemented in the local build")
 
 
 # ---------------------------------------------------------------------------
