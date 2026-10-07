@@ -14,11 +14,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from aria import paths as _paths
 from aria.api.auth import require_runtime_token
 
 router = APIRouter(tags=["logs"])
 
-_LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
+_LOG_DIR = _paths.log_dir()
 
 _LEVEL_ORDER = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
 
