@@ -175,7 +175,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="gemini-flash",
                 provider_class="free_tier_reasoning",
                 base_url=settings.gemini_base_url,
-                model="gemini-2.5-flash",
+                model=settings.gemini_flash_model,
                 key_pool=gemini_pool_flash,
             )
         )
@@ -184,7 +184,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="gemini-pro",
                 provider_class="standard_reasoning",
                 base_url=settings.gemini_base_url,
-                model="gemini-3.1-pro",
+                model=settings.gemini_pro_model,
                 key_pool=gemini_pool_pro,
             )
         )
@@ -195,7 +195,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="gemini-pro-premium-fallback",
                 provider_class="premium_reasoning",
                 base_url=settings.gemini_base_url,
-                model="gemini-3.1-pro",
+                model=settings.gemini_pro_model,
                 key_pool=KeyPool(gemini_keys, name="gemini-answers"),
             )
         )
@@ -210,7 +210,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="groq-llama-fast",
                 provider_class="free_tier_reasoning",
                 base_url=settings.groq_base_url,
-                model="llama-3.1-8b-instant",
+                model="qwen/qwen3.6-27b",
                 key_pool=groq_pool_free,
             )
         )
@@ -219,7 +219,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="groq-llama-versatile",
                 provider_class="standard_reasoning",
                 base_url=settings.groq_base_url,
-                model="llama-3.3-70b-versatile",
+                model="qwen/qwen3.6-27b",
                 key_pool=groq_pool_standard,
             )
         )
@@ -229,7 +229,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="groq-llama-versatile-premium-fallback",
                 provider_class="premium_reasoning",
                 base_url=settings.groq_base_url,
-                model="llama-3.3-70b-versatile",
+                model="qwen/qwen3.6-27b",
                 key_pool=KeyPool(groq_keys, name="groq-answers"),
             )
         )
@@ -244,7 +244,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="gemini-vision",
                 provider_class="vision_multimodal",
                 base_url=settings.gemini_base_url,
-                model="gemini-2.5-flash",
+                model=settings.gemini_flash_model,
                 key_pool=vision_pool,
             )
         )
@@ -257,7 +257,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="groq-subagent-fast",
                 provider_class="subagent_execution",
                 base_url=settings.groq_base_url,
-                model="llama-3.1-8b-instant",
+                model="qwen/qwen3.6-27b",
                 key_pool=subagent_pool,
             )
         )

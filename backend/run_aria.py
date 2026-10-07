@@ -1,10 +1,12 @@
 #!/usr/bin/env python
-"""ARIA v8 start — гарантированно загружает .env и запускает uvicorn."""
+"""ARIA v9 start — гарантированно загружает .env и запускает uvicorn."""
 import os
 import sys
 
 # Load .env (уровень выше run_aria.py)
-env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+from aria import paths as _paths  # noqa: E402
+
+env_file = str(_paths.env_file())
 if os.path.exists(env_file):
     with open(env_file) as f:
         for line in f:

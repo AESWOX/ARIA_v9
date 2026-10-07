@@ -13,7 +13,7 @@
  *   await gw.request("prompt.submit", { session_id, text: "hi" })
  */
 
-import { getRuntimeToken, getWsTicket, resolveBase } from "@/lib/api";
+import { getRuntimeToken, getWsTicket, resolveBase, wsOrigin } from "@/lib/api";
 
 export type GatewayEventName =
   | "gateway.ready"
@@ -136,9 +136,8 @@ export class GatewayClient {
     }
 
     const base = await resolveBase();
-    const scheme = base.startsWith("https:") ? "wss:" : "ws:";
     const ws = new WebSocket(
-      `${scheme}//${base.replace(/^https?:\/\//, "")}/api/ws?${authParamName}=${encodeURIComponent(authParamValue)}`,
+      `${wsOrigin(base)}/api/ws?${authParamName}=${encodeURIComponent(authParamValue)}`,
     );
     this.ws = ws;
 

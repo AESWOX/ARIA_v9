@@ -813,4 +813,21 @@ export interface Translations {
     logTruncated: string;
     logAt: string;
   };
+
+  // ── First-run onboarding overlay (optional — locales fall back to English) ──
+  onboarding?: {
+    welcomeTitle: string;
+    welcomeBody: string;
+    pinTitle: string;
+    pinBody: string;
+    pinHint: string;
+    openKeys: string;
+    tokenTitle: string;
+    tokenBody: string;
+    tokenHint: string;
+    skip: string;
+    back: string;
+    next: string;
+    done: string;
+  };
 }

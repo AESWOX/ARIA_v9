@@ -7,8 +7,9 @@ use std::fs;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 
@@ -29,11 +30,8 @@ struct SidecarRuntime {
 struct AppState {
     sidecar: Mutex<SidecarRuntime>,
     init_error: Mutex<Option<String>>,
-}
-
-struct SpawnedSidecar {
-    child: Option<Child>,
-    bootstrap: RuntimeBootstrap,
+    /// Raised when the app is exiting so the supervisor stops respawning.
+    shutdown: Arc<AtomicBool>,
 }
 
 /// Bind to an ephemeral port, learn it, then release — caller must use it before
@@ -109,7 +107,16 @@ fn kill_process_on_port(port: u16) {
     }
 }
 
-fn spawn_sidecar(app: &AppHandle) -> Result<SpawnedSidecar, String> {
+/// Launch plan resolved once at startup. The sidecar is always respawned on the
+/// same port and with the same runtime token so the webview URL and the
+/// frontend's already-issued token stay valid across restarts.
+struct LaunchPlan {
+    port: u16,
+    runtime_token: String,
+    idle_lock_minutes: u32,
+}
+
+fn make_launch_plan(app: &AppHandle) -> LaunchPlan {
     // 1. Kill any zombie sidecar from previous run
     let pid_path = pid_file_path(app);
     cleanup_zombie(&pid_path);
@@ -131,14 +138,28 @@ fn spawn_sidecar(app: &AppHandle) -> Result<SpawnedSidecar, String> {
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(15);
 
-    let backend_base_url = format!("http://127.0.0.1:{port}");
-    let bootstrap = RuntimeBootstrap {
-        backend_base_url: backend_base_url.clone(),
-        runtime_token: runtime_token.clone(),
-        pin_required: true,
+    LaunchPlan {
+        port,
+        runtime_token,
         idle_lock_minutes,
-    };
+    }
+}
 
+fn bootstrap_from_plan(plan: &LaunchPlan) -> RuntimeBootstrap {
+    RuntimeBootstrap {
+        backend_base_url: format!("http://127.0.0.1:{}", plan.port),
+        runtime_token: plan.runtime_token.clone(),
+        pin_required: true,
+        idle_lock_minutes: plan.idle_lock_minutes,
+    }
+}
+
+/// Spawn the backend sidecar and wait until `/status` is healthy.
+/// Cold start (PyInstaller onefile extraction + DB migrations + seed) measures
+/// ~12s on fast hosts and can take minutes on slow/fresh machines (Windows
+/// Sandbox measured >45s), so the health budget is 180s (360 x 500ms).
+/// On any failure the spawned process is killed and an Err is returned.
+fn launch_backend(app: &AppHandle, plan: &LaunchPlan) -> Result<Child, String> {
     // 4. Resolve backend entry
     let entry = resolve_backend_entry(app)?;
     let mut command = if entry
@@ -165,10 +186,10 @@ fn spawn_sidecar(app: &AppHandle) -> Result<SpawnedSidecar, String> {
 
     let child = match command
         .arg("--port")
-        .arg(port.to_string())
+        .arg(plan.port.to_string())
         .env("HTTP_HOST", "127.0.0.1")
-        .env("HTTP_PORT", port.to_string())
-        .env("LOCAL_AGENT_RUNTIME_TOKEN", &runtime_token)
+        .env("HTTP_PORT", plan.port.to_string())
+        .env("LOCAL_AGENT_RUNTIME_TOKEN", &plan.runtime_token)
         .env("LOCAL_AGENT_DISABLE_BOOTSTRAP_WRITE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
@@ -176,63 +197,60 @@ fn spawn_sidecar(app: &AppHandle) -> Result<SpawnedSidecar, String> {
         .spawn()
     {
         Ok(child) => {
-            eprintln!("[ARIA] Backend sidecar started on port {port}");
-            Some(child)
+            eprintln!("[ARIA] Backend sidecar started on port {}", plan.port);
+            child
         }
         Err(err) => {
-            eprintln!("[ARIA] Backend sidecar not started (already running?): {err}");
-            None
+            return Err(format!("Backend sidecar not started: {err}"));
         }
     };
 
     // 5. Write PID file so we can clean up on next start
-    if let Some(ref c) = child {
-        let _ = fs::write(&pid_path, c.id().to_string());
+    let _ = fs::write(pid_file_path(app), child.id().to_string());
+
+    // 6. Health-check: poll /status until healthy. A short budget (e.g. 6s) is a
+    //    real-world bug: the packaged backend needs ~12s cold (onefile extraction +
+    //    DB init) and up to a minute+ in Windows Sandbox, so 360 x 500ms = 180s.
+    let client = Client::builder()
+        .timeout(Duration::from_millis(500))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let mut last_err = String::from("timeout");
+    let health_url = format!("http://127.0.0.1:{}/status", plan.port);
+    let mut success = false;
+    let attempts = 360;
+
+    for i in 0..attempts {
+        match client.get(&health_url).send() {
+            Ok(resp) if resp.status().is_success() => {
+                eprintln!("[ARIA] Backend health-check OK (attempt {})", i + 1);
+                success = true;
+                break;
+            }
+            Ok(resp) => {
+                last_err = format!("HTTP {}", resp.status());
+            }
+            Err(e) => {
+                last_err = e.to_string();
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
 
-    // 6. Health-check: poll /status up to 30 times (200ms intervals = 6s total)
-    if child.is_some() {
-        let client = Client::builder()
-            .timeout(Duration::from_millis(500))
-            .build()
-            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-
-        let mut last_err = String::from("timeout");
-        let health_url = format!("{backend_base_url}/status");
-        let mut success = false;
-
-        for i in 0..30 {
-            match client.get(&health_url).send() {
-                Ok(resp) if resp.status().is_success() => {
-                    eprintln!("[ARIA] Backend health-check OK (attempt {})", i + 1);
-                    success = true;
-                    break;
-                }
-                Ok(resp) => {
-                    last_err = format!("HTTP {}", resp.status());
-                }
-                Err(e) => {
-                    last_err = e.to_string();
-                }
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        }
-
-        if !success {
-            eprintln!("[ARIA] Backend health-check FAILED after 30 attempts: {last_err}");
-            // Kill the sidecar since it's not usable
-            if let Some(mut c) = child {
-                let _ = c.kill();
-                let _ = c.wait();
-            }
-            return Err(format!(
-                "Backend did not become healthy within 6 seconds (last error: {last_err}). \
-                 Check logs for details. Click 'Retry' to try again."
-            ));
-        }
+    if !success {
+        eprintln!("[ARIA] Backend health-check FAILED after {attempts} attempts: {last_err}");
+        let mut child = child;
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "Backend did not become healthy within {} seconds (last error: {last_err}). \
+             Check logs for details.",
+            attempts * 500 / 1000
+        ));
     }
 
-    Ok(SpawnedSidecar { child, bootstrap })
+    Ok(child)
 }
 
 fn resource_candidates(app: &AppHandle) -> Vec<PathBuf> {
@@ -303,6 +321,144 @@ fn graceful_shutdown(runtime: &mut SidecarRuntime) {
     runtime.child = None;
 }
 
+enum ChildStatus {
+    Running,
+    Exited,
+    Missing,
+}
+
+/// Exponential backoff: 1s, 2s, 4s, 8s, 16s, … capped at `max`.
+fn backoff_delay(attempt: u32, max: Duration) -> Duration {
+    let seconds = 1u64 << attempt.min(10);
+    let delay = Duration::from_secs(seconds);
+    if delay > max {
+        max
+    } else {
+        delay
+    }
+}
+
+/// Monitor the backend sidecar in a background thread.
+///
+/// - Polls `try_wait()` every `MONITOR_INTERVAL`; if the child exited or was
+///   never spawned, relaunch it via `launch_backend` with the SAME port and
+///   runtime token (the webview URL and the frontend token stay valid).
+/// - Delays restarts with exponential backoff so a crash storm doesn't hammer
+///   the machine. The counter resets only after `STABLE_RESET_AFTER` of stable
+///   uptime — a single crash after hours of work still restarts immediately.
+/// - Reloads the webview after a successful respawn so the frontend reconnects.
+/// - Exits when `AppState.shutdown` is raised (app exiting), so it never races
+///   with `graceful_shutdown`.
+fn spawn_supervisor(app: AppHandle, plan: LaunchPlan) {
+    std::thread::spawn(move || {
+        const MONITOR_INTERVAL: Duration = Duration::from_secs(2);
+        const STABLE_RESET_AFTER: Duration = Duration::from_secs(60);
+        const MAX_BACKOFF: Duration = Duration::from_secs(30);
+
+        let mut backoff_attempt: u32 = 0;
+        let mut stable_since: Option<Instant> = None;
+
+        loop {
+            let state = app.state::<AppState>();
+            if state.shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+
+            let status = {
+                let mut guard = match state.sidecar.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                match guard.child.as_mut() {
+                    Some(child) => match child.try_wait() {
+                        Ok(Some(_)) => ChildStatus::Exited,
+                        Ok(None) => ChildStatus::Running,
+                        Err(_) => ChildStatus::Exited,
+                    },
+                    None => ChildStatus::Missing,
+                }
+            };
+
+            match status {
+                ChildStatus::Running => {
+                    let now = Instant::now();
+                    stable_since = Some(match stable_since {
+                        Some(since) if now.duration_since(since) >= STABLE_RESET_AFTER => {
+                            if backoff_attempt != 0 {
+                                backoff_attempt = 0;
+                                eprintln!("[ARIA] Supervisor: backoff reset after stable run");
+                            }
+                            now
+                        }
+                        Some(since) => since,
+                        None => now,
+                    });
+                    std::thread::sleep(MONITOR_INTERVAL);
+                }
+                ChildStatus::Exited | ChildStatus::Missing => {
+                    stable_since = None;
+                    let delay = backoff_delay(backoff_attempt, MAX_BACKOFF);
+                    eprintln!(
+                        "[ARIA] Supervisor: backend down (attempt {}), restart in {:?}",
+                        backoff_attempt + 1,
+                        delay
+                    );
+                    std::thread::sleep(delay);
+
+                    match launch_backend(&app, &plan) {
+                        Ok(child) => {
+                            if app.state::<AppState>().shutdown.load(Ordering::SeqCst) {
+                                let mut child = child;
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                return;
+                            }
+
+                            let state = app.state::<AppState>();
+                            {
+                                let mut guard = match state.sidecar.lock() {
+                                    Ok(guard) => guard,
+                                    Err(poisoned) => poisoned.into_inner(),
+                                };
+                                // Re-check shutdown while holding the lock: if the app
+                                // exited between the check above and the lock acquire,
+                                // do not leave a freshly-spawned orphan process behind.
+                                if state.shutdown.load(Ordering::SeqCst) {
+                                    let mut child = child;
+                                    let _ = child.kill();
+                                    let _ = child.wait();
+                                    return;
+                                }
+                                guard.child = Some(child);
+                                guard.bootstrap = bootstrap_from_plan(&plan);
+                            }
+                            if let Ok(mut err) = state.init_error.lock() {
+                                *err = None;
+                            }
+
+                            eprintln!(
+                                "[ARIA] Supervisor: backend restarted on port {}",
+                                plan.port
+                            );
+                            if let Some(window) = app.get_webview_window("main") {
+                                let backend_url = format!("http://127.0.0.1:{}", plan.port);
+                                if let Ok(url) = tauri::Url::parse(&backend_url) {
+                                    let _ = window.navigate(url);
+                                }
+                            }
+                            stable_since = Some(Instant::now());
+                        }
+                        Err(e) => {
+                            eprintln!("[ARIA] Supervisor: restart failed: {e}");
+                            backoff_attempt += 1;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 #[tauri::command]
 fn get_init_error(state: State<'_, AppState>) -> Option<String> {
     state.init_error.lock().ok().and_then(|g| g.clone())
@@ -310,6 +466,7 @@ fn get_init_error(state: State<'_, AppState>) -> Option<String> {
 
 fn main() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Second instance launched — focus the existing window
             if let Some(window) = app.get_webview_window("main") {
@@ -318,34 +475,24 @@ fn main() {
             }
         }))
         .setup(|app| {
-            let init_error: Option<String>;
-            let spawned = match spawn_sidecar(&app.handle()) {
-                Ok(s) => {
-                    init_error = None;
-                    s
-                }
+            let plan = make_launch_plan(&app.handle());
+            let bootstrap = bootstrap_from_plan(&plan);
+
+            let (child, init_error) = match launch_backend(&app.handle(), &plan) {
+                Ok(child) => (Some(child), None),
                 Err(e) => {
                     eprintln!("[ARIA] Init error: {e}");
-                    init_error = Some(e);
-                    // Return dummy bootstrap — frontend will check get_init_error
-                    SpawnedSidecar {
-                        child: None,
-                        bootstrap: RuntimeBootstrap {
-                            backend_base_url: "http://127.0.0.1:8765".into(),
-                            runtime_token: String::new(),
-                            pin_required: false,
-                            idle_lock_minutes: 15,
-                        },
-                    }
+                    (None, Some(e))
                 }
             };
 
             app.manage(AppState {
                 sidecar: Mutex::new(SidecarRuntime {
-                    child: spawned.child,
-                    bootstrap: spawned.bootstrap.clone(),
+                    child,
+                    bootstrap: bootstrap.clone(),
                 }),
                 init_error: Mutex::new(init_error),
+                shutdown: Arc::new(AtomicBool::new(false)),
             });
 
             // Same-origin SPA mode: navigate the webview to the backend itself,
@@ -353,10 +500,14 @@ fn main() {
             // The API and the page then share one origin — no CORS, no invoke
             // bridge for auth.
             if let Some(window) = app.get_webview_window("main") {
-                if let Ok(url) = tauri::Url::parse(&spawned.bootstrap.backend_base_url) {
+                if let Ok(url) = tauri::Url::parse(&bootstrap.backend_base_url) {
                     let _ = window.navigate(url);
                 }
             }
+
+            // Supervisor: respawn the backend if it crashes (see spawn_supervisor).
+            spawn_supervisor(app.handle().clone(), plan);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_init_error])
@@ -366,9 +517,14 @@ fn main() {
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { .. } = event {
             let state = app_handle.state::<AppState>();
+
+            // Stop the supervisor first so it doesn't respawn the backend
+            // while we are tearing it down.
+            state.shutdown.store(true, Ordering::SeqCst);
+
             let mut guard = match state.sidecar.lock() {
                 Ok(guard) => guard,
-                Err(_) => return,
+                Err(poisoned) => poisoned.into_inner(),
             };
             graceful_shutdown(&mut guard);
         }

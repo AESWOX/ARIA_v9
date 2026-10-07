@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-08-03T12:23:03",
+  "timestamp": "2026-08-25T09:09:52",
   "version": "v0.1.0",
   "checks": {
     "secret_scan": {
       "status": "CLEAN",
       "matches": [],
-      "checked": 683
+      "checked": 917
     },
     "backend_install": {
       "venv_exists": true,
@@ -16,7 +16,7 @@
     },
     "health": {
       "overall": "online",
-      "providers": 10
+      "providers": 14
     },
     "self_test": {
       "status": "ok",
@@ -24,17 +24,17 @@
       "checks": {
         "database": "ok",
         "models": "ok (18 tables)",
-        "router": "ok (10 providers, 5 classes)",
+        "router": "ok (14 providers, 5 classes)",
         "config": "ok",
-        "provider_catalog": "1 models cached",
+        "provider_catalog": "262 models cached",
         "vault": "ok",
-        "skills": "73 skills in skills_meta",
+        "skills": "106 skills in skills_meta",
         "budget": "warn@80% block@100%",
         "guardrails": "ok (3 detectors via before_call/after_call: exact-failure, same-tool, no-progress)"
       }
     },
     "vault": {
-      "md_files": 175,
+      "md_files": 179,
       "path": "C:\\Users\\User\\Desktop\\ARIA_v9\\backend\\data\\vault"
     },
     "database": {
@@ -43,44 +43,58 @@
         "agent_state": 0,
         "alembic_version": 1,
         "attention_items": 0,
-        "audit_reports": 0,
+        "audit_reports": 8,
         "decisions": 0,
-        "events": 3,
-        "friend_memory": 0,
-        "integrity_events": 0,
-        "messages": 1,
-        "provider_health": 10,
-        "provider_models": 122,
+        "events": 126,
+        "friend_memory": 5,
+        "integrity_events": 10,
+        "messages": 46,
+        "provider_health": 14,
+        "provider_models": 262,
         "provider_tier_hints": 0,
         "scheduler_jobs": 0,
-        "sessions": 1,
-        "skills_meta": 73,
-        "task_plans": 0,
-        "tasks": 1,
-        "tool_calls": 0,
+        "sessions": 20,
+        "skills_meta": 106,
+        "task_plans": 10,
+        "tasks": 20,
+        "tool_calls": 52,
         "_real_providers": [
           "deepseek-chat",
           "deepseek-reasoner",
+          "gemini-flash",
           "gemini-pro",
-          "gemini-pro-premium-fallback"
+          "gemini-pro-premium-fallback",
+          "gemini-vision",
+          "groq-llama-fast",
+          "groq-llama-versatile",
+          "groq-llama-versatile-premium-fallback",
+          "groq-subagent-fast"
         ],
         "_stale_providers": []
       }
     },
     "live_providers": {
-      "status": "SKIPPED",
-      "reason": "DEEPSEEK_API_KEY not set (expected when .env is excluded from archive)",
-      "provider": "deepseek"
+      "provider": "deepseek",
+      "url": "https://api.deepseek.com/v1/models",
+      "status": "OK",
+      "http_status": 200,
+      "latency_sec": 0.48,
+      "models_preview": [
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash-vision-exp"
+      ],
+      "total_count": 3
     },
     "backend_tests": {
-      "passed": 147,
+      "passed": 152,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
       "deselected": 0,
-      "total": 147,
+      "total": 152,
       "exit_ok": true,
-      "output_preview": "........................................................................ [ 48%]\r\n........................................................................ [ 97%]\r\n...                                                                      [100%]\r\n147 passed in 17.41s",
+      "output_preview": "............................ [ 47%]\r\n........................................................................ [ 94%]\r\n........                                                                 [100%]\r\n---- generated xml file: C:\\Users\\User\\AppData\\Local\\Temp\\tmpud26qru5.xml -----\r\n152 passed in 10.50s",
       "junit_source": true
     },
     "npm_lockfile": {
@@ -102,7 +116,7 @@
     },
     "frontend_build": {
       "status": "OK",
-      "modules": 2236,
+      "modules": 2234,
       "exit_ok": true
     },
     "hermes_references": {
@@ -111,7 +125,7 @@
     },
     "artifact_scan": {
       "status": "CLEAN",
-      "checked": 730,
+      "checked": 959,
       "matches": [],
       "exit_ok": true
     },
@@ -123,12 +137,12 @@
     },
     "bundle_budget": {
       "status": "OK",
-      "main_chunk": "index-Cvbx6ci0.js",
-      "main_chunk_bytes": 107824,
+      "main_chunk": "index-DtRWsM_2.js",
+      "main_chunk_bytes": 107634,
       "budget_bytes": 512000,
       "exit_ok": true
     }
   },
   "verdict": "DOD_READY",
-  "elapsed_seconds": 170.8
+  "elapsed_seconds": 190.1
 }

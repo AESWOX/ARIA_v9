@@ -1,0 +1,17 @@
+{
+  "name": "@nous-research/ui",
+  "version": "0.18.2",
+  "main": "./index.js",
+  "module": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "types": "./index.d.ts"
+    },
+    "./*": "./*",
+    "./ui/fonts.css": "./ui/fonts.css",
+    "./ui/globals.css": "./ui/globals.css",
+    "./ui/build.css": "./ui/build.css"
+  }
+}

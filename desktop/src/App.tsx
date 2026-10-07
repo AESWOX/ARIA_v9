@@ -38,6 +38,8 @@ import {
   KeyRound,
   Menu,
   MessageSquare,
+  MessageCircle,
+  NotebookText,
   Package,
   PanelLeftClose,
   PanelLeftOpen,
@@ -68,6 +70,7 @@ import { SidebarStatusStrip, gatewayLine } from "@/components/SidebarStatusStrip
 import { useBelowBreakpoint } from "@vendor/ui/hooks/use-below-breakpoint";
 import { useSidebarStatus } from "@/hooks/useSidebarStatus";
 import { AuthWidget } from "@/components/AuthWidget";
+import { OnboardingOverlay } from "@/components/OnboardingOverlay";
 import { PageHeaderProvider } from "@/contexts/PageHeaderProvider";
 import { ProfileProvider } from "@/contexts/ProfileProvider";
 import { useProfileScope } from "@/contexts/useProfileScope";
@@ -83,7 +86,7 @@ import { PluginPage, PluginSlot, usePlugins } from "@/plugins";
 import type { PluginManifest } from "@/plugins";
 import { useTheme } from "@/themes";
 import { isDashboardEmbeddedChatEnabled } from "@/lib/dashboard-flags";
-import { api } from "@/lib/api";
+import { api, readFirstRun } from "@/lib/api";
 import type { StatusResponse } from "@/lib/api";
 
 /**
@@ -104,6 +107,8 @@ const CronPage = lazy(() => import("@/pages/CronPage"));
 const ProfilesPage = lazy(() => import("@/pages/ProfilesPage"));
 const ProfileBuilderPage = lazy(() => import("@/pages/ProfileBuilderPage"));
 const SkillsPage = lazy(() => import("@/pages/SkillsPage"));
+const NotesPage = lazy(() => import("@/pages/NotesPage"));
+const NativeChatPage = lazy(() => import("@/pages/NativeChatPage"));
 const PluginsPage = lazy(() => import("@/pages/PluginsPage"));
 const McpPage = lazy(() => import("@/pages/McpPage"));
 const PairingPage = lazy(() => import("@/pages/PairingPage"));
@@ -133,7 +138,7 @@ const CHAT_NAV_ITEM: NavItem = {
   path: "/chat",
   labelKey: "chat",
   label: "Chat",
-  icon: Terminal,
+  icon: MessageCircle,
 };
 
 /**
@@ -150,8 +155,10 @@ type RouteComponent = ComponentType | LazyExoticComponent<ComponentType>;
 
 const BUILTIN_ROUTES_CORE: Record<string, RouteComponent> = {
   "/": RootRedirect,
+  "/chat": NativeChatPage,
   "/sessions": SessionsPage,
   "/files": FilesPage,
+  "/notes": NotesPage,
   "/analytics": AnalyticsPage,
   "/models": ModelsPage,
   "/logs": LogsPage,
@@ -186,6 +193,7 @@ const BUILTIN_NAV_REST: NavItem[] = [
     icon: MessageSquare,
   },
   { path: "/files", label: "Files", icon: FolderOpen },
+  { path: "/notes", label: "Notes", icon: NotebookText },
   {
     path: "/analytics",
     labelKey: "analytics",
@@ -436,6 +444,24 @@ export default function App() {
       return next;
     });
   }, []);
+
+  // First-run onboarding. The backend is the source of truth: it embeds
+  // <meta name="first-run"> only when no onboarded marker file existed at
+  // startup (i.e. this profile was never launched before). Gating on the
+  // backend snapshot — and NOT on webview localStorage — gives the product
+  // behavior from the spec:
+  //   * the marker is written unconditionally on every issue(), so first-run
+  //     is false on every launch after the first — even when Tauri disables
+  //     the bootstrap.json handshake (LOCAL_AGENT_DISABLE_BOOTSTRAP_WRITE=1);
+  //   * a brand-new webview profile on a machine where the marker already
+  //     exists → first-run is false → the overlay stays hidden even though
+  //     the profile has no localStorage state.
+  // The marker is deliberately separate from bootstrap.json: deleting
+  // bootstrap.json (PIN re-setup) must not re-trigger onboarding, and vice
+  // versa. Dismissal is session-only (in-memory): it hides the overlay for
+  // the rest of this SPA session but is never persisted.
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const dismissOnboarding = useCallback(() => setOnboardingDismissed(true), []);
   const isMobile = useBelowBreakpoint(1024);
   const isDesktopCollapsed = collapsed && !isMobile;
   const tooltipWarmRef = useRef(0);
@@ -493,13 +519,11 @@ export default function App() {
   );
 
   const builtinNav = useMemo(() => {
-    const base = embeddedChat
-      ? [CHAT_NAV_ITEM, ...BUILTIN_NAV_REST]
-      : BUILTIN_NAV_REST;
+    const base = [CHAT_NAV_ITEM, ...BUILTIN_NAV_REST];
     return showTokenAnalytics
       ? base
       : base.filter((n) => n.path !== "/analytics");
-  }, [embeddedChat, showTokenAnalytics]);
+  }, [showTokenAnalytics]);
 
   const sidebarNav = useMemo(
     () => partitionSidebarNav(builtinNav, manifests),
@@ -544,6 +568,14 @@ export default function App() {
     mql.addEventListener("change", onChange);
     return () => mql.removeEventListener("change", onChange);
   }, []);
+
+  // Read the backend's first-run snapshot once at mount and derive visibility
+  // from it; dismissal only clears it for the current session.
+  const [firstRun, setFirstRun] = useState(false);
+  useEffect(() => {
+    setFirstRun(readFirstRun());
+  }, []);
+  const onboardingVisible = firstRun && !onboardingDismissed;
 
   return (
     <ProfileProvider>
@@ -914,6 +946,7 @@ export default function App() {
       </div>
 
       <PluginSlot name="overlay" />
+      {onboardingVisible && <OnboardingOverlay onDone={dismissOnboarding} />}
     </div>
     </ProfileProvider>
   );

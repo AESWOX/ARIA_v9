@@ -13,26 +13,29 @@ SQLite vs Postgres (P1.5):
 """
 from __future__ import annotations
 
+import sys
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from aria import paths
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=paths.env_file_setting(), extra="ignore")
 
     # --- §23.2 env naming convention ---
     # Default value points at a local sqlite file so the backend runs with zero
     # external infra out of the box (§18 dev profile). Set POSTGRES_DSN in .env
     # to point at real Postgres for production (canonical key name per §23.2).
-    POSTGRES_DSN: str = "sqlite:///./data/local_agent.db"
+    POSTGRES_DSN: str = paths.default_dsn()
     REDIS_URL: str = "redis://localhost:6379/0"
-    OBSIDIAN_VAULT_PATH: str = "./data/vault"
+    OBSIDIAN_VAULT_PATH: str = paths.default_vault_path()
     B2_BUCKET: str = ""
     B2_KEY_ID: str = ""
-    B2_APPLICATION_KEY: str = ""
+    B2_APPLICATION_KEY: str = Field(default="", validation_alias=AliasChoices("B2_APPLICATION_KEY", "B2_APP_KEY"))
 
     # --- §23.1 canonical keys / v7 default profile ---
     # §2.9 TZ v1.1: optimistic lock TTL (file-lock + DB)
@@ -49,7 +52,31 @@ class Settings(BaseSettings):
     budget_warn_threshold_pct: int = 80
     aria_dev_mode: bool = False
     budget_block_threshold_pct: int = 100
+
+    @field_validator("aria_dev_mode", mode="before")
+    @classmethod
+    def _force_dev_mode_off_in_frozen(cls, value: object) -> bool:
+        # §P3 ТЗ v7.1: в frozen (PyInstaller) сборке aria_dev_mode жёстко
+        # выключен — нельзя случайно открыть защищённые руты через .env
+        # рядом с exe. Dev-mode auth bypass живёт только в запуске из исходников.
+        if getattr(sys, "frozen", False):
+            return False
+        return value if value is not None else False
+
     backup_retention_days: int = 30
+
+    @field_validator("POSTGRES_DSN", "OBSIDIAN_VAULT_PATH", "agent_sandbox_root", mode="before")
+    @classmethod
+    def _blank_means_default(cls, value: object, info) -> object:
+        # ``KEY=`` in .env must mean "use the default", not an empty path
+        # (an empty vault path silently resolves to the current directory).
+        if isinstance(value, str) and not value.strip():
+            return {
+                "POSTGRES_DSN": paths.default_dsn(),
+                "OBSIDIAN_VAULT_PATH": paths.default_vault_path(),
+                "agent_sandbox_root": paths.default_sandbox_path(),
+            }[info.field_name]
+        return value
 
     # --- §8.2 approval TTLs (default implementation profile) ---
     approval_ttl_default_hours: int = 24
@@ -67,17 +94,27 @@ class Settings(BaseSettings):
     # (~/.local-agent-ui/bootstrap.json). Tauri reads this file directly instead
     # of relying on independently-configured env defaults (fixes §10.4 gap).
     runtime_token_path: str = str(Path.home() / ".local-agent-ui" / "bootstrap.json")
+    # First-launch marker, deliberately independent of bootstrap.json: written
+    # unconditionally on every issue() even when the Tauri shell disables the
+    # bootstrap handshake (LOCAL_AGENT_DISABLE_BOOTSTRAP_WRITE=1), so onboarding
+    # fires exactly once. Deleting bootstrap.json (PIN re-setup) must not
+    # re-trigger onboarding, and vice versa.
+    onboarded_marker_path: str = str(Path.home() / ".local-agent-ui" / ".onboarded")
     ws_backfill_limit: int = 500
 
-    @field_validator("runtime_token_path", mode="before")
+    @field_validator("runtime_token_path", "onboarded_marker_path", mode="before")
     @classmethod
-    def _default_runtime_token_path_if_blank(cls, value: str | None) -> str:
+    def _default_path_if_blank(cls, value: str | None, info) -> str:
         # RUNTIME_TOKEN_PATH= (blank) in .env is meant to mean "use the
         # default", but pydantic-settings treats a blank env value as an
         # explicit empty-string override, which resolves to "." and crashes
         # the backend on startup (IsADirectoryError). Treat blank as unset.
         if not value:
-            return str(Path.home() / ".local-agent-ui" / "bootstrap.json")
+            defaults = {
+                "runtime_token_path": str(Path.home() / ".local-agent-ui" / "bootstrap.json"),
+                "onboarded_marker_path": str(Path.home() / ".local-agent-ui" / ".onboarded"),
+            }
+            return defaults.get(info.field_name, value)
         return value
 
     # --- §16.3 Security UX: idle-lock PIN. No hardcoded default — if unset,
@@ -96,6 +133,12 @@ class Settings(BaseSettings):
     # GEMINI_API_KEYS=key1,key2,key3,...,key9
     gemini_api_keys: str = ""
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    # Model ids are configurable because Google moves models between the free
+    # and paid tiers. Defaults are Flash for BOTH classes so a free key never
+    # hits a paid-only model. With billing enabled set e.g.
+    # GEMINI_PRO_MODEL=gemini-2.5-pro in .env.
+    gemini_flash_model: str = "gemini-2.5-flash"
+    gemini_pro_model: str = "gemini-2.5-flash"
 
     groq_api_key: str = ""
     # GROQ_API_KEYS=key1,key2,...,key10
@@ -117,7 +160,7 @@ class Settings(BaseSettings):
     compression_protect_last_n: int = 15
     compression_target_ratio: float = 0.2
 
-    agent_sandbox_root: str = "./data/sandbox"
+    agent_sandbox_root: str = paths.default_sandbox_path()
 
     @field_validator("gemini_api_keys", "groq_api_keys", "compression_gemini_api_keys", mode="before")
     @classmethod
@@ -216,4 +259,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    # Installed app: make sure the persistent user dir (db, vault, skills,
+    # logs) exists and bundled skills are copied before anything touches it.
+    paths.ensure_user_data()
     return Settings()

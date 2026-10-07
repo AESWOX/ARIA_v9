@@ -1,0 +1,100 @@
+﻿{
+    "completed":  "2026-08-27 21:31:30",
+    "results":  [
+                    {
+                        "Test":  "diag-net",
+                        "Status":  "PASS",
+                        "Detail":  "guest -\u003e aka.ms/webview2bootstrap ok=True"
+                    },
+                    {
+                        "Test":  "diag-webview2",
+                        "Status":  "INFO",
+                        "Detail":  "missing"
+                    },
+                    {
+                        "Test":  "P2-webview2-ready",
+                        "Status":  "INFO",
+                        "Detail":  "webview2 ready=True (present (ver 151.0.4129.107))"
+                    },
+                    {
+                        "Test":  "P2-install",
+                        "Status":  "PASS",
+                        "Detail":  "exit=0 dur=8.1s exe=C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Local Agent Desktop\\local-agent-ui.exe"
+                    },
+                    {
+                        "Test":  "P2-launch",
+                        "Status":  "FAIL",
+                        "Detail":  "not healthy on 49861"
+                    },
+                    {
+                        "Test":  "P1-respawn",
+                        "Status":  "FAIL",
+                        "Detail":  "not healthy on 49861"
+                    },
+                    {
+                        "Test":  "P6-graceful-close",
+                        "Status":  "FAIL",
+                        "Detail":  "not healthy on 49861"
+                    },
+                    {
+                        "Test":  "P6-crash-in-flight",
+                        "Status":  "FAIL",
+                        "Detail":  "not healthy on 49861"
+                    },
+                    {
+                        "Test":  "P5-version",
+                        "Status":  "INFO",
+                        "Detail":  "installed=0.1.0 product=0.1.0 (TZ target 0.1.1)"
+                    },
+                    {
+                        "Test":  "P5-updater",
+                        "Status":  "BLOCKED",
+                        "Detail":  "updater endpoints in tauri.conf.json = placeholder github.com/\u003cOWNER\u003e/\u003cREPO\u003e; offline sandbox cannot fetch real release; plugin present but not wired"
+                    },
+                    {
+                        "Test":  "P4-uninstall",
+                        "Status":  "INFO",
+                        "Detail":  "exit=0 timedOut=False"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "install-dir exists=True"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "appdata-com-ident exists=True"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "appdata-product exists=False"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "localappdata-product exists=True"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "localappdata-ui-aria exists=False"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "home-local-agent-ui exists=False"
+                    },
+                    {
+                        "Test":  "P4-leftover",
+                        "Status":  "INFO",
+                        "Detail":  "home-bootstrap-json exists=False"
+                    },
+                    {
+                        "Test":  "P4-no-orphan",
+                        "Status":  "FAIL",
+                        "Detail":  "backend still running after uninstall"
+                    }
+                ]
+}

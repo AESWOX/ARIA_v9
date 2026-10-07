@@ -21,6 +21,20 @@ function readRuntimeToken(): string | null {
   return (window as any).__RUNTIME_TOKEN__ ?? null;
 }
 
+/**
+ * True when the backend embedded <meta name="first-run" content="true"> into
+ * the served HTML. The backend emits this snapshot whenever no runtime-token
+ * bootstrap file existed at startup — i.e. the PIN/lock state is not yet
+ * configured. The SPA shows the onboarding overlay while this is true; because
+ * the flag comes from the backend (not webview localStorage), the overlay
+ * reappears after bootstrap.json is deleted and stays hidden on machines where
+ * the PIN is already configured.
+ */
+export function readFirstRun(): boolean {
+  if (typeof window === "undefined") return false;
+  return document.querySelector('meta[name="first-run"]')?.getAttribute("content") === "true";
+}
+
 export async function initRuntimeBaseUrl(): Promise<string> {
   if (_runtimeBaseUrl) return _runtimeBaseUrl;
   _runtimeToken = readRuntimeToken();
@@ -45,6 +59,16 @@ async function resolveBase(): Promise<string> {
 }
 
 export { resolveBase };
+
+/** WebSocket origin (``ws://host:port``) for a given base. In same-origin
+ * mode base is "" — derive from window.location (otherwise ``ws:///api/..``
+ * is parsed by the browser as host "api"). */
+export function wsOrigin(base: string): string {
+  if (base) {
+    return `${base.startsWith("https:") ? "wss:" : "ws:"}//${base.replace(/^https?:\/\//, "")}`;
+  }
+  return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+}
 
 function readBasePath(): string {
   if (typeof window === "undefined") return "";
@@ -756,6 +780,38 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, content, profile: profile || undefined }),
     }),
+  // ---- Chat (backend: routers/chat.py) ----
+  chatStatus: () => fetchJSON<ChatStatus>("/api/chat/status"),
+  chatSessions: () => fetchJSON<ChatSessionRow[]>("/api/chat/sessions"),
+  chatCreate: (title?: string) =>
+    fetchJSON<{ session_id: string; title: string }>("/api/chat/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }),
+  chatMessages: (sessionId: string) =>
+    fetchJSON<ChatMsg[]>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`),
+  chatSend: (sessionId: string, body: { content?: string; retry?: boolean }) =>
+    fetchJSON<ChatSendResult>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  // ---- Obsidian vault / notes (backend: routers/vault.py) ----
+  getVaultTree: (subdir = "") =>
+    fetchJSON<VaultTree>(`/api/vault/tree?subdir=${encodeURIComponent(subdir)}`),
+  getVaultNote: (path: string) =>
+    fetchJSON<VaultNote>(`/api/vault/notes/${encodeVaultPath(path)}`),
+  putVaultNote: (path: string, content: string) =>
+    fetchJSON<VaultWriteResult>(`/api/vault/notes/${encodeVaultPath(path)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    }),
+  searchVault: (q: string, maxResults = 30) =>
+    fetchJSON<VaultSearchResult>(
+      `/api/vault/search?q=${encodeURIComponent(q)}&max_results=${maxResults}`,
+    ),
   getToolsets: (profile?: string) =>
     fetchJSON<ToolsetInfo[]>(`/api/tools/toolsets${profileQuery(profile)}`),
   toggleToolset: (name: string, enabled: boolean, profile?: string) =>
@@ -2017,6 +2073,71 @@ export interface SkillContent {
   name: string;
   content: string;
   path: string;
+}
+
+export interface ChatStatus {
+  configured: boolean;
+  providers: string[];
+  hint: string | null;
+}
+
+export interface ChatSessionRow {
+  id: string;
+  title: string;
+  message_count: number;
+  updated_at: string | null;
+}
+
+export interface ChatMsg {
+  id: string;
+  role: string;
+  content: string;
+  created_at: string | null;
+}
+
+export interface ChatSendResult {
+  user: ChatMsg;
+  assistant: ChatMsg;
+  provider_id: string;
+  degraded: boolean;
+}
+
+/** Encode each path segment but keep the "/" separators. */
+export function encodeVaultPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+export interface VaultTree {
+  path: string;
+  dirs: string[];
+  notes: string[];
+  total_notes: number;
+  total_dirs: number;
+}
+
+export interface VaultNote {
+  found: boolean;
+  content: string | null;
+  path: string;
+  frontmatter?: Record<string, string>;
+  wiki_links?: string[];
+}
+
+export interface VaultWriteResult {
+  path: string;
+  bytes_written: number;
+}
+
+export interface VaultSearchMatch {
+  file_path: string;
+  line: number;
+  snippet: string;
+}
+
+export interface VaultSearchResult {
+  matches: VaultSearchMatch[];
+  total: number;
+  files_scanned: number;
 }
 
 export interface SkillWriteResult {

@@ -1,11 +1,51 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
 
 from aria.llm.key_pool import KeyPool, NoAvailableKeys
 from aria.llm.providers.base import ChatMessage, LlmProvider, LlmResponse, ToolCallRequest
+
+
+FORBIDDEN_COOLDOWN_SEC = 15 * 60
+DAILY_QUOTA_COOLDOWN_SEC = 60 * 60
+
+_INVALID_KEY_MARKERS = (
+    "api_key_invalid",
+    "api key not valid",
+    "api key expired",
+    "invalid api key",
+    "incorrect api key",
+    "api key was reported as leaked",
+    "reported as leaked",
+    "api key has been revoked",
+)
+
+
+def _error_text(resp: httpx.Response) -> str:
+    try:
+        return resp.text.lower()
+    except Exception:  # streaming/unread body
+        return ""
+
+
+def _is_invalid_key(body_lower: str) -> bool:
+    return any(marker in body_lower for marker in _INVALID_KEY_MARKERS)
+
+
+def _cooldown_for_429(resp: httpx.Response, body_lower: str, default: float) -> float:
+    """Retry-After wins; a per-day quota backs off long; otherwise the default."""
+    retry_after = resp.headers.get("retry-after")
+    if retry_after:
+        try:
+            return max(default, float(retry_after))
+        except ValueError:
+            pass
+    if "perday" in body_lower.replace(" ", "").replace("_", "") or "per day" in body_lower:
+        return max(default, DAILY_QUOTA_COOLDOWN_SEC)
+    return default
 
 
 class OpenAICompatibleProvider(LlmProvider):
@@ -111,8 +151,10 @@ class OpenAICompatibleProvider(LlmProvider):
             payload["tools"] = tools
 
         last_error: Exception | None = None
+        _404_attempts = 0
+        max_404_retries = 4
 
-        for _ in range(self._max_attempts()):
+        for _ in range(max(self._max_attempts(), max_404_retries)):
             try:
                 key = self._current_key()
             except NoAvailableKeys as exc:
@@ -129,14 +171,35 @@ class OpenAICompatibleProvider(LlmProvider):
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
                 if self.key_pool and key is not None:
+                    body = _error_text(exc.response)
                     if status == 429:
-                        self.key_pool.mark_rate_limited(key)
+                        self.key_pool.mark_rate_limited(key, _cooldown_for_429(exc.response, body, self.key_pool.cooldown_sec))
                         last_error = exc
                         continue
-                    if status in (401, 403):
+                    if status == 401 or (status in (400, 403) and _is_invalid_key(body)):
+                        # the key itself is bad/revoked/leaked: never retry it
                         self.key_pool.mark_dead(key)
                         last_error = exc
                         continue
+                    if status == 403:
+                        # 403 that is NOT about the key (model not enabled for
+                        # this project/plan, region, billing): the key is fine
+                        # for other models, so back off instead of killing it
+                        # for the whole process lifetime.
+                        self.key_pool.mark_rate_limited(key, FORBIDDEN_COOLDOWN_SEC)
+                        last_error = exc
+                        continue
+                    if status == 404:
+                        # Провайдер отдаёт 404 на ключ без доступа к модели
+                        # (напр. Gemini "model no longer available to new users").
+                        # Транзиентная ошибка: прокси сам ротирует upstream-ключи,
+                        # поэтому не сажаем ключ в cooldown, а делаем короткий retry.
+                        _404_attempts += 1
+                        last_error = exc
+                        if _404_attempts < max_404_retries:
+                            await asyncio.sleep(0.7)
+                            continue
+                        raise
                 raise
             else:
                 return self._parse_response(data)

@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 PLAN_HISTORY_MAX = 20
 MAX_DB_RETRIES = 3
+MAX_ZABYL_RETRIES = 3
 _DB_RETRY_DELAY_SEC = [0.5, 1.0, 2.0]  # progressive
 
 
@@ -84,6 +85,26 @@ async def _with_db_retry(
                 )
                 await asyncio.sleep(delay)
     raise last_exc  # exhausted retries
+
+
+def _build_replan_feedback(zabyl_flags: list[IntegrityFlag], tool_calls_raw: list[dict]) -> str:
+    """Собирает feedback для Oracle из ЗАБЫЛ-флагов Stage 6.
+
+    Одно предложение на флаг: что не выполнил (reason) + какие шаги
+    пропустил (missing_steps). Эта строка уходит в user-промпт Oracle
+    при replan (force_replan=True).
+    """
+    lines: list[str] = []
+    for flag in zabyl_flags:
+        parts = [flag.reason] if flag.reason else []
+        if flag.missing_steps:
+            parts.append("пропущенные шаги: " + ", ".join(flag.missing_steps))
+        lines.append("; ".join(parts))
+    summary = ". ".join(f"- {ln}" for ln in lines)
+    executed = ", ".join(
+        str(tc.get("tool_ref", "?")) for tc in tool_calls_raw
+    ) if tool_calls_raw else "ни одного"
+    return f"Предыдущий план частично выполнен: {summary}. Выполненные шаги: {executed}."
 
 
 def _append_plan_history(plan: TaskPlan) -> list[dict]:
@@ -215,49 +236,96 @@ async def run_task(
 
     # ── Stage 4: Audit ────────────────────────────────────────────
     logger.info("Stage 4: Audit for task %s", task_id[:8])
-    integrity_flags = _stage4_audit(task_plan, tool_calls_raw)
+    integrity_flags = await _stage4_audit(session, task, task_plan, tool_calls_raw, router)
     await _log_integrity_events(session, task_id, integrity_flags, tool_calls_raw)
 
     # ── Stage 5: Hooks ────────────────────────────────────────────
     logger.info("Stage 5: Hooks for task %s", task_id[:8])
     hook_result = _stage5_hooks(tool_calls_raw)
 
-    if hook_result.get("blocked"):
-        task.status = TaskStatus.failed
-        session.flush()
-        return {
-            "status": "blocked",
-            "plan_id": str(task_plan.id),
-            "integrity_flags": [str(f) for f in integrity_flags],
-            "note_path": None,
-        }
-
     # ── Stage 6: Retry? ───────────────────────────────────────────
-    logger.info("Stage 6: Retry check for task %s", task_id[:8])
-    naebal_flags = [f for f in integrity_flags if f.kind == "naebal"]
+    # ЗАБЫЛ с оставшимися попытками → feedback в Oracle → replan → повторный
+    # прогон Stage 3-6. Исчерпаны MAX_ZABYL_RETRIES → escalation.
+    while True:
+        if hook_result.get("blocked"):
+            task.status = TaskStatus.failed
+            session.flush()
+            return {
+                "status": "blocked",
+                "plan_id": str(task_plan.id),
+                "integrity_flags": [str(f) for f in integrity_flags],
+                "note_path": None,
+            }
 
-    if naebal_flags:
-        # НАЕБАЛ — retry запрещён
-        await _handle_naebal(session, task, task_plan, naebal_flags, notifier)
-        return {
-            "status": "escalated",
-            "plan_id": str(task_plan.id),
-            "integrity_flags": [str(f) for f in integrity_flags],
-            "note_path": None,
-        }
+        logger.info("Stage 6: Retry check for task %s", task_id[:8])
+        naebal_flags = [f for f in integrity_flags if f.kind == "naebal"]
 
-    zabyl_flags = [f for f in integrity_flags if f.kind == "zabyl"]
-    if zabyl_flags and task_plan.iteration_count >= 3:
-        # ЗАБЫЛ + исчерпаны retry → escalation
-        task.status = TaskStatus.failed
-        task_plan.status = PlanStatus.escalated.value
-        session.flush()
-        return {
-            "status": "escalated",
-            "plan_id": str(task_plan.id),
-            "integrity_flags": [str(f) for f in integrity_flags],
-            "note_path": None,
-        }
+        if naebal_flags:
+            # НАЕБАЛ — retry запрещён
+            await _handle_naebal(session, task, task_plan, naebal_flags, notifier)
+            return {
+                "status": "escalated",
+                "plan_id": str(task_plan.id),
+                "integrity_flags": [str(f) for f in integrity_flags],
+                "note_path": None,
+            }
+
+        zabyl_flags = [f for f in integrity_flags if f.kind == "zabyl"]
+        proebal_flags = [f for f in integrity_flags if f.kind == "proebal"]
+        retryable_flags = zabyl_flags + proebal_flags
+        if not retryable_flags:
+            break
+
+        if task_plan.iteration_count >= MAX_ZABYL_RETRIES:
+            # ЗАБЫЛ/ПРОЕБАЛ + исчерпаны retry → escalation
+            task.status = TaskStatus.failed
+            task_plan.status = PlanStatus.escalated.value
+            reason = "; ".join(f.reason for f in retryable_flags) or "bounded retry exhausted"
+            if notifier:
+                try:
+                    await notifier.send_escalation(
+                        task_id=task_id,
+                        objective=task.objective,
+                        claimed_result="bounded retry exhausted",
+                        audit_findings=reason,
+                        iteration=task_plan.iteration_count,
+                    )
+                except Exception as e:
+                    logger.warning("Notifier failed for task %s: %s", task_id[:8], e)
+            session.flush()
+            return {
+                "status": "escalated",
+                "plan_id": str(task_plan.id),
+                "integrity_flags": [str(f) for f in integrity_flags],
+                "note_path": None,
+            }
+
+        # ЗАБЫЛ/ПРОЕБАЛ + есть попытки → replan с feedback и повторный прогон
+        task_plan.iteration_count += 1
+        feedback = _build_replan_feedback(retryable_flags, tool_calls_raw)
+        logger.info(
+            "Stage 6: %s retry %d/%d for task %s",
+            "ЗАБЫЛ/PROEBAL" if proebal_flags else "ЗАБЫЛ",
+            task_plan.iteration_count, MAX_ZABYL_RETRIES, task_id[:8],
+        )
+        task_plan, oracle_flags = await _stage2_plan(
+            session, task, vault_context, router,
+            force_replan=True, feedback=feedback,
+        )
+        if oracle_flags:
+            # Oracle НАЕБАЛ на replan — escalation
+            await _handle_naebal(session, task, task_plan, oracle_flags, notifier)
+            return {
+                "status": "escalated",
+                "plan_id": str(task_plan.id),
+                "integrity_flags": [str(f) for f in oracle_flags],
+                "note_path": None,
+            }
+
+        tool_calls_raw = await _stage3_execute(session, task, task_plan, router)
+        integrity_flags = await _stage4_audit(session, task, task_plan, tool_calls_raw, router)
+        await _log_integrity_events(session, task_id, integrity_flags, tool_calls_raw)
+        hook_result = _stage5_hooks(tool_calls_raw)
 
     # ── Stage 7: Delivery ─────────────────────────────────────────
     logger.info("Stage 7: Delivery for task %s", task_id[:8])
@@ -286,11 +354,16 @@ async def _stage2_plan(
     task: Task,
     vault_context: dict,
     router: ProviderRouter | None = None,
+    force_replan: bool = False,
+    feedback: str = "",
 ) -> tuple[TaskPlan, list[IntegrityFlag]]:
     """Stage 2: Oracle plan generation + PlanStep validation.
 
     Использует router.route_chat для реального LLM-вызова Oracle.
     Если router is None — деградация до mock-плана (3 шага).
+    force_replan=True + feedback — повторная генерация плана с учётом
+    обратной связи (Stage 6 ЗАБЫЛ-retry), существующий план обновляется
+    in-place (сохраняется iteration_count, версия + история плана).
 
     Returns:
         (TaskPlan, oracle_naebal_flags).
@@ -303,7 +376,7 @@ async def _stage2_plan(
     )
     existing = result.scalars().first()
 
-    if existing and existing.plan_json:
+    if existing and existing.plan_json and not force_replan:
         # Уже есть план — используем его
         return existing, []
 
@@ -322,7 +395,13 @@ async def _stage2_plan(
 
                 messages = [
                     ChatMessage(role="system", content=oracle_system),
-                    ChatMessage(role="user", content=f"Objective: {task.objective}"),
+                    ChatMessage(
+                        role="user",
+                        content=(
+                            f"Objective: {task.objective}"
+                            + (f"\n\nОбратная связь от аудита (переделай план с учётом этого):\n{feedback}" if feedback else "")
+                        ),
+                    ),
                 ]
                 result = await router.route_chat(
                     "premium_reasoning", messages, tools=[],
@@ -354,10 +433,22 @@ async def _stage2_plan(
     if oracle_flag:
         return TaskPlan(task_id=task.id, plan_json=[], status=PlanStatus.escalated.value), [oracle_flag]
 
+    new_plan_json = [s.model_dump(mode="json") for s in plan_steps]
+
+    if existing and existing.plan_json and force_replan:
+        # Replan: обновляем существующую запись in-place, сохраняя iteration_count.
+        existing.plan_json = new_plan_json
+        existing.status = PlanStatus.in_progress.value
+        existing.version = (existing.version or 1) + 1
+        existing.plan_history = _append_plan_history(existing)
+        session.add(existing)
+        session.flush()
+        return existing, []
+
     # Создаём запись плана
     task_plan = TaskPlan(
         task_id=task.id,
-        plan_json=[s.model_dump(mode="json") for s in plan_steps],
+        plan_json=new_plan_json,
         status=PlanStatus.in_progress.value,
     )
     session.add(task_plan)
@@ -372,19 +463,21 @@ async def _stage3_execute(
     task_plan: TaskPlan,
     router: ProviderRouter | None = None,
 ) -> list[dict]:
-    """Stage 3: Execute each plan step через реальные handler'ы.
+    """Stage 3: Execute each plan step через registry handler'ы (§11).
 
-    Для tool_ref в {write_file, file_read, file_search} — напрямую handlers/files.py.
-    Для tool_ref == terminal — напрямую handlers/shell.py.
-    Для write_file: LLM генерирует контент, handler физически пишет.
+    Любой tool_ref обязан быть в tools/registry.py — handler берётся из spec.
+    Legacy aliases write_file/terminal нормализуются в file_write/shell_execute.
+    Для file_write/shell_execute LLM генерирует контент/команду.
     Для неизвестного tool_ref — явный fail (НЕ деградация в текст).
+    ToolCall персистится в БД через repo.start_tool_call/finish_tool_call.
 
     Returns:
-        list of ToolCall dicts с hash_before/hash_after для write_file.
+        list of ToolCall dicts с hash_before/hash_after для file_write.
     """
-    from aria.tools.handlers.files import file_write, file_read, file_search
-    from aria.tools.handlers.shell import shell_execute
     from aria.config import get_settings as _gs
+    from aria.db import repository as repo
+    from aria.db.enums import ToolStatus
+    from aria.tools.registry import get_tool
 
     settings = _gs()
     sandbox_root = str((Path(__file__).parent.parent.parent / settings.agent_sandbox_root).resolve())
@@ -392,13 +485,18 @@ async def _stage3_execute(
     tool_calls_raw: list[dict] = []
     steps = task_plan.plan_json or []
 
-    FILE_HANDLERS = {"write_file": file_write, "file_read": file_read, "file_search": file_search}
+    # Oracle и registry используют canonical names (file_write, shell_execute).
+    # Старые планы могут нести legacy aliases (write_file, terminal) — нормализуем.
+    _ALIASES = {"write_file": "file_write", "terminal": "shell_execute"}
+
+    agent_session = repo.get_session(session, task.session_id) if task.session_id else None
 
     for step in steps:
         step_id = step.get("step_id", "")
         objective = step.get("objective", "")
         role = step.get("role", "general")
-        tool_ref = step.get("tool_ref", "terminal")
+        raw_tool_ref = step.get("tool_ref", "shell_execute")
+        tool_ref = _ALIASES.get(raw_tool_ref, raw_tool_ref)
         tc_id = f"tc-{str(step_id)[:8]}" if step_id else f"tc-{len(tool_calls_raw)}"
 
         if router is None:
@@ -415,63 +513,10 @@ async def _stage3_execute(
             step["tool_call_ids"] = [tc["id"]]
             continue
 
-        # --- Режим: есть router — вызываем реальные handler'ы ---
+        # --- Режим: есть router — реальные handler'ы через registry (§11) ---
         try:
-            if tool_ref in FILE_HANDLERS:
-                handler = FILE_HANDLERS[tool_ref]
-
-                if tool_ref == "write_file":
-                    # LLM генерирует, ЧТО писать в файл
-                    content = await _llm_generate_content(
-                        router, session, role, objective
-                    )
-                    input_json = {
-                        "path": step.get("path", f"generated/{tc_id}.txt"),
-                        "content": content,
-                    }
-                    handler_input = {
-                        "path": input_json["path"],
-                        "content": input_json["content"],
-                    }
-                    output_json = await handler(handler_input, sandbox_root)
-                    # output_json уже содержит hash_before/hash_after от file_write
-                else:
-                    # file_read / file_search — без LLM
-                    if tool_ref == "file_read":
-                        handler_input = {
-                            "path": step.get("path", "."),
-                        }
-                    else:  # file_search
-                        handler_input = {
-                            "glob": step.get("glob", "**/*"),
-                        }
-                    output_json = await handler(handler_input, sandbox_root)
-
-                tc = {
-                    "id": tc_id,
-                    "tool_name": tool_ref,
-                    "input_json": handler_input,
-                    "output_json": output_json,
-                    "status": "ok",
-                }
-
-            elif tool_ref == "terminal":
-                # Shell-команда — LLM генерирует команду
-                command = await _llm_generate_command(
-                    router, session, role, objective
-                )
-                handler_input = {"command": command}
-                shell_output = await shell_execute(handler_input, timeout_sec=30)
-                tc = {
-                    "id": tc_id,
-                    "tool_name": "terminal",
-                    "input_json": handler_input,
-                    "output_json": shell_output,
-                    "status": "ok",
-                }
-
-            elif tool_ref == "llm_task":
-                # Шаг, который сам по себе является LLM-задачей
+            if tool_ref == "llm_task":
+                # Шаг, который сам по себе является LLM-задачей (не registry tool)
                 messages = [
                     ChatMessage(role="system", content=f"Ты {role}. {objective}"),
                     ChatMessage(role="user", content=objective),
@@ -480,24 +525,87 @@ async def _stage3_execute(
                     "subagent_execution", messages, tools=[],
                     allow_degrade=True, db=session,
                 )
-                tc = {
-                    "id": tc_id,
-                    "tool_name": "llm_task",
-                    "input_json": {"objective": objective, "role": role},
-                    "output_json": {"content": result.response.text or ""},
-                    "status": "ok",
-                }
-
+                spec = type("Spec", (), {"tool_name": "llm_task", "risk_level": type("R", (), {"value": "medium"})()})()
+                handler_input = {"objective": objective, "role": role}
+                output_json = {"content": result.response.text or ""}
             else:
-                # Неизвестный tool_ref — явный fail
-                logger.warning("Stage 3: unknown tool_ref=%s for step %s", tool_ref, step_id)
-                tc = {
-                    "id": tc_id,
-                    "tool_name": tool_ref,
-                    "input_json": {"objective": objective, "role": role},
-                    "output_json": {"error": f"unknown tool_ref: {tool_ref}"},
-                    "status": "error",
-                }
+                try:
+                    spec = get_tool(tool_ref)
+                except KeyError:
+                    spec = None
+
+                if spec is None:
+                    # Неизвестный tool_ref — явный fail (НЕ деградация в текст)
+                    logger.warning("Stage 3: unknown tool_ref=%s for step %s", raw_tool_ref, step_id)
+                    raise ValueError(f"unknown tool_ref: {raw_tool_ref} (нет в registry §11)")
+
+                if spec.handler is None:
+                    # delegate_task и прочие без handler'а — не исполняются в executor
+                    raise ValueError(f"tool_ref={tool_ref} не имеет handler'а в registry (только orchestrator loop)")
+
+                # Собираем input_json из полей шага
+                if tool_ref == "file_write":
+                    content = await _llm_generate_content(router, session, role, objective)
+                    handler_input = {
+                        "path": step.get("path", f"generated/{tc_id}.txt"),
+                        "content": content,
+                    }
+                elif tool_ref == "shell_execute":
+                    command = await _llm_generate_command(router, session, role, objective)
+                    handler_input = {"command": command}
+                elif tool_ref == "file_read":
+                    handler_input = {"path": step.get("path", ".")}
+                elif tool_ref == "file_search":
+                    handler_input = {"glob": step.get("glob", "**/*")}
+                elif tool_ref == "web_search":
+                    handler_input = {
+                        "query": step.get("query", objective),
+                        "max_results": step.get("max_results", 5),
+                    }
+                else:
+                    # Остальные registry-инструменты — input прямо из шага
+                    handler_input = step.get("input") or step.get("input_json") or {}
+                    if not handler_input:
+                        raise ValueError(f"tool_ref={tool_ref} требует step.input/input_json")
+
+                output_json = await spec.handler(
+                    input_json=handler_input,
+                    timeout_sec=spec.timeout_sec,
+                    sandbox_root=sandbox_root,
+                )
+
+            status_ok = not (isinstance(output_json, dict) and output_json.get("error"))
+            status = "ok" if status_ok else "error"
+
+            # Персистим ToolCall в БД (если есть agent session)
+            if agent_session is not None:
+                call = repo.start_tool_call(
+                    db=session,
+                    session=agent_session,
+                    task=task,
+                    tool_name=spec.tool_name,
+                    role=role,
+                    risk_level=spec.risk_level.value,
+                    input_json=handler_input,
+                    attempt_no=1,
+                )
+                repo.finish_tool_call(
+                    db=session,
+                    call=call,
+                    status=ToolStatus.ok if status_ok else ToolStatus.error,
+                    output_json=output_json,
+                    error_code=None if status_ok else "handler_error",
+                    error_message=None if status_ok else (output_json.get("error") if isinstance(output_json, dict) else None),
+                )
+                tc_id = str(call.id)
+
+            tc = {
+                "id": tc_id,
+                "tool_name": spec.tool_name,
+                "input_json": handler_input,
+                "output_json": output_json,
+                "status": status,
+            }
 
         except Exception as e:
             logger.warning("Step %s handler failed: %s", step_id[:8] if step_id else "?", e)
@@ -511,7 +619,9 @@ async def _stage3_execute(
 
         tool_calls_raw.append(tc)
         step["status"] = "done" if tc["status"] == "ok" else "failed"
-        step["tool_call_ids"] = [tc["id"]]
+        # tool_call_ids — ТОЛЬКО при ok, чтобы ЗАБЫЛ-детектор срабатывал на failure
+        if tc["status"] == "ok":
+            step["tool_call_ids"] = [tc["id"]]
 
     # Сохраняем обновлённый план
     task_plan.plan_json = steps
@@ -565,15 +675,26 @@ async def _llm_generate_command(
     return result.response.text.strip().strip("`").strip() or "echo 'no command generated'"
 
 
-def _stage4_audit(
+async def _stage4_audit(
+    session: OrmSession,
+    task: Task,
     task_plan: TaskPlan,
     tool_calls_raw: list[dict],
+    router: ProviderRouter | None = None,
 ) -> list[IntegrityFlag]:
     """Stage 4: Dual audit — integrity (pure functions) + correctness (LLM via QA).
+
+    Порядок:
+    1. Integrity-детекторы (НАЕБАЛ/ЗАБЫЛ) — чистая логика, без LLM.
+    2. Если integrity pass и есть router + агентская сессия — correctness QA
+       через run_audit (qa_auditor). needs_rework → ПРОЕБАЛ (честная ошибка → retry).
 
     Returns:
         list of IntegrityFlag.
     """
+    from aria.core.audit import run_audit
+    from aria.db import repository as repo
+
     flags = run_integrity_audit(
         tool_calls=tool_calls_raw,
         plan_json=task_plan.plan_json,
@@ -585,11 +706,36 @@ def _stage4_audit(
 
     if naebal:
         task_plan.integrity_verdict = IntegrityVerdict.naebal.value
-    elif zabyl:
+        return flags
+    if zabyl:
+        # ЗАБЫЛ не смешиваем с correctness QA — retry решает Stage 6
         task_plan.integrity_verdict = IntegrityVerdict.zabyl.value
-    else:
-        task_plan.integrity_verdict = IntegrityVerdict.pass_.value
+        return flags
 
+    # Корректностная QA — только если есть чем и где аудитить.
+    # Без router или без агентской сессии run_audit вернёт пустой отчёт
+    # «no tool calls» → ложный needs_rework.
+    if router is not None and getattr(task, "session_id", None) is not None:
+        agent_session = repo.get_session(session, task.session_id)
+        if agent_session is not None:
+            try:
+                report = await run_audit(session, agent_session, task, router)
+            except Exception:  # noqa: BLE001
+                logger.exception("Correctness audit crashed — integrity verdict stands")
+                task_plan.integrity_verdict = IntegrityVerdict.pass_.value
+                return flags
+
+            if report.verdict == AuditVerdict.needs_rework:
+                task_plan.integrity_verdict = IntegrityVerdict.proebal.value
+                flags.append(
+                    IntegrityFlag(
+                        kind="proebal",
+                        reason="Correctness QA (run_audit) verdict=needs_rework",
+                    )
+                )
+                return flags
+
+    task_plan.integrity_verdict = IntegrityVerdict.pass_.value
     return flags
 
 
@@ -718,12 +864,12 @@ async def _log_integrity_events(
     for flag in flags:
         # Find matching tool_call_id if any
         tool_call_id = None
-        if flag.tool_call_ids and tool_calls:
+        if flag.tool_call_id and tool_calls:
             for tc in tool_calls:
-                if tc.get("id") in flag.tool_call_ids:
+                if tc.get("id") == flag.tool_call_id:
                     try:
-                        tool_call_id = UUID(tc["id"])
-                    except (ValueError, KeyError):
+                        tool_call_id = UUID(flag.tool_call_id)
+                    except (ValueError, TypeError):
                         pass
                     break
 
