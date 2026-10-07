@@ -812,6 +812,49 @@ export const api = {
     fetchJSON<VaultSearchResult>(
       `/api/vault/search?q=${encodeURIComponent(q)}&max_results=${maxResults}`,
     ),
+  // ---- Obsidian layer: connect / discover / tags / decisions / branches ----
+  getVaultStatus: () => fetchJSON<VaultStatus>("/api/vault/status"),
+  discoverVaults: () => fetchJSON<VaultDiscovery>("/api/vault/discover"),
+  connectVault: (path: string, opts: { create?: boolean; init_obsidian?: boolean } = {}) =>
+    fetchJSON<VaultStatus & { ok: boolean; initialized_obsidian: boolean }>("/api/vault/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, ...opts }),
+    }),
+  getVaultTags: () => fetchJSON<{ tags: VaultTag[]; total: number }>("/api/vault/tags"),
+  searchVaultByTags: (tags: string[], mode: "any" | "all" = "any") =>
+    fetchJSON<VaultTagSearch>(
+      `/api/vault/tag-search?tags=${encodeURIComponent(tags.join(","))}&mode=${mode}`,
+    ),
+  getVaultDecisions: (q = "", tags: string[] = []) =>
+    fetchJSON<VaultDecisions>(
+      `/api/vault/decisions?q=${encodeURIComponent(q)}&tags=${encodeURIComponent(tags.join(","))}`,
+    ),
+  getVaultBranches: () => fetchJSON<{ branches: VaultBranch[]; total: number }>("/api/vault/branches"),
+  createVaultBranch: (name: string, description = "", tags: string[] = []) =>
+    fetchJSON<{ path: string; index: string; created: boolean; index_created: boolean }>(
+      "/api/vault/branches",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description, tags }),
+      },
+    ),
+  logVaultDecision: (body: {
+    title: string;
+    decision: string;
+    context?: string;
+    branch?: string;
+    tags?: string[];
+  }) =>
+    fetchJSON<{ path: string; name: string; branch: string | null; index_updated: boolean }>(
+      "/api/vault/decisions",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
   getToolsets: (profile?: string) =>
     fetchJSON<ToolsetInfo[]>(`/api/tools/toolsets${profileQuery(profile)}`),
   toggleToolset: (name: string, enabled: boolean, profile?: string) =>
@@ -2138,6 +2181,73 @@ export interface VaultSearchResult {
   matches: VaultSearchMatch[];
   total: number;
   files_scanned: number;
+}
+
+export interface VaultStatus {
+  path: string;
+  exists: boolean;
+  is_obsidian_vault: boolean;
+  note_count: number;
+  folder_count: number;
+  tag_count: number;
+  decision_count: number;
+  config: {
+    attachments_folder: string | null;
+    daily_notes_folder: string | null;
+    templates_folder: string | null;
+    new_note_folder: string | null;
+  };
+}
+
+export interface VaultCandidate {
+  path: string;
+  name: string;
+  sources: string[];
+  is_obsidian_vault: boolean;
+  note_count: number;
+  last_modified: string | null;
+  open_in_obsidian: boolean;
+  current: boolean;
+}
+
+export interface VaultDiscovery {
+  current: string;
+  vaults: VaultCandidate[];
+}
+
+export interface VaultTag {
+  tag: string;
+  count: number;
+  total: number;
+}
+
+export interface VaultTagSearch {
+  tags: string[];
+  mode: "any" | "all";
+  total: number;
+  notes: { path: string; name: string; tags: string[]; date: string; summary: string }[];
+}
+
+export interface VaultDecision {
+  path: string;
+  note: string;
+  date: string;
+  line: number;
+  kind: "note" | "tag" | "marker" | "callout" | "section";
+  text: string;
+  status: string | null;
+  tags: string[];
+}
+
+export interface VaultDecisions {
+  total: number;
+  decisions: VaultDecision[];
+}
+
+export interface VaultBranch {
+  path: string;
+  name: string;
+  notes: number;
 }
 
 export interface SkillWriteResult {
