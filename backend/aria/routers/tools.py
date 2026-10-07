@@ -75,8 +75,8 @@ def _provider(name: str, badge: str, tag: str,
 _CATALOG: dict[str, dict[str, Any]] = {
     "obsidian": {
         "label": "Obsidian vault",
-        "description": "Read, write, search and list notes in the Obsidian vault.",
-        "tools": ["read_note", "write_note", "search_vault", "list_vault"],
+        "description": "Read, write, search (text, tags, key decisions) and list notes in the Obsidian vault; create branches and log decisions.",
+        "tools": ["read_note", "write_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "create_vault_branch", "log_decision"],
         "has_category": True,
         "providers": [
             _provider("vault", "Vault", "local",

@@ -28,7 +28,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         role_id="general",
         description="Базовая роль общего назначения, диспетчеризация простых задач.",
         system_prompt_asset="prompts/general.md",
-        tool_whitelist=("read_note", "search_vault", "list_vault", "file_read", "file_search"),
+        tool_whitelist=("read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "file_read", "file_search"),
         default_model_policy="standard_reasoning",
     ),
     "oracle": RoleDefinition(
@@ -44,7 +44,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         role_id="orchestrator",
         description="Строит план, выбирает роль/модель/tool-стратегию, может делегировать.",
         system_prompt_asset="prompts/orchestrator.md",
-        tool_whitelist=("delegate_task", "file_read", "file_search", "read_note", "search_vault", "list_vault", "web_search"),
+        tool_whitelist=("delegate_task", "file_read", "file_search", "read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "web_search"),
         default_model_policy="premium_reasoning",
         can_delegate=True,
         max_subagents=5,
@@ -88,7 +88,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         role_id="obsidian_keeper",
         description="Ведение Obsidian vault, Draft TZ storage (§13.3).",
         system_prompt_asset="prompts/obsidian_keeper.md",
-        tool_whitelist=("read_note", "write_note", "search_vault", "list_vault", "file_search"),
+        tool_whitelist=("read_note", "write_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "create_vault_branch", "log_decision", "file_search"),
         default_model_policy="subagent_execution",
     ),
     "housekeeping": RoleDefinition(

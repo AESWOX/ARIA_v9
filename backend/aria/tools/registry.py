@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from aria.db.enums import IdempotencyClass, RiskLevel
-from aria.storage import obsidian_vault
+from aria.storage import obsidian_vault, vault_index
 from aria.tools.handlers import files as files_handler
 from aria.tools.handlers import shell as shell_handler
 from aria.tools.handlers import web as web_handler
@@ -47,6 +47,31 @@ async def _search_vault(input_json: dict, **_ctx) -> dict:
 
 async def _list_vault(input_json: dict, **_ctx) -> dict:
     return obsidian_vault.list_vault_tree(input_json.get("subdir", ""))
+
+
+async def _search_vault_tags(input_json: dict, **_ctx) -> dict:
+    return vault_index.search_by_tags(
+        input_json["tags"], mode=input_json.get("mode", "any"),
+        folder=input_json.get("folder", ""), limit=int(input_json.get("limit", 50)),
+    )
+
+
+async def _list_decisions(input_json: dict, **_ctx) -> dict:
+    return vault_index.find_decisions(
+        input_json.get("query", ""), folder=input_json.get("folder", ""),
+        tags=input_json.get("tags"), limit=int(input_json.get("limit", 30)),
+    )
+
+
+async def _create_vault_branch(input_json: dict, **_ctx) -> dict:
+    return vault_index.create_branch(input_json["name"], description=input_json.get("description", ""), tags=input_json.get("tags"))
+
+
+async def _log_decision(input_json: dict, **_ctx) -> dict:
+    return vault_index.log_decision(
+        input_json["title"], input_json["decision"], context=input_json.get("context", ""),
+        branch=input_json.get("branch", ""), tags=input_json.get("tags"), status=input_json.get("status", "accepted"),
+    )
 
 
 async def _shell_execute(input_json: dict, timeout_sec: int, sandbox_root: str, **_ctx) -> dict:
@@ -227,6 +252,58 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         allowed_roles=("general", "orchestrator", "obsidian_keeper", "qa_auditor", "coder"),
         idempotency_class=IdempotencyClass.safe_read,
         handler=_list_vault,
+    ),
+    "search_vault_tags": ToolSpec(
+        tool_name="search_vault_tags",
+        description="Ищет заметки Obsidian по тегам (frontmatter tags + inline #tag, вложенные теги: project находит project/aria). mode=any|all.",
+        input_schema={"type": "object", "properties": {"tags": {"type": "array", "items": {"type": "string"}}, "mode": {"type": "string"}, "folder": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["tags"]},
+        output_schema={"type": "object", "properties": {"notes": {"type": "array"}, "total": {"type": "integer"}}},
+        timeout_sec=30,
+        risk_level=RiskLevel.low,
+        null_output_allowed=False,
+        requires_approval=False,
+        allowed_roles=("general", "orchestrator", "obsidian_keeper", "qa_auditor", "coder"),
+        idempotency_class=IdempotencyClass.safe_read,
+        handler=_search_vault_tags,
+    ),
+    "list_decisions": ToolSpec(
+        tool_name="list_decisions",
+        description="Ключевые решения из vault (type: decision, #decision/#решение, > [!decision], строки Решение:/Decision:, секции Решения). Новые первыми.",
+        input_schema={"type": "object", "properties": {"query": {"type": "string"}, "folder": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer"}}, "required": []},
+        output_schema={"type": "object", "properties": {"decisions": {"type": "array"}, "total": {"type": "integer"}}},
+        timeout_sec=30,
+        risk_level=RiskLevel.low,
+        null_output_allowed=False,
+        requires_approval=False,
+        allowed_roles=("general", "orchestrator", "obsidian_keeper", "qa_auditor", "coder"),
+        idempotency_class=IdempotencyClass.safe_read,
+        handler=_list_decisions,
+    ),
+    "create_vault_branch": ToolSpec(
+        tool_name="create_vault_branch",
+        description="Создаёт новую ветку в vault: папку с _index.md (MOC). Существующий _index.md не перезаписывает.",
+        input_schema={"type": "object", "properties": {"name": {"type": "string"}, "description": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}}, "required": ["name"]},
+        output_schema={"type": "object", "properties": {"path": {"type": "string"}, "index": {"type": "string"}}},
+        timeout_sec=30,
+        risk_level=RiskLevel.low,
+        null_output_allowed=False,
+        requires_approval=False,
+        allowed_roles=("obsidian_keeper", "orchestrator"),
+        idempotency_class=IdempotencyClass.safe_write,
+        handler=_create_vault_branch,
+    ),
+    "log_decision": ToolSpec(
+        tool_name="log_decision",
+        description="Записывает ключевое решение заметкой <branch>/decisions/YYYY-MM-DD-slug.md и добавляет ссылку в _index.md ветки.",
+        input_schema={"type": "object", "properties": {"title": {"type": "string"}, "decision": {"type": "string"}, "context": {"type": "string"}, "branch": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "status": {"type": "string"}}, "required": ["title", "decision"]},
+        output_schema={"type": "object", "properties": {"path": {"type": "string"}, "name": {"type": "string"}}},
+        timeout_sec=30,
+        risk_level=RiskLevel.low,
+        null_output_allowed=False,
+        requires_approval=False,
+        allowed_roles=("obsidian_keeper", "orchestrator"),
+        idempotency_class=IdempotencyClass.safe_write,
+        handler=_log_decision,
     ),
     "shell_execute": ToolSpec(
         tool_name="shell_execute",
