@@ -397,7 +397,7 @@ function SessionRow({
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (isExpanded && messages === null && !loading) {
+    if (isExpanded && messages === null && !loading && !error) {
       setLoading(true);
       api
         .getSessionMessages(session.id)
@@ -405,7 +405,7 @@ function SessionRow({
         .catch((err) => setError(String(err)))
         .finally(() => setLoading(false));
     }
-  }, [isExpanded, session.id, messages, loading]);
+  }, [isExpanded, session.id, messages, loading, error]);
 
   const sourceInfo = (session.source
     ? SOURCE_CONFIG[session.source]
