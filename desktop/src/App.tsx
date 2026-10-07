@@ -38,6 +38,7 @@ import {
   KeyRound,
   Menu,
   MessageSquare,
+  NotebookText,
   Package,
   PanelLeftClose,
   PanelLeftOpen,
@@ -105,6 +106,7 @@ const CronPage = lazy(() => import("@/pages/CronPage"));
 const ProfilesPage = lazy(() => import("@/pages/ProfilesPage"));
 const ProfileBuilderPage = lazy(() => import("@/pages/ProfileBuilderPage"));
 const SkillsPage = lazy(() => import("@/pages/SkillsPage"));
+const NotesPage = lazy(() => import("@/pages/NotesPage"));
 const PluginsPage = lazy(() => import("@/pages/PluginsPage"));
 const McpPage = lazy(() => import("@/pages/McpPage"));
 const PairingPage = lazy(() => import("@/pages/PairingPage"));
@@ -153,6 +155,7 @@ const BUILTIN_ROUTES_CORE: Record<string, RouteComponent> = {
   "/": RootRedirect,
   "/sessions": SessionsPage,
   "/files": FilesPage,
+  "/notes": NotesPage,
   "/analytics": AnalyticsPage,
   "/models": ModelsPage,
   "/logs": LogsPage,
@@ -187,6 +190,7 @@ const BUILTIN_NAV_REST: NavItem[] = [
     icon: MessageSquare,
   },
   { path: "/files", label: "Files", icon: FolderOpen },
+  { path: "/notes", label: "Notes", icon: NotebookText },
   {
     path: "/analytics",
     labelKey: "analytics",

@@ -780,6 +780,21 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, content, profile: profile || undefined }),
     }),
+  // ---- Obsidian vault / notes (backend: routers/vault.py) ----
+  getVaultTree: (subdir = "") =>
+    fetchJSON<VaultTree>(`/api/vault/tree?subdir=${encodeURIComponent(subdir)}`),
+  getVaultNote: (path: string) =>
+    fetchJSON<VaultNote>(`/api/vault/notes/${encodeVaultPath(path)}`),
+  putVaultNote: (path: string, content: string) =>
+    fetchJSON<VaultWriteResult>(`/api/vault/notes/${encodeVaultPath(path)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    }),
+  searchVault: (q: string, maxResults = 30) =>
+    fetchJSON<VaultSearchResult>(
+      `/api/vault/search?q=${encodeURIComponent(q)}&max_results=${maxResults}`,
+    ),
   getToolsets: (profile?: string) =>
     fetchJSON<ToolsetInfo[]>(`/api/tools/toolsets${profileQuery(profile)}`),
   toggleToolset: (name: string, enabled: boolean, profile?: string) =>
@@ -2041,6 +2056,44 @@ export interface SkillContent {
   name: string;
   content: string;
   path: string;
+}
+
+/** Encode each path segment but keep the "/" separators. */
+export function encodeVaultPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+export interface VaultTree {
+  path: string;
+  dirs: string[];
+  notes: string[];
+  total_notes: number;
+  total_dirs: number;
+}
+
+export interface VaultNote {
+  found: boolean;
+  content: string | null;
+  path: string;
+  frontmatter?: Record<string, string>;
+  wiki_links?: string[];
+}
+
+export interface VaultWriteResult {
+  path: string;
+  bytes_written: number;
+}
+
+export interface VaultSearchMatch {
+  file_path: string;
+  line: number;
+  snippet: string;
+}
+
+export interface VaultSearchResult {
+  matches: VaultSearchMatch[];
+  total: number;
+  files_scanned: number;
 }
 
 export interface SkillWriteResult {
