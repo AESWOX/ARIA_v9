@@ -18,13 +18,13 @@ from typing import Any, Mapping
 # Tools that never mutate state — repeating them is wasteful
 IDEMPOTENT_TOOL_NAMES = frozenset({
     "read_file", "search_files", "read_note", "search_vault",
-    "list_vault", "web_search", "web_extract",
+    "list_vault", "search_vault_tags", "list_decisions", "web_search", "web_extract",
 })
 
 # Tools that DO mutate state — repeating them is dangerous
 MUTATING_TOOL_NAMES = frozenset({
     "terminal", "write_file", "patch", "file_write", "shell_execute",
-    "write_note", "memory", "skill_manage", "cronjob", "delegate_task",
+    "write_note", "create_vault_branch", "log_decision", "memory", "skill_manage", "cronjob", "delegate_task",
 })
 
 

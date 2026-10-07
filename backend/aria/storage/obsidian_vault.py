@@ -11,7 +11,8 @@ def vault_root() -> Path:
     settings = get_settings()
     root = Path(settings.OBSIDIAN_VAULT_PATH)
     root.mkdir(parents=True, exist_ok=True)
-    (root / "00-TASKS").mkdir(parents=True, exist_ok=True)
+    # NB: 00-TASKS is created lazily by write_note*/save_draft_tz. Creating it here
+    # would litter a user's real Obsidian vault just because it was connected.
     return root
 
 
@@ -194,7 +195,7 @@ def save_binary_asset(file_name: str, content: bytes, subdir: str = ".assets") -
     }
 
 
-def search_vault(pattern: str, max_results: int = 20) -> dict:
+def search_vault(pattern: str, max_results: int = 20, folder: str = "", only_paths: set[str] | None = None) -> dict:
     """Case-insensitive substring search across all notes with positional metadata.
 
     Each match includes file_path, line, column, snippet, and textual context so
@@ -208,6 +209,11 @@ def search_vault(pattern: str, max_results: int = 20) -> dict:
     for fpath in sorted(root.rglob("*.md")):
         parts = fpath.relative_to(root).parts
         if any(p.startswith(".") for p in parts):
+            continue
+        rel_posix = str(fpath.relative_to(root)).replace("\\", "/")
+        if folder and not (rel_posix == folder.strip("/") or rel_posix.startswith(folder.strip("/") + "/")):
+            continue
+        if only_paths is not None and rel_posix not in only_paths:
             continue
         files_scanned += 1
         try:

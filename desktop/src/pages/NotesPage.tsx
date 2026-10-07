@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Settings2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { VaultSearchMatch, VaultTree } from "@/lib/api";
@@ -17,6 +18,7 @@ import { Button } from "@vendor/ui/ui/components/button";
 import { Input } from "@vendor/ui/ui/components/input";
 import { useToast } from "@vendor/ui/hooks/use-toast";
 import { Toast } from "@vendor/ui/ui/components/toast";
+import { DecisionsPanel, SetupPanel, TagsPanel } from "./notes/VaultTools";
 
 /* ------------------------------------------------------------------ */
 /*  NotesPage - browse, search, create and edit the Obsidian vault     */
@@ -118,6 +120,9 @@ export default function NotesPage() {
   const [searching, setSearching] = useState(false);
   const [newPath, setNewPath] = useState("");
   const dirtyRef = useRef(false);
+  const [tab, setTab] = useState<"files" | "tags" | "decisions">("files");
+  const [showSetup, setShowSetup] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const dirty = selected !== null && content !== original;
   dirtyRef.current = dirty;
@@ -156,6 +161,9 @@ export default function NotesPage() {
     return () => window.removeEventListener("beforeunload", handler);
   }, []);
 
+  const onPanelError = useCallback((m: string) => showToast(m, "error"), [showToast]);
+  const onPanelInfo = useCallback((m: string) => showToast(m, "success"), [showToast]);
+
   const confirmDiscard = () => !dirtyRef.current || window.confirm("Discard unsaved changes?");
 
   const toggle = (dir: string) => {
@@ -184,6 +192,24 @@ export default function NotesPage() {
       showToast(`Cannot open ${path}: ${errMessage(e)}`, "error");
     } finally {
       setLoadingNote(false);
+    }
+  };
+
+  const openFromPanel = async (path: string) => {
+    await openNote(path);
+    setShowSetup(false);
+  };
+
+  // after connecting another vault / creating a branch or decision: refetch everything
+  const onVaultChanged = () => {
+    setTrees({});
+    setExpanded(new Set());
+    void loadDir("");
+    setRefreshKey((k) => k + 1);
+    if (!dirtyRef.current) {
+      setSelected(null);
+      setContent("");
+      setOriginal("");
     }
   };
 
@@ -266,6 +292,30 @@ export default function NotesPage() {
       <div className="grid gap-3 md:grid-cols-[300px_1fr]">
         {/* ---------------- left: search + tree ---------------- */}
         <div className="flex min-h-[200px] flex-col gap-2 border border-border bg-background/40 p-2">
+          <div className="flex items-center gap-1 text-xs">
+            {(["files", "tags", "decisions"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTab(t)}
+                className={cn("px-2 py-0.5 capitalize hover:bg-foreground/5", tab === t && "bg-foreground/10 font-medium")}
+              >
+                {t}
+              </button>
+            ))}
+            <Button
+              ghost
+              size="sm"
+              className="ml-auto"
+              onClick={() => setShowSetup((v) => !v)}
+              aria-label="Vault setup"
+              title="Connect vault, new branch, log decision"
+            >
+              <Settings2 className={cn("h-3 w-3", showSetup && "text-amber-500")} />
+            </Button>
+          </div>
+          {tab === "files" && (
+            <>
           <div className="flex gap-1">
             <Input
               value={query}
@@ -319,8 +369,8 @@ export default function NotesPage() {
               <p className="p-2 text-xs text-destructive">Cannot read the vault: {rootError}</p>
             ) : rootEmpty ? (
               <p className="p-2 text-xs text-muted-foreground">
-                The vault is empty. To use your existing Obsidian vault, set OBSIDIAN_VAULT_PATH on the Keys page
-                to its folder (the one that contains <code>.obsidian</code>), then press refresh.
+                The vault is empty. Press the gear above and use Detect to find and connect your Obsidian vault
+                (the folder that contains <code>.obsidian</code>).
               </p>
             ) : (
               <TreeNode
@@ -334,14 +384,25 @@ export default function NotesPage() {
               />
             )}
           </div>
+            </>
+          )}
+          {tab === "tags" && (
+            <TagsPanel onOpen={(p) => void openFromPanel(p)} onError={onPanelError} refreshKey={refreshKey} />
+          )}
+          {tab === "decisions" && (
+            <DecisionsPanel onOpen={(p) => void openFromPanel(p)} onError={onPanelError} refreshKey={refreshKey} />
+          )}
         </div>
 
         {/* ---------------- right: editor ---------------- */}
         <div className="flex min-h-[320px] flex-col gap-2 border border-border bg-background/40 p-2">
-          {selected === null ? (
-            <p className="p-2 text-xs text-muted-foreground">
-              Pick a note on the left, or type a path such as <code>00-TASKS/idea</code> and press +.
-            </p>
+          {selected === null || showSetup ? (
+            <SetupPanel
+              onOpen={(p) => void openFromPanel(p)}
+              onError={onPanelError}
+              onInfo={onPanelInfo}
+              onChanged={onVaultChanged}
+            />
           ) : (
             <>
               <div className="flex items-center justify-between gap-2">

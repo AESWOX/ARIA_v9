@@ -18,6 +18,7 @@ from aria.db import repository as repo
 from aria.db.base import session_scope
 from aria.db.enums import SourceTrust, TaskStatus
 from aria.http_utils import (
+    serialize_message,
     _safe_export_filename,
     emit_message_created,
     emit_session_updated,
@@ -282,6 +283,20 @@ async def create_session(payload: dict[str, Any], _: str = Depends(require_runti
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
     return session_snapshot_payload(session_id)
+
+
+@router.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
+    """Shape = SessionMessagesResponse in desktop/src/lib/api.ts (SessionsPage expands rows with it)."""
+    with session_scope() as db:
+        if repo.get_session(db, session_id) is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        items = []
+        for msg in repo.list_messages(db, session_id, limit=1000):
+            row = serialize_message(msg)
+            row["timestamp"] = msg.created_at.timestamp() if msg.created_at else None
+            items.append(row)
+        return {"session_id": str(session_id), "messages": items}
 
 
 @router.post("/sessions/{session_id}/messages")

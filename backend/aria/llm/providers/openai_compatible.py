@@ -2,11 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 
 import httpx
 
 from aria.llm.key_pool import KeyPool, NoAvailableKeys
 from aria.llm.providers.base import ChatMessage, LlmProvider, LlmResponse, ToolCallRequest
+
+
+logger = logging.getLogger(__name__)
+
+_SECRET_RE = re.compile(r"(AIza[0-9A-Za-z_\-]{20,}|sk-[0-9A-Za-z_\-]{16,}|(?i:key|token)=[^&\s'\"]+)")
+
+
+def _log_http_error(provider_id: str, model: str, resp: httpx.Response) -> None:
+    try:
+        body = resp.text
+    except Exception:  # streaming/unread body
+        body = ""
+    logger.warning("provider=%s model=%s HTTP %s body=%s", provider_id, model, resp.status_code,
+                   _SECRET_RE.sub("***", body)[:300].replace("\n", " "))
 
 
 FORBIDDEN_COOLDOWN_SEC = 15 * 60
@@ -170,6 +186,7 @@ class OpenAICompatibleProvider(LlmProvider):
                     data = resp.json()
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
+                _log_http_error(self.provider_id, self.model, exc.response)
                 if self.key_pool and key is not None:
                     body = _error_text(exc.response)
                     if status == 429:
