@@ -20,5 +20,8 @@ declare global {
  * ever becomes conditional again.
  */
 export function isDashboardEmbeddedChatEnabled(): boolean {
-  return true;
+  // ARIA's backend has no /api/pty endpoint, so the xterm TUI chat inherited
+  // from the original dashboard could never connect. /chat is now the native
+  // chat page (pages/NativeChatPage.tsx) backed by /api/chat/*.
+  return false;
 }

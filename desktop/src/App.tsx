@@ -38,6 +38,7 @@ import {
   KeyRound,
   Menu,
   MessageSquare,
+  MessageCircle,
   NotebookText,
   Package,
   PanelLeftClose,
@@ -107,6 +108,7 @@ const ProfilesPage = lazy(() => import("@/pages/ProfilesPage"));
 const ProfileBuilderPage = lazy(() => import("@/pages/ProfileBuilderPage"));
 const SkillsPage = lazy(() => import("@/pages/SkillsPage"));
 const NotesPage = lazy(() => import("@/pages/NotesPage"));
+const NativeChatPage = lazy(() => import("@/pages/NativeChatPage"));
 const PluginsPage = lazy(() => import("@/pages/PluginsPage"));
 const McpPage = lazy(() => import("@/pages/McpPage"));
 const PairingPage = lazy(() => import("@/pages/PairingPage"));
@@ -136,7 +138,7 @@ const CHAT_NAV_ITEM: NavItem = {
   path: "/chat",
   labelKey: "chat",
   label: "Chat",
-  icon: Terminal,
+  icon: MessageCircle,
 };
 
 /**
@@ -153,6 +155,7 @@ type RouteComponent = ComponentType | LazyExoticComponent<ComponentType>;
 
 const BUILTIN_ROUTES_CORE: Record<string, RouteComponent> = {
   "/": RootRedirect,
+  "/chat": NativeChatPage,
   "/sessions": SessionsPage,
   "/files": FilesPage,
   "/notes": NotesPage,
@@ -516,13 +519,11 @@ export default function App() {
   );
 
   const builtinNav = useMemo(() => {
-    const base = embeddedChat
-      ? [CHAT_NAV_ITEM, ...BUILTIN_NAV_REST]
-      : BUILTIN_NAV_REST;
+    const base = [CHAT_NAV_ITEM, ...BUILTIN_NAV_REST];
     return showTokenAnalytics
       ? base
       : base.filter((n) => n.path !== "/analytics");
-  }, [embeddedChat, showTokenAnalytics]);
+  }, [showTokenAnalytics]);
 
   const sidebarNav = useMemo(
     () => partitionSidebarNav(builtinNav, manifests),

@@ -780,6 +780,23 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, content, profile: profile || undefined }),
     }),
+  // ---- Chat (backend: routers/chat.py) ----
+  chatStatus: () => fetchJSON<ChatStatus>("/api/chat/status"),
+  chatSessions: () => fetchJSON<ChatSessionRow[]>("/api/chat/sessions"),
+  chatCreate: (title?: string) =>
+    fetchJSON<{ session_id: string; title: string }>("/api/chat/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }),
+  chatMessages: (sessionId: string) =>
+    fetchJSON<ChatMsg[]>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`),
+  chatSend: (sessionId: string, body: { content?: string; retry?: boolean }) =>
+    fetchJSON<ChatSendResult>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   // ---- Obsidian vault / notes (backend: routers/vault.py) ----
   getVaultTree: (subdir = "") =>
     fetchJSON<VaultTree>(`/api/vault/tree?subdir=${encodeURIComponent(subdir)}`),
@@ -2056,6 +2073,33 @@ export interface SkillContent {
   name: string;
   content: string;
   path: string;
+}
+
+export interface ChatStatus {
+  configured: boolean;
+  providers: string[];
+  hint: string | null;
+}
+
+export interface ChatSessionRow {
+  id: string;
+  title: string;
+  message_count: number;
+  updated_at: string | null;
+}
+
+export interface ChatMsg {
+  id: string;
+  role: string;
+  content: string;
+  created_at: string | null;
+}
+
+export interface ChatSendResult {
+  user: ChatMsg;
+  assistant: ChatMsg;
+  provider_id: string;
+  degraded: boolean;
 }
 
 /** Encode each path segment but keep the "/" separators. */

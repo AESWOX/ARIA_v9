@@ -36,6 +36,7 @@ from aria.http_utils import seed_database
 from aria.llm.router import build_default_router
 from aria.routers.actions import router as actions_router
 from aria.routers.analytics import router as analytics_router
+from aria.routers.chat import router as chat_router
 from aria.routers.auth import router as auth_router
 from aria.routers.config import router as config_router
 from aria.routers.cron import router as cron_router
@@ -160,6 +161,7 @@ for _r in (
     actions_router,
     analytics_router,
     auth_router,
+    chat_router,
     config_router,
     cron_router,
     env_router,

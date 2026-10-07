@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from aria import paths
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from aria.api.auth import require_runtime_token
 
@@ -153,13 +154,24 @@ def _persist_env_var(key: str, value: str | None) -> None:
     _ENV_FILE.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
-def _refresh_settings() -> None:
+def _refresh_settings(request: Request | None = None) -> None:
     """Settings are lru_cached; without this a changed OBSIDIAN_VAULT_PATH (or
     any other setting) is saved to .env but ignored until the app restarts.
-    Provider pools built at startup (API keys) still need a restart."""
+
+    The LLM provider router is built from the keys at startup, so it is rebuilt
+    too: a Gemini key pasted on the Keys page works for the very next chat
+    message. (Rebuilding resets key cooldown state, which is what you want
+    after changing keys.)"""
     from aria.config import get_settings
 
     get_settings.cache_clear()
+    if request is not None and hasattr(request.app.state, "router"):
+        try:
+            from aria.llm.router import build_default_router
+
+            request.app.state.router = build_default_router()
+        except Exception:  # noqa: BLE001 - never fail saving a key because of this
+            logging.getLogger("local_agent.env").exception("could not rebuild LLM router")
 
 
 @router.get("/env")
@@ -181,6 +193,7 @@ async def list_env(_: str = Depends(require_runtime_token)) -> dict[str, dict[st
 @router.put("/env")
 async def set_env_var(
     body: dict[str, str],
+    request: Request,
     _: str = Depends(require_runtime_token),
 ) -> dict[str, Any]:
     key = (body.get("key") or "").strip()
@@ -189,13 +202,14 @@ async def set_env_var(
         raise HTTPException(status_code=400, detail="key is required")
     os.environ[key] = value
     _persist_env_var(key, value)
-    _refresh_settings()
+    _refresh_settings(request)
     return {"ok": True}
 
 
 @router.delete("/env")
 async def delete_env_var(
     body: dict[str, str],
+    request: Request,
     _: str = Depends(require_runtime_token),
 ) -> dict[str, Any]:
     key = (body.get("key") or "").strip()
@@ -203,7 +217,7 @@ async def delete_env_var(
         raise HTTPException(status_code=400, detail="key is required")
     os.environ.pop(key, None)
     _persist_env_var(key, None)
-    _refresh_settings()
+    _refresh_settings(request)
     return {"ok": True}
 
 
