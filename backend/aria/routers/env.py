@@ -153,6 +153,15 @@ def _persist_env_var(key: str, value: str | None) -> None:
     _ENV_FILE.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
+def _refresh_settings() -> None:
+    """Settings are lru_cached; without this a changed OBSIDIAN_VAULT_PATH (or
+    any other setting) is saved to .env but ignored until the app restarts.
+    Provider pools built at startup (API keys) still need a restart."""
+    from aria.config import get_settings
+
+    get_settings.cache_clear()
+
+
 @router.get("/env")
 async def list_env(_: str = Depends(require_runtime_token)) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
@@ -180,6 +189,7 @@ async def set_env_var(
         raise HTTPException(status_code=400, detail="key is required")
     os.environ[key] = value
     _persist_env_var(key, value)
+    _refresh_settings()
     return {"ok": True}
 
 
@@ -193,6 +203,7 @@ async def delete_env_var(
         raise HTTPException(status_code=400, detail="key is required")
     os.environ.pop(key, None)
     _persist_env_var(key, None)
+    _refresh_settings()
     return {"ok": True}
 
 
