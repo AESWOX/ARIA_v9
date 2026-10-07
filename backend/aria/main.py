@@ -73,10 +73,11 @@ _root_logger = logging.getLogger()
 _root_logger.addHandler(_file_handler)
 _root_logger.setLevel(logging.INFO)
 
-# uvicorn пишет через свои собственные логгеры — цепляем хендлер и туда,
-# иначе access/error логи uvicorn не попадут в файл.
-for _uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-    logging.getLogger(_uvicorn_logger_name).addHandler(_file_handler)
+# uvicorn пишет через свои логгеры с propagate=False ("uvicorn", "uvicorn.access").
+# "uvicorn.error" пропагирует в "uvicorn" — вешать хендлер и на него = каждая строка дважды.
+for _uvicorn_logger_name in ("uvicorn", "uvicorn.access"):
+    if _file_handler not in logging.getLogger(_uvicorn_logger_name).handlers:
+        logging.getLogger(_uvicorn_logger_name).addHandler(_file_handler)
 
 app = FastAPI(title="Local Agent v7.1", version="0.9.0")
 settings = get_settings()
