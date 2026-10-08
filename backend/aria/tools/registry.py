@@ -148,10 +148,10 @@ async def _task_status(input_json: dict, **_ctx) -> dict:
             "status": row.status.value if hasattr(row.status, 'value') else str(row.status),
             "role": row.role or "",
             "objective": (row.objective or "")[:500],
-            "summary": (row.summary or "")[:1000],
-            "error": row.error or "",
+            "error_code": row.error_code or "",
+            "error": (row.error_message or "")[:1000],
             "created_at": str(row.created_at) if row.created_at else "",
-            "completed_at": str(row.completed_at) if row.completed_at else "",
+            "completed_at": str(row.closed_at) if row.closed_at else "",
         }
 
 

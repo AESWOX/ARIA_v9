@@ -7,7 +7,8 @@ from aria.db.enums import IdempotencyClass
 
 # §14.2 — high-risk patterns минимум включают:
 HIGH_RISK_PATTERNS: list[re.Pattern] = [
-    re.compile(r"\brm\s+-rf\b"),
+    # rm с рекурсивным флагом в любом написании: -rf, -fr, -Rf, -rfv, --recursive
+    re.compile(r"\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b"),
     re.compile(r"\bsudo\s+rm\b"),
     re.compile(r"\bmkfs\b"),
     re.compile(r"\bdd\s+if="),
@@ -17,7 +18,7 @@ HIGH_RISK_PATTERNS: list[re.Pattern] = [
     re.compile(r"\bgit\s+push\s+--force\b"),
     re.compile(r"\bchmod\s+-R\s+777\b"),
     # "любые массовые delete/move в пользовательских каталогах" — эвристика:
-    re.compile(r"\brm\s+-r[f]?\s+.*(/home|/Users|~)", re.IGNORECASE),
+    re.compile(r"\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+.*(/home|/Users|~)", re.IGNORECASE),
     re.compile(r"\bmv\s+.*\*.*\s+/dev/null\b"),
 ]
 
