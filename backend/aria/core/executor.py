@@ -417,8 +417,10 @@ async def _stage2_plan(
                 if not isinstance(plan_steps, list):
                     raise ValueError("Oracle response is not a list")
             else:
-                # Деградация — mock план
-                plan_steps = _mock_oracle_plan(task.objective)
+                # Волна 1 (A9): тихий мок-план в боевом пути удалён.
+                raise ProviderUnavailable(
+                    "no LLM provider configured — Oracle plan cannot be generated"
+                )
 
             plan_steps = validate_plan(plan_steps)
             break
@@ -500,18 +502,11 @@ async def _stage3_execute(
         tc_id = f"tc-{str(step_id)[:8]}" if step_id else f"tc-{len(tool_calls_raw)}"
 
         if router is None:
-            # Деградация — mock tool call
-            tc = {
-                "id": f"mock-tc-{str(step_id)[:8]}" if step_id else f"mock-tc-{len(tool_calls_raw)}",
-                "tool_name": tool_ref,
-                "input_json": {"command": f"echo '{objective}'"},
-                "output_json": {"exit_code": 0, "stdout": f"done: {objective}"},
-                "status": "ok",
-            }
-            tool_calls_raw.append(tc)
-            step["status"] = "done"
-            step["tool_call_ids"] = [tc["id"]]
-            continue
+            # Волна 1 (A9): тихие «успешные» мок-вызовы удалены — без LLM шаг
+            # не исполняется по-настоящему, значит это ошибка, а не ok.
+            raise ProviderUnavailable(
+                f"no LLM provider configured — step {step_id} cannot be executed"
+            )
 
         # --- Режим: есть router — реальные handler'ы через registry (§11) ---
         try:
@@ -888,29 +883,3 @@ async def _log_integrity_events(
         "IntegrityEvents: task=%s wrote %d events",
         task_id[:8], len(flags),
     )
-
-
-def _mock_oracle_plan(objective: str) -> list[dict]:
-    """Mock-генерация плана Oracle. # test-only mock
-
-    Используется только при деградации (router is None).
-    В production — LLM call через Oracle-роль.
-    Возвращает список PlanStep-совместимых словарей.
-    """
-    return [
-        {
-            "objective": f"Verify dependencies and imports for {objective}",
-            "role": "coder",
-            "tool_ref": "terminal",
-        },
-        {
-            "objective": f"Execute main logic for {objective}",
-            "role": "coder",
-            "tool_ref": "terminal",
-        },
-        {
-            "objective": f"Verify result of {objective}",
-            "role": "qa_auditor",
-            "tool_ref": "terminal",
-        },
-    ]

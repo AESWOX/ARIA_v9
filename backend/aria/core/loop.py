@@ -36,7 +36,11 @@ from aria.db.enums import AuditVerdict, SourceTrust, TaskStatus, ToolStatus
 from aria.llm.providers.base import ChatMessage
 from aria.llm.router import ProviderRouter, ProviderUnavailable
 from aria.tools.registry import get_tool
-from aria.tools.validators import ToolValidationError, assert_role_allowed, is_high_risk_command
+from aria.tools.validators import (
+    ToolValidationError,
+    assert_role_allowed,
+    classify_shell_command,
+)
 from aria.core.guardrails import ToolCallGuardrailController
 
 logger = logging.getLogger("local_agent.loop")
@@ -169,7 +173,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
 
                 if call.tool_name == "shell_execute":
                     command = call.arguments.get("command", "")
-                    if is_high_risk_command(command):
+                    if classify_shell_command(command) != "allow":
                         item = approvals.check_command_and_maybe_request_approval(db, session, task, command)
                         event_bus.emit(
                             "attention_item.created",

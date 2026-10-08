@@ -30,16 +30,32 @@ def test_orchestrator_stays_premium() -> None:
     assert role.default_model_policy == "premium_reasoning"
 
 
-def test_subagent_execution_is_registered() -> None:
-    """Sanity: the provider_class subagent_execution must exist in the router."""
+def test_router_has_no_stub_providers_by_default() -> None:
+    """Волна 1 (A9): без ключей маршрутизатор пуст, а не «отвечает» заглушкой."""
     from aria.llm.router import build_default_router
+
     router = build_default_router()
-    providers = router.providers_by_class.get("subagent_execution", [])
-    # In CI without .env, this will be a StubProvider; with Groq keys, a real one.
-    # Either is fine — what matters is the class is registered.
-    assert len(providers) >= 1, (
-        f"expected at least 1 provider with provider_class=subagent_execution, "
-        f"got {len(providers)}. Router has classes: {list(router.providers_by_class.keys())}"
-    )
-    # Verify the provider is properly initialised
-    assert providers[0].provider_class == "subagent_execution"
+    stub_ids = [
+        p.provider_id
+        for providers in router.providers_by_class.values()
+        for p in providers
+        if p.provider_id.startswith("stub")
+    ]
+    assert stub_ids == [], f"тихие заглушки вернулись в боевой путь: {stub_ids}"
+
+
+def test_empty_router_reports_unavailable_not_an_answer() -> None:
+    """Пустой маршрутизатор обязан честно падать, а не выдумывать ответ."""
+    import asyncio
+
+    import pytest
+
+    from aria.llm.providers.base import ChatMessage
+    from aria.llm.router import ProviderRouter, ProviderUnavailable
+
+    with pytest.raises(ProviderUnavailable):
+        asyncio.run(
+            ProviderRouter().route_chat(
+                "standard_reasoning", [ChatMessage(role="user", content="hi")], [], allow_degrade=True
+            )
+        )

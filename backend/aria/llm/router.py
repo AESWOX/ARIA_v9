@@ -262,23 +262,14 @@ def build_default_router() -> ProviderRouter:
             )
         )
 
-    if not has_any_real_provider:
-        stub_free = StubProvider(provider_id="stub-free")
-        stub_free.provider_class = "free_tier_reasoning"
-        router.register(stub_free)
-
-        stub_standard = StubProvider(provider_id="stub-standard")
-        stub_standard.provider_class = "standard_reasoning"
-        router.register(stub_standard)
-
-        stub_premium = StubProvider(provider_id="stub-premium")
-        stub_premium.provider_class = "premium_reasoning"
-        router.register(stub_premium)
-
-    # subagent_execution стопроцентно гарантирован: если нет Groq — ставим стаб
-    if not groq_keys:
-        stub_subagent = StubProvider(provider_id="stub-subagent")
-        stub_subagent.provider_class = "subagent_execution"
-        router.register(stub_subagent)
+    if not router.providers_by_class:
+        # Волна 1 (A9): раньше здесь молча регистрировались 4 заглушки
+        # (stub-free/standard/premium/subagent), и UI показывал «ответ модели»,
+        # которого не было. Теперь честно: без ключей маршрутизатор пуст,
+        # route_chat поднимает ProviderUnavailable, /chat/status говорит
+        # «не настроено», задача падает с provider_unavailable.
+        logging.getLogger("local_agent.llm.router").warning(
+            "no LLM provider configured — router is empty (add keys in Keys / .env)"
+        )
 
     return router
