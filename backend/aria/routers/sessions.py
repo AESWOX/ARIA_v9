@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
@@ -211,7 +211,7 @@ async def prune_sessions(payload: dict[str, Any], _: str = Depends(require_runti
         raise HTTPException(status_code=400, detail="older_than_days must be a number")
     if older_than_days <= 0:
         raise HTTPException(status_code=400, detail="older_than_days must be > 0")
-    cutoff = utc_now() - datetime.timedelta(days=older_than_days)
+    cutoff = utc_now() - timedelta(days=older_than_days)
     from aria.core.events import event_bus
 
     removed = 0
@@ -335,6 +335,13 @@ async def post_message(
 
             await run_codex_task(task.id)
         else:
+            runner = getattr(request.app.state, "task_runner", None)
+            if runner is not None:
+                # Волна 1 (A10): агент больше не исполняется внутри HTTP-запроса.
+                # Результат приходит событиями WS (message.created, task.status_changed).
+                queued = runner.submit(task.id, mode="agent", source="ui")
+                return {"ok": True, "queued": bool(queued.get("queued")), "task_id": str(task.id)}
+            # Без раннера (юнит-тесты без lifespan) — прежний синхронный путь.
             await execute_agent_loop(task.id, request.app.state.router, settings.agent_sandbox_root)
 
     return {"ok": True}

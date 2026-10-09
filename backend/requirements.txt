@@ -3,13 +3,11 @@ uvicorn[standard]==0.35.0
 sqlalchemy==2.0.42
 pydantic-settings==2.10.1
 httpx==0.28.1
-redis==6.2.0
+psutil==7.0.0
 python-multipart==0.0.20
 python-dotenv==1.2.2
 alembic==1.13.3
-pytest==8.3.5
-pytest-cov==6.0.0
-pytest-asyncio==0.25.3
+croniter==6.0.0
 
 # Optional, only needed if CODEX_ENABLED=true in .env. Not pinned here on
 # purpose -- it's a 120MB+ prebuilt binary download, not a real Python dep,
@@ -17,3 +15,6 @@ pytest-asyncio==0.25.3
 # defeats the "cheap by default" point. Install by hand when you actually
 # want it:
 #   pip install openai-codex-cli-bin
+
+# Test-only dependencies live in requirements-dev.txt (pytest, coverage,
+# anyio) so the shipped backend install stays small.

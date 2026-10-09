@@ -24,9 +24,10 @@ backend/dist/
 backend/build/
 backend/.pytest_cache/
 
-# Bundled backend binaries should stay in git
-!src-tauri/bin/
-!src-tauri/bin/*.exe
+# Sidecar binary is a BUILD OUTPUT (copied by the build script from
+# backend/dist/backend.exe) — never keep it in git: 100+ MB per release in
+# history and a stale binary that contradicts the source it ships with.
+desktop/src-tauri/bin/
 
 # Databases — must never be in version control
 *.db
@@ -51,6 +52,9 @@ logs/
 
 # DoD verification artifacts
 .dod_verify.json
+coverage.xml
+*.orig
+*.rej
 dod_verify.json
 backend/.coverage
 
@@ -61,3 +65,7 @@ GENSPARK_*
 delivery_*
 *.patch
 aria_full_delivery_audit.ps1
+
+# Binaries are build/installer outputs — never in git (wave 0 review: 3 exe were still tracked)
+*.exe
+*.msi

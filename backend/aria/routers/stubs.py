@@ -803,7 +803,7 @@ async def curator_paused(payload: dict[str, Any], _: str = Depends(require_runti
 
 @router.post("/curator/run")
 async def curator_run(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return _action("curator-run", True, "curator is disabled in the local build")
+    return _action("curator-run", False, "curator is disabled in the local build")
 
 
 # ---------------------------------------------------------------------------

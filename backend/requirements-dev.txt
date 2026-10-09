@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# Test / verification tooling (dod_verify.py installs pytest separately too).
+pytest==8.3.5
+pytest-cov==6.0.0
+pytest-asyncio==0.25.3
+anyio==4.11.0

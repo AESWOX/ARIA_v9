@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session as OrmSession
 from aria.db import models as m
 from aria.db import repository as repo
 from aria.db.enums import ApprovalStatus, AttentionType, TaskStatus
-from aria.tools.validators import build_dry_run_command, is_high_risk_command
+from aria.tools.validators import (
+    build_dry_run_command,
+    classify_shell_command,
+    is_high_risk_command,
+)
 
 
 def request_high_risk_shell_approval(db: OrmSession, session: m.Session, task: m.Task, command: str, reason: str) -> m.AttentionItem:
@@ -57,9 +61,16 @@ def request_budget_escalation(db: OrmSession, session: m.Session, task: m.Task |
 
 
 def check_command_and_maybe_request_approval(db: OrmSession, session: m.Session, task: m.Task, command: str) -> m.AttentionItem | None:
-    if is_high_risk_command(command):
-        return request_high_risk_shell_approval(db, session, task, command, reason="matched HIGH_RISK_PATTERNS (§14.2)")
-    return None
+    """Волна 1 (A13): default-deny. Раньше подтверждение требовалось только при
+    совпадении с чёрным списком, поэтому ``curl … | sh`` проходил молча."""
+    if classify_shell_command(command) != "approval":
+        return None
+    reason = (
+        "matched HIGH_RISK_PATTERNS (§14.2)"
+        if is_high_risk_command(command)
+        else "shell policy: команда не в allowlist (default-deny, §14.2)"
+    )
+    return request_high_risk_shell_approval(db, session, task, command, reason=reason)
 
 
 def resolve(db: OrmSession, item: m.AttentionItem, approve: bool, resolved_by: str = "operator") -> m.AttentionItem:

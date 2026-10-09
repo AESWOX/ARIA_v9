@@ -3,6 +3,13 @@
 import os
 import sys
 
+# PyInstaller console=False: sys.stdout/sys.stderr are None, and uvicorn's log
+# formatter then fails with "Unable to configure formatter 'default'" — the
+# sidecar would die on boot. Give it a null sink (real logs go to backend.log).
+for _name in ("stdout", "stderr"):
+    if getattr(sys, _name) is None:
+        setattr(sys, _name, open(os.devnull, "w", encoding="utf-8"))
+
 # Load .env (уровень выше run_aria.py)
 from aria import paths as _paths  # noqa: E402
 

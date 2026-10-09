@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # §2.9 TZ v1.1: optimistic lock TTL (file-lock + DB)
     LOCK_TTL_SECONDS: int = 30
     loop_max_iterations: int = 15
+    # Волна 1 (A10): размер пула TaskRunner. На 4 ГБ RAM держим 3 по умолчанию,
+    # при нехватке памяти TaskRunner сам опускается до 1 воркера.
+    runner_max_workers: int = 3
     audit_max_attempts: int = 3
     delegate_max_parallel: int = 5
     delegate_timeout_sec: int = 60

@@ -24,6 +24,7 @@ load_dotenv(_paths.env_file())
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
@@ -138,6 +139,18 @@ class _StripApiPrefixMiddleware:
 
 
 app.add_middleware(_StripApiPrefixMiddleware)
+
+
+# ── HOST-гард (блок A / пункт HOST): чужой Host отбивается 400 до логики роутов ──
+def allowed_hosts() -> list[str]:
+    """127.0.0.1 / localhost / testserver + ARIA_ALLOWED_HOSTS (через запятую)."""
+    hosts = ["127.0.0.1", "localhost", "testserver"]
+    extra = os.getenv("ARIA_ALLOWED_HOSTS", "")
+    hosts += [h.strip() for h in extra.split(",") if h.strip()]
+    return hosts
+
+
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
 
 
 _app_logger = logging.getLogger("local_agent.main")
@@ -270,6 +283,16 @@ async def startup() -> None:
     # Attach router to app.state so self-test can find it
     app.state.router = router
 
+    # ── TaskRunner (волна 1, A10): единая дверь для всех источников задач ──
+    # UI, cron, Telegram и рой кладут задачу сюда; агент больше не исполняется
+    # внутри HTTP-запроса.
+    from aria.core.taskrunner import TaskRunner
+
+    _runner = TaskRunner(router, settings.agent_sandbox_root)
+    app.state.task_runner = _runner
+    await _runner.start()
+    _background_tasks["task_resume"] = asyncio.create_task(_runner.resume_pending())
+
     # Provider catalog refresh (background — не блокирует boot)
     from aria.scheduler.jobs import refresh_provider_models_job
 
@@ -286,9 +309,13 @@ async def startup() -> None:
     # refresh. Fix 0.3 — раньше expire_stale_attention_items_job нигде не
     # запускался (watchdog отсутствовал): stuck awaiting_attention задачи
     # висели бесконечно.
-    from aria.scheduler.jobs import expire_stale_attention_items_job, refresh_provider_models_job
+    from aria.scheduler.jobs import (
+        expire_stale_attention_items_job,
+        refresh_provider_models_job,
+        run_due_jobs,
+    )
 
-    _SCHEDULER_INTERVAL_SEC = 120
+    _SCHEDULER_INTERVAL_SEC = int(os.getenv("ARIA_SCHEDULER_INTERVAL_SEC", "30"))
 
     async def _scheduler_loop() -> None:
         _app_logger.info("background scheduler started (interval=%ss)", _SCHEDULER_INTERVAL_SEC)
@@ -299,6 +326,10 @@ async def startup() -> None:
                     _app_logger.info("expired %d stale attention item(s)", expired)
                 count = await refresh_provider_models_job(router)
                 _app_logger.debug("provider catalog refresh: %s models", count)
+                # Волна 1 (A12): cron реально исполняет расписания.
+                due = await run_due_jobs(router, getattr(app.state, "task_runner", None))
+                if due.get("submitted") or due.get("due"):
+                    _app_logger.info("cron tick: due=%s submitted=%s", due.get("due"), due.get("submitted"))
             except Exception:
                 _app_logger.exception("scheduler tick failed")
             await asyncio.sleep(_SCHEDULER_INTERVAL_SEC)
@@ -308,6 +339,12 @@ async def startup() -> None:
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
+    _runner = getattr(app.state, "task_runner", None)
+    if _runner is not None:
+        try:
+            await _runner.stop()
+        except Exception:
+            _app_logger.exception("task_runner stop failed")
     _app_logger.info("shutting down %d background task(s)", len(_background_tasks))
     for name, task in list(_background_tasks.items()):
         task.cancel()

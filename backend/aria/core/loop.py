@@ -36,7 +36,11 @@ from aria.db.enums import AuditVerdict, SourceTrust, TaskStatus, ToolStatus
 from aria.llm.providers.base import ChatMessage
 from aria.llm.router import ProviderRouter, ProviderUnavailable
 from aria.tools.registry import get_tool
-from aria.tools.validators import ToolValidationError, assert_role_allowed, is_high_risk_command
+from aria.tools.validators import (
+    ToolValidationError,
+    assert_role_allowed,
+    classify_shell_command,
+)
 from aria.core.guardrails import ToolCallGuardrailController
 
 logger = logging.getLogger("local_agent.loop")
@@ -169,7 +173,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
 
                 if call.tool_name == "shell_execute":
                     command = call.arguments.get("command", "")
-                    if is_high_risk_command(command):
+                    if classify_shell_command(command) != "allow":
                         item = approvals.check_command_and_maybe_request_approval(db, session, task, command)
                         event_bus.emit(
                             "attention_item.created",
@@ -284,15 +288,21 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
     await finalize_task(task_id, router)
 
 
-async def _execute_tool(spec, arguments: dict, sandbox_root: str):
+async def _execute_tool(spec, arguments: dict, sandbox_root: str, *, approved: bool = False):
     settings = get_settings()
     try:
         import asyncio
 
         output = await asyncio.wait_for(
-            spec.handler(input_json=arguments, timeout_sec=spec.timeout_sec, sandbox_root=sandbox_root),
+            spec.handler(
+                input_json=arguments, timeout_sec=spec.timeout_sec, sandbox_root=sandbox_root,
+                **({"approved": True} if approved else {}),
+            ),
             timeout=spec.timeout_sec,
         )
+        if isinstance(output, dict) and output.get("status") == "approval_required":
+            # Команда НЕ исполнялась — это не «ok» (иначе аудит считает действие выполненным).
+            return output, ToolStatus.blocked_policy, "approval_required", output.get("error")
         return output, ToolStatus.ok, None, None
     except TimeoutError:
         return None, ToolStatus.timeout, "tool_timeout", f"{spec.tool_name} exceeded {spec.timeout_sec}s"
@@ -385,7 +395,7 @@ async def resume_after_approval(task_id: uuid.UUID, router: ProviderRouter, sand
             source_trust_snapshot=session.source_trust_aggregate,
         )
 
-    output, status, error_code, error_message = await _execute_tool(spec, {"command": command}, sandbox_root)
+    output, status, error_code, error_message = await _execute_tool(spec, {"command": command}, sandbox_root, approved=True)
 
     with session_scope() as db:
         repo.finish_tool_call(db, tool_call_row, status, output_json=output, error_code=error_code, error_message=error_message)
