@@ -39,3 +39,10 @@ cd backend
 .\.venv\Scripts\python.exe -m pytest -q          # ожидаем: 340 passed, без skipped
 ```
 Затем порядок сборки: фронтенд → PyInstaller → копия sidecar → Tauri; ручной smoke G1/G2 (проверить именно запуск при `console=False`).
+
+## Итог 09.10 (после мержа)
+- `main` @ `080da9d`: 0001 → 0002 → 0003, untrack exe, доки. Windows-прогон владельца: **340 passed, 0 skipped, покрытие 57 %**.
+- Sidecar (PyInstaller) и установленная сборка стартуют; закрытие окна не оставляет процессов (один цикл).
+- Chat отвечает; 404 на `gemini-2.5-flash` устранён сменой модели в `.env` (A19), 503 пережит ретраем (A20).
+- Не проверено: Sessions → `queued` (A21), значение `console` в `backend.spec` (A17/E1), cron в свою минуту, 20/20 запусков (G2).
+- Новые находки: дефолт модели в коде протух (A19); маска вывода `.env` не покрывала `GEMINI_API_KEYS` — ключи утекли в чат (F1, срочно); после `git rm --cached` исчезает `desktop/src-tauri/bin/` (E2).
