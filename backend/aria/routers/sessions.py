@@ -357,7 +357,12 @@ async def post_message(
         # «Одна дверь»: сообщение пользователя в сессии без задачи (чат) или с
         # завершённой задачей начинает новую задачу, а не оседает в истории.
         if role == "user" and (task is None or task.status in _TERMINAL_TASK_STATUSES):
-            task = repo.create_task(db, session, role="general", objective=content, draft_tz_md=f"# {content[:80]}\n")
+            from aria.core import runprofile
+
+            task = repo.create_task(
+                db, session, role=runprofile.root_role(runprofile.get_profile(db, session.id)),
+                objective=content, draft_tz_md=f"# {content[:80]}\n",
+            )
             repo.set_task_status(db, task, TaskStatus.draft)
         msg = repo.append_message(db, session, role=role, content=content, source_trust=SourceTrust.trusted)
         if task and role == "user":
@@ -456,7 +461,7 @@ async def approve_attention(item_id: uuid.UUID, request: Request, _: str = Depen
     # A22: подтверждённая команда должна реально исполниться, а задача — продолжиться.
     # Возобновление идёт через очередь, не внутри HTTP-запроса (A10).
     resumed = False
-    if resolved.type == AttentionType.high_risk_shell and resolved.task_id is not None:
+    if resolved.type in (AttentionType.high_risk_shell, AttentionType.mcp_tool_approval) and resolved.task_id is not None:
         runner = getattr(request.app.state, "task_runner", None)
         if runner is not None:
             queued = runner.submit(resolved.task_id, mode="agent", source="approval", approval_item_id=resolved.id)

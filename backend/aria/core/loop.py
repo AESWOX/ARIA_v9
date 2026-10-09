@@ -22,10 +22,11 @@ import json
 import logging
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
 
 from aria.config import get_settings
-from aria.core import approvals
+from aria.core import approvals, runprofile
 from aria.core.audit import run_audit
 from aria.core.events import event_bus
 from aria.llm import compression
@@ -158,8 +159,15 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
     except Exception:  # noqa: BLE001
         logger.warning("MCP tools unavailable for task %s", task_id, exc_info=True)
     tool_schemas = _tool_schemas_for_role(tool_whitelist)
+    with session_scope() as db:
+        _t = repo.get_task(db, task_id)
+        profile = runprofile.get_profile(db, _t.session_id)
+        delegation_depth = _t.delegation_depth or 0
     role_prompt = f"Ты в роли {role.role_id}. {role.description}\nДоступные инструменты: {', '.join(tool_whitelist) or 'нет'}."
     role_prompt += _load_persona()
+    _hint = runprofile.thinking_hint(profile)
+    if _hint:
+        role_prompt += "\n\n" + _hint
 
     iterations = 0
     final_verdict_needed = True
@@ -187,7 +195,8 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
             messages = _build_messages(role_prompt, history)
 
         try:
-            routing = await router.route_chat(role.default_model_policy, messages, tool_schemas, allow_degrade=True)
+            model_class, preferred_model = runprofile.resolve_for_task(profile, role.default_model_policy, delegation_depth, router)
+            routing = await router.route_chat(model_class, messages, tool_schemas, allow_degrade=True, prefer_provider_id=preferred_model)
         except ProviderUnavailable as exc:
             logger.error("task %s: provider_unavailable: %s", task_id, exc)
             await toolhooks.lifecycle("on_error", session_id=session.id, task_id=task_id, code="provider_unavailable", message=str(exc))
@@ -216,6 +225,25 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                 except (ToolValidationError, KeyError) as exc:
                     repo.append_message(db, session, role="tool", content=f"blocked_policy: {exc}")
                     continue
+
+                if call.tool_name.startswith("mcp__") and spec.requires_approval:
+                    # H7: тул стороннего MCP-сервера, который может менять данные, — только после Approve.
+                    from aria.mcp.manager import get_manager as _mcp_mgr
+
+                    origin = _mcp_mgr().origin(call.tool_name) or ("", "")
+                    item = approvals.request_mcp_tool_approval(
+                        db, session, task, call.tool_name, call.arguments, server=origin[0], tool=origin[1],
+                    )
+                    event_bus.emit(
+                        "attention_item.created",
+                        {"id": str(item.id), "type": item.type.value, "title": item.title},
+                        session_id=session.id,
+                        task_id=task.id,
+                        db=db,
+                    )
+                    event_bus.emit("task.status_changed", {"status": TaskStatus.awaiting_attention.value}, session_id=session.id, task_id=task.id, db=db)
+                    approval_ctx = (session.id, task.id, str(item.id), f"{call.tool_name} {json.dumps(call.arguments, ensure_ascii=False, default=str)[:300]}")
+                    break  # пауза до Approve; остальные tool calls ответа отбрасываются
 
                 if call.tool_name == "shell_execute":
                     command = call.arguments.get("command", "")
@@ -441,7 +469,8 @@ async def _finalize_task_inner(task_id: uuid.UUID, router: ProviderRouter) -> tu
 
         report = None
         try:
-            report = await run_audit(db, session, task, router)
+            audit_level, audit_class, audit_prefer = runprofile.audit_settings(runprofile.get_profile(db, session.id), router)
+            report = await run_audit(db, session, task, router, level=audit_level, auditor_class=audit_class, auditor_prefer=audit_prefer)
         except Exception as exc:  # noqa: BLE001
             logger.exception("audit crashed for task %s", task_id)
             repo.set_task_status(db, task, TaskStatus.failed, error_code="audit_crash", error_message=str(exc))
@@ -470,39 +499,78 @@ async def _finalize_task_inner(task_id: uuid.UUID, router: ProviderRouter) -> tu
 
 
 async def resume_after_approval(task_id: uuid.UUID, router: ProviderRouter, sandbox_root: str, attention_item: m.AttentionItem) -> None:
-    """Вызывается api-слоем после approve high_risk_shell: исполняет ранее
-    заблокированную команду, затем продолжает основной loop."""
+    """Вызывается api-слоем (через TaskRunner) после Approve: исполняет ранее заблокированное
+    действие — shell-команду или тул MCP-сервера — и продолжает основной loop.
+
+    Действие исполняется не больше одного раза: строка tool_call привязывается к attention item
+    (``approval_item_id``) ДО исполнения. Если такая строка уже есть (дубль/повтор после
+    перезапуска), второй раз действие не выполняется.
+    """
     from aria.tools.registry import get_tool as _get_tool
 
-    command = attention_item.payload_json.get("command")
+    payload = dict(attention_item.payload_json or {})
+    tool_name = str(payload.get("tool_name") or "shell_execute")
+    if tool_name == "shell_execute":
+        arguments: dict = {"command": payload.get("command")}
+    else:
+        arguments = dict(payload.get("arguments") or {})
+        try:
+            from aria.mcp.manager import get_manager as _mcp_mgr
+
+            await _mcp_mgr().ensure_loaded()  # после перезапуска тулы MCP ещё не зарегистрированы
+        except Exception:  # noqa: BLE001
+            logger.warning("MCP not available while resuming task %s", task_id, exc_info=True)
+
     with session_scope() as db:
         task = repo.get_task(db, task_id)
         session = repo.get_session(db, task.session_id)
-        spec = _get_tool("shell_execute")
-        tool_call_row = repo.start_tool_call(
-            db, session, task, spec.tool_name, task.role, spec.risk_level.value, {"command": command},
-            source_trust_snapshot=session.source_trust_aggregate,
+        already_run = (
+            db.execute(select(m.ToolCall.id).where(m.ToolCall.approval_item_id == attention_item.id).limit(1)).first()
+            is not None
         )
+        spec = None
+        tool_call_row = None
+        if not already_run:
+            try:
+                spec = _get_tool(tool_name)
+            except KeyError:
+                spec = None
+            if spec is not None:
+                tool_call_row = repo.start_tool_call(
+                    db, session, task, spec.tool_name, task.role, spec.risk_level.value, arguments,
+                    source_trust_snapshot=session.source_trust_aggregate,
+                )
+                tool_call_row.approval_item_id = attention_item.id
+                db.flush()
+            else:
+                repo.append_message(
+                    db, session, role="tool",
+                    content_json={"tool_name": tool_name, "output": {"error": "tool is no longer available"}, "status": "error"},
+                    content=f"{tool_name} (approved) -> error: tool is no longer available",
+                )
+        sess_id = task.session_id
 
-    sess_id = task.session_id
-    hook_decision, _cp = await toolhooks.pre_tool(
-        "shell_execute", {"command": command}, session_id=sess_id, task_id=task_id, sandbox_root=sandbox_root,
-    )
-    if hook_decision.blocked:
-        output, status, error_code, error_message = (
-            {"hook_blocked": True, "reason": hook_decision.reason}, ToolStatus.blocked_policy, "hook_blocked", hook_decision.reason,
+    if already_run:
+        logger.info("approval %s was already executed; continuing without re-running it", attention_item.id)
+    elif tool_call_row is not None:
+        hook_decision, _cp = await toolhooks.pre_tool(
+            tool_name, arguments, session_id=sess_id, task_id=task_id, sandbox_root=sandbox_root,
         )
-    else:
-        output, status, error_code, error_message = await _execute_tool(spec, {"command": command}, sandbox_root, approved=True)
-        await toolhooks.post_tool(
-            "shell_execute", {"command": command}, output, status.value,
-            session_id=sess_id, task_id=task_id, sandbox_root=sandbox_root,
-        )
+        if hook_decision.blocked:
+            output, status, error_code, error_message = (
+                {"hook_blocked": True, "reason": hook_decision.reason}, ToolStatus.blocked_policy, "hook_blocked", hook_decision.reason,
+            )
+        else:
+            output, status, error_code, error_message = await _execute_tool(spec, arguments, sandbox_root, approved=True)
+            await toolhooks.post_tool(
+                tool_name, arguments, output, status.value,
+                session_id=sess_id, task_id=task_id, sandbox_root=sandbox_root,
+            )
 
-    with session_scope() as db:
-        repo.finish_tool_call(db, tool_call_row, status, output_json=output, error_code=error_code, error_message=error_message)
-        session = repo.get_session(db, task.session_id)
-        repo.append_message(db, session, role="tool", content_json={"tool_name": "shell_execute", "output": output, "status": status.value}, content=f"shell_execute (approved) -> {status.value}")
-        event_bus.emit("tool_call.updated", {"id": str(tool_call_row.id), "status": status.value}, session_id=session.id, task_id=task.id, db=db)
+        with session_scope() as db:
+            repo.finish_tool_call(db, tool_call_row, status, output_json=output, error_code=error_code, error_message=error_message)
+            session = repo.get_session(db, sess_id)
+            repo.append_message(db, session, role="tool", content_json={"tool_name": tool_name, "output": output, "status": status.value}, content=f"{tool_name} (approved) -> {status.value}")
+            event_bus.emit("tool_call.updated", {"id": str(tool_call_row.id), "status": status.value}, session_id=session.id, task_id=task_id, db=db)
 
     await execute_agent_loop(task_id, router, sandbox_root)

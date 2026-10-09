@@ -797,6 +797,16 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  chatModels: () => fetchJSON<ChatModels>("/api/chat/models"),
+  chatDefaultProfile: () => fetchJSON<{ profile: RunProfile; saved: boolean }>("/api/chat/profile"),
+  chatSaveProfile: (sessionId: string, profile: RunProfile) =>
+    fetchJSON<{ profile: RunProfile; notes: string[] }>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/profile`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    }),
+  chatSessionProfile: (sessionId: string) =>
+    fetchJSON<{ profile: RunProfile; saved: boolean }>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/profile`),
   // ---- Agent / Plan runs (backend: routers/sessions.py, one door via TaskRunner) ----
   runPost: (sessionId: string, body: { content: string; mode: RunMode }) =>
     fetchJSON<RunPostResult>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
@@ -2210,6 +2220,25 @@ export interface RunState {
   status: string | null;
   terminal: boolean;
   attention: RunAttentionItem[];
+}
+
+export interface ProfileSeat {
+  tier?: "premium" | "standard" | "free" | "fast";
+  model?: string;
+}
+
+export interface RunProfile {
+  style: "solo" | "boss";
+  audit: "off" | "light" | "strict";
+  thinking: "off" | "medium" | "high";
+  main: ProfileSeat;
+  workers: ProfileSeat;
+  auditor: ProfileSeat;
+}
+
+export interface ChatModels {
+  tiers: Record<string, boolean>;
+  models: { id: string; model: string; tier: string }[];
 }
 
 export interface ChatSendResult {

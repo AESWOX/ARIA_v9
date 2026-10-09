@@ -108,8 +108,28 @@ async def run_audit(
     session: m.Session,
     task: m.Task,
     router: ProviderRouter | None,
+    level: str = "strict",
+    auditor_class: str = "standard_reasoning",
+    auditor_prefer: str | None = None,
 ) -> m.AuditReport:
+    """``level``: ``strict`` — структура + проверка второй моделью (по умолчанию); ``light`` — только
+    структурная проверка, без вызова модели; ``off`` — аудит отключён владельцем (``unaudited``)."""
     settings = get_settings()
+
+    if level == "off":
+        return repo.create_audit_report(
+            db, session, task,
+            attempt_no=task.audit_attempt_no,
+            auditor_role="qa_auditor",
+            auditor_model="off",
+            budget_degraded=False,
+            verdict=AuditVerdict.unaudited,
+            plan_vs_fact={"objective": task.objective, "note": "audit disabled in the run profile"},
+            tool_success_summary={},
+            missing_requirements=[],
+            patch_suggestions=[],
+            metrics_compared={},
+        )
 
     tool_calls = repo.list_tool_calls(db, task.id)
 
@@ -160,6 +180,8 @@ async def run_audit(
     if not structural_ok:
         verdict = AuditVerdict.needs_rework if attempt_no < settings.audit_max_attempts else AuditVerdict.fail_after_max_attempts
         patch_suggestions = [f"Исправить: {reason}" for reason in missing]
+    elif level == "light":
+        verdict = AuditVerdict.pass_  # лёгкий аудит: только структура, второй модели нет
     else:
         # структура в порядке — пробуем качественный проход через auditor role
         if router is None:
@@ -186,7 +208,9 @@ async def run_audit(
                         ),
                     ),
                 ]
-                result = await router.route_chat("standard_reasoning", messages, tools=[], allow_degrade=True, db=db)
+                result = await router.route_chat(
+                    auditor_class, messages, tools=[], allow_degrade=True, db=db, prefer_provider_id=auditor_prefer,
+                )
                 auditor_model = result.provider_id
                 budget_degraded = result.degraded_to_free
                 verdict, parsed_issues = _parse_audit_verdict(result.response.text)

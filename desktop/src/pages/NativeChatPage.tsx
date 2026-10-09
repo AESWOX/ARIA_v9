@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, Check, Loader2, MessageCircle, Plus, RotateCcw, Send, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
-import type { ChatMsg, ChatSessionRow, ChatStatus, RunState } from "@/lib/api";
+import type { ChatModels, ChatMsg, ChatSessionRow, ChatStatus, RunProfile, RunState } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@vendor/ui/ui/components/button";
 import { Markdown } from "@/components/Markdown";
+import { TeamPanel } from "@/components/TeamPanel";
 
 /* ------------------------------------------------------------------ */
 /*  NativeChatPage - /chat. Message -> model -> reply, saved per       */
@@ -46,7 +47,42 @@ export default function NativeChatPage() {
   const [mode, setMode] = useState<Mode>("chat");
   const [run, setRun] = useState<RunState | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [profile, setProfile] = useState<RunProfile | null>(null);
+  const [models, setModels] = useState<ChatModels | null>(null);
+  const [profileNotes, setProfileNotes] = useState<string[]>([]);
+  const profileDirty = useRef(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [mdl, def] = await Promise.all([api.chatModels(), api.chatDefaultProfile()]);
+        setModels(mdl);
+        setProfile(def.profile);
+      } catch {
+        /* the team selector is optional; chat works without it */
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!activeId || profileDirty.current) return;
+    api.chatSessionProfile(activeId).then((r) => setProfile(r.profile)).catch(() => undefined);
+  }, [activeId]);
+
+  const changeProfile = (next: RunProfile) => {
+    profileDirty.current = true;
+    setProfile(next);
+  };
+
+  /** Save the selection to the session before a send, so the backend uses it (and keeps it after restart). */
+  const syncProfile = async (sid: string) => {
+    if (!profile || !profileDirty.current) return;
+    const saved = await api.chatSaveProfile(sid, profile);
+    setProfile(saved.profile);
+    setProfileNotes(saved.notes);
+    profileDirty.current = false;
+  };
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -143,6 +179,7 @@ export default function NativeChatPage() {
       sid = (await api.chatCreate(text.slice(0, 60))).session_id;
       setActiveId(sid);
     }
+    await syncProfile(sid);
     setMessages((prev) => [
       ...prev,
       { id: `local-${Date.now()}`, role: "user", content: text, created_at: null },
@@ -196,6 +233,7 @@ export default function NativeChatPage() {
         sid = (await api.chatCreate()).session_id;
         setActiveId(sid);
       }
+      await syncProfile(sid);
       if (!retry) {
         setMessages((prev) => [
           ...prev,
@@ -362,6 +400,9 @@ export default function NativeChatPage() {
           </div>
         )}
 
+        {profile && (
+          <TeamPanel profile={profile} models={models} disabled={sending || runBusy(run)} notes={profileNotes} onChange={changeProfile} />
+        )}
         <div className="flex items-center gap-1 border-t border-border px-2 pt-2" role="radiogroup" aria-label="Mode">
           {MODES.map((md) => (
             <button

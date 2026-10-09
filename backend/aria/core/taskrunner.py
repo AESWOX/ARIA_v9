@@ -123,6 +123,44 @@ def _record_episode(task_id: uuid.UUID, mode: str) -> None:
     except Exception:  # noqa: BLE001 — память не должна ломать завершение задачи
         logger.exception("could not record task episode")
 
+def _unexecuted_approvals(task_ids: list[uuid.UUID]) -> dict[uuid.UUID, uuid.UUID]:
+    """task_id -> id подтверждённого attention item, действие по которому ещё не исполнялось.
+
+    «Исполнялось» = к item привязан tool_call (``approval_item_id``) ИЛИ у задачи есть tool_call,
+    начатый после подтверждения (так выглядят подтверждения, исполненные до этой правки: связи у них нет).
+    """
+    if not task_ids:
+        return {}
+    from aria.db.enums import ApprovalStatus, AttentionType
+
+    found: dict[uuid.UUID, uuid.UUID] = {}
+    with session_scope() as db:
+        items = (
+            db.execute(
+                select(m.AttentionItem)
+                .where(
+                    m.AttentionItem.task_id.in_(task_ids),
+                    m.AttentionItem.status == ApprovalStatus.approved,
+                    m.AttentionItem.type.in_((AttentionType.high_risk_shell, AttentionType.mcp_tool_approval)),
+                    m.AttentionItem.resolved_at.is_not(None),
+                )
+                .order_by(m.AttentionItem.resolved_at.desc())
+            )
+            .scalars()
+            .all()
+        )
+        for item in items:
+            if item.task_id in found:
+                continue  # только самое свежее подтверждение задачи
+            linked = db.execute(select(m.ToolCall.id).where(m.ToolCall.approval_item_id == item.id).limit(1)).first()
+            later = db.execute(
+                select(m.ToolCall.id).where(m.ToolCall.task_id == item.task_id, m.ToolCall.started_at >= item.resolved_at).limit(1)
+            ).first()
+            if linked is None and later is None:
+                found[item.task_id] = item.id
+    return found
+
+
 class TaskRunner:
     """Очередь задач + пул воркеров + отмена + возобновление после рестарта."""
 
@@ -238,8 +276,10 @@ class TaskRunner:
                 .all()
             )
             pending = [(t.id, str(t.status.value if hasattr(t.status, "value") else t.status)) for t in rows]
+        approvals_by_task = _unexecuted_approvals([tid for tid, _ in pending])
         for task_id, _status in pending:
-            self.submit(task_id, mode="agent", source="resume")
+            # Approve получен, а действие не успело исполниться (перезапуск между ними): исполнить его, а не начинать заново.
+            self.submit(task_id, mode="agent", source="resume", approval_item_id=approvals_by_task.get(task_id))
         if pending:
             logger.info("resumed %d unfinished task(s) after restart", len(pending))
         return len(pending)
