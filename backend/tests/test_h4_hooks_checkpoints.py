@@ -538,3 +538,11 @@ def test_checkpoint_edge_cases(tmp_path, monkeypatch):
     monkeypatch.setattr(cps.Path, "write_bytes", lambda *a, **k: (_ for _ in ()).throw(OSError("full")))
     assert cps.snapshot("s2", "t", "file_write", str(root), ["f"]) is None
     assert cps.list_checkpoints(session="s2") == []
+
+
+def test_manifest_paths_are_posix_on_every_os(tmp_path):
+    """На Windows relative_to() даёт обратные слэши — в манифесте и API путь всегда с «/»."""
+    root = tmp_path / "sb"; root.mkdir()
+    cp = cps.snapshot("s1", "t1", "file_write", str(root), ["a\\b.txt".replace("\\", os.sep), "x/y/z.txt"])
+    files = next(r for r in cps.list_checkpoints() if r["id"] == cp)["files"]
+    assert all("\\" not in f for f in files) and "x/y/z.txt" in files

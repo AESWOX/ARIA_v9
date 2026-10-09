@@ -73,7 +73,7 @@ def snapshot(
             target = (root / rel).resolve()
             if not _within(root, target):
                 continue
-            entry: dict[str, Any] = {"path": str(target.relative_to(root)), "existed": target.is_file(), "blob": None, "size": 0}
+            entry: dict[str, Any] = {"path": target.relative_to(root).as_posix(), "existed": target.is_file(), "blob": None, "size": 0}
             if target.is_file():
                 size = target.stat().st_size
                 if size > MAX_FILE_BYTES:
