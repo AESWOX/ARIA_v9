@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Loader2, MessageCircle, Plus, RotateCcw, Send } from "lucide-react";
+import { AlertTriangle, Check, Loader2, MessageCircle, Plus, RotateCcw, Send, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
-import type { ChatMsg, ChatSessionRow, ChatStatus } from "@/lib/api";
+import type { ChatMsg, ChatSessionRow, ChatStatus, RunState } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@vendor/ui/ui/components/button";
 import { Markdown } from "@/components/Markdown";
@@ -20,6 +20,20 @@ function errMessage(e: unknown): string {
   return m ? m[1].replace(/\\"/g, '"') : raw;
 }
 
+type Mode = "chat" | "agent" | "plan";
+
+const MODES: { id: Mode; label: string; hint: string }[] = [
+  { id: "chat", label: "Chat", hint: "Answers only, no tools" },
+  { id: "agent", label: "Agent", hint: "Works step by step with tools; risky steps ask you first" },
+  { id: "plan", label: "Plan", hint: "Plans, executes and audits the task; risky steps ask you first" },
+];
+
+const POLL_MS = 2000;
+
+function runBusy(run: RunState | null): boolean {
+  return run !== null && run.status !== null && !run.terminal;
+}
+
 export default function NativeChatPage() {
   const [status, setStatus] = useState<ChatStatus | null>(null);
   const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
@@ -29,6 +43,9 @@ export default function NativeChatPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState<Mode>("chat");
+  const [run, setRun] = useState<RunState | null>(null);
+  const [decidingId, setDecidingId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const refreshSessions = useCallback(async () => {
@@ -70,6 +87,30 @@ export default function NativeChatPage() {
     };
   }, []);
 
+  // Agent/Plan runs execute in the background (TaskRunner); poll while one is active.
+  const watching = activeId !== null && runBusy(run);
+  useEffect(() => {
+    if (!watching || !activeId) return;
+    const sid = activeId;
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const [state, msgs] = await Promise.all([api.runState(sid), api.chatMessages(sid)]);
+        if (stopped) return;
+        setRun(state);
+        setMessages(msgs);
+        if (state.terminal) void refreshSessions();
+      } catch (e) {
+        if (!stopped) setError(errMessage(e));
+      }
+    };
+    const timer = setInterval(() => void tick(), POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [watching, activeId, refreshSessions]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, sending]);
@@ -79,7 +120,13 @@ export default function NativeChatPage() {
     setActiveId(id);
     setError(null);
     setMessages([]);
+    setRun(null);
     await loadMessages(id);
+    try {
+      setRun(await api.runState(id));
+    } catch {
+      /* no run info: the session is shown as plain chat history */
+    }
   };
 
   const newChat = () => {
@@ -87,6 +134,47 @@ export default function NativeChatPage() {
     setActiveId(null);
     setMessages([]);
     setError(null);
+    setRun(null);
+  };
+
+  const sendRun = async (text: string, runMode: "agent" | "plan") => {
+    let sid = activeId;
+    if (!sid) {
+      sid = (await api.chatCreate(text.slice(0, 60))).session_id;
+      setActiveId(sid);
+    }
+    setMessages((prev) => [
+      ...prev,
+      { id: `local-${Date.now()}`, role: "user", content: text, created_at: null },
+    ]);
+    setInput("");
+    const res = await api.runPost(sid, { content: text, mode: runMode });
+    setMessages(await api.chatMessages(sid));
+    setRun(await api.runState(sid));
+    if (res.queued === false) setError("This task is already queued or running.");
+  };
+
+  const decide = async (itemId: string, approve: boolean) => {
+    if (!activeId || decidingId) return;
+    setDecidingId(itemId);
+    try {
+      await (approve ? api.attentionApprove(itemId) : api.attentionReject(itemId));
+      setRun(await api.runState(activeId));
+    } catch (e) {
+      setError(errMessage(e));
+    } finally {
+      setDecidingId(null);
+    }
+  };
+
+  const cancelRun = async () => {
+    if (!run?.task_id || !activeId) return;
+    try {
+      await api.runCancel(run.task_id);
+      setRun(await api.runState(activeId));
+    } catch (e) {
+      setError(errMessage(e));
+    }
   };
 
   const lastIsUser = messages.length > 0 && messages[messages.length - 1].role === "user";
@@ -94,9 +182,14 @@ export default function NativeChatPage() {
   const send = async (retry = false) => {
     const text = input.trim();
     if (sending || (!retry && !text)) return;
+    if (runBusy(run)) return;
     setSending(true);
     setError(null);
     try {
+      if (mode !== "chat" && !retry) {
+        await sendRun(text, mode);
+        return;
+      }
       // the status banner may be stale (e.g. key saved in another tab)
       let sid = activeId;
       if (!sid) {
@@ -204,7 +297,14 @@ export default function NativeChatPage() {
                 {m.role === "assistant" ? (
                   <Markdown content={m.content} />
                 ) : (
-                  <div className="whitespace-pre-wrap text-sm leading-relaxed">{m.content}</div>
+                  <div
+                    className={cn(
+                      "whitespace-pre-wrap text-sm leading-relaxed",
+                      m.role !== "user" && "text-xs text-muted-foreground",
+                    )}
+                  >
+                    {m.content}
+                  </div>
                 )}
               </div>
             </div>
@@ -217,10 +317,44 @@ export default function NativeChatPage() {
           <div ref={bottomRef} />
         </div>
 
+        {run && run.status && (
+          <div className="space-y-2 border-t border-border bg-foreground/5 px-3 py-2 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span>
+                {runBusy(run) && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />}
+                Task: <span className="font-medium">{run.status.replace(/_/g, " ")}</span>
+              </span>
+              {runBusy(run) && (
+                <Button ghost size="sm" onClick={() => void cancelRun()}>
+                  <Square className="mr-1 h-3 w-3" /> Cancel
+                </Button>
+              )}
+            </div>
+            {run.attention.map((item) => (
+              <div key={item.id} className="space-y-1 border border-amber-500/40 bg-amber-500/10 p-2">
+                <div className="font-medium">{item.title}</div>
+                {item.body_md && (
+                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-muted-foreground">
+                    {item.body_md}
+                  </pre>
+                )}
+                <div className="flex gap-2">
+                  <Button size="sm" disabled={decidingId !== null} onClick={() => void decide(item.id, true)}>
+                    <Check className="mr-1 h-3 w-3" /> Approve
+                  </Button>
+                  <Button ghost size="sm" disabled={decidingId !== null} onClick={() => void decide(item.id, false)}>
+                    <X className="mr-1 h-3 w-3" /> Reject
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {error && (
           <div className="flex items-center justify-between gap-2 border-t border-border bg-destructive/10 px-3 py-2 text-xs">
             <span className="text-destructive">{error}</span>
-            {lastIsUser && !sending && (
+            {mode === "chat" && lastIsUser && !sending && (
               <Button ghost size="sm" onClick={() => void send(true)}>
                 <RotateCcw className="mr-1 h-3 w-3" /> Retry
               </Button>
@@ -228,16 +362,42 @@ export default function NativeChatPage() {
           </div>
         )}
 
-        <div className="flex gap-2 border-t border-border p-2">
+        <div className="flex items-center gap-1 border-t border-border px-2 pt-2" role="radiogroup" aria-label="Mode">
+          {MODES.map((md) => (
+            <button
+              type="button"
+              key={md.id}
+              role="radio"
+              aria-checked={mode === md.id}
+              title={md.hint}
+              disabled={sending}
+              onClick={() => setMode(md.id)}
+              className={cn(
+                "border border-border px-2 py-0.5 text-xs",
+                mode === md.id ? "bg-foreground/10 font-medium" : "text-muted-foreground hover:bg-foreground/5",
+              )}
+            >
+              {md.label}
+            </button>
+          ))}
+          <span className="ml-2 truncate text-xs text-muted-foreground">
+            {MODES.find((md) => md.id === mode)?.hint}
+          </span>
+        </div>
+        <div className="flex gap-2 p-2">
           <textarea
             className="min-h-[56px] flex-1 resize-none border border-border bg-background/40 px-3 py-2 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/30"
-            placeholder="Message ARIA...  (Enter to send, Shift+Enter for a new line)"
+            placeholder={
+              mode === "chat"
+                ? "Message ARIA...  (Enter to send, Shift+Enter for a new line)"
+                : "Describe the task...  (Enter to start, Shift+Enter for a new line)"
+            }
             value={input}
-            disabled={sending}
+            disabled={sending || runBusy(run)}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
           />
-          <Button onClick={() => void send(false)} disabled={sending || !input.trim()} aria-label="Send">
+          <Button onClick={() => void send(false)} disabled={sending || runBusy(run) || !input.trim()} aria-label="Send">
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>

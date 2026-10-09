@@ -13,11 +13,12 @@
 
 Подтверждено вашим выводом:
 - `main` @ `080da9d`: волны 0–1 влиты; установленная сборка стартует; Chat отвечает через `gemini-3.8-flash`; `console=False` работает; exe вне git.
-- Патч A20 (`a20-chat-failover.patch`) применён в ветке `fix/a20-chat-failover` на актуальном `main`: **348 passed, 0 skipped** на Windows.
+- A20 влит в `main` @ `011fc02` (348 passed на Windows до мержа).
+- Этап 1 закоммичен в ветке `boost` (`3fa5feb`): **354 passed** на Windows. Ветка не запушена и не влита.
 
 Со слов владельца: ключи Gemini заменены (F1; вывод проверки не приложен).
 
-Не подтверждено: мерж A20 и живая проверка 503/fallback; Sessions → `queued` (A21); cron в свою минуту; 20/20 запусков; `npm run typecheck`.
+Не подтверждено: пересборка и живая проверка 503/fallback; Sessions → `queued` (A21); cron в свою минуту; 20/20 запусков; `npm run typecheck`.
 
 ## 2. Что сделано в A20 (для проверки)
 
@@ -53,6 +54,7 @@
 - Проверка: `pytest` зелёный, число тестов растёт.
 
 ### Этап 2. «Одна дверь» в интерфейсе (A11 + A21)
+Статус: патч `0002-stage2-one-door.patch` (бэкенд `mode` + `GET /sessions/{id}/run`, переключатель Chat/Agent/Plan в Chat, Approve/Reject/Cancel). Страница Sessions без поля ввода не менялась; результат подтягивается опросом, не WS.
 - Выяснить по `SessionsPage.tsx`, `NativeChatPage.tsx`, `api.ts`: есть ли в Sessions поле ввода и вызов `POST /sessions/{id}/messages`.
 - Переключатель Chat / Agent / Plan; действия идут через очередь.
 - Проверка: `tsc`, `vite build` в песочнице; живой смоук после установки.
