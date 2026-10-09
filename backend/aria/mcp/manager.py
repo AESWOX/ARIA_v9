@@ -23,6 +23,7 @@ from typing import Any
 
 from aria import paths
 from aria.db.enums import IdempotencyClass, RiskLevel
+from aria.mcp import oauth
 from aria.mcp.client import HttpTransport, McpAuthRequired, McpClient, McpError, StdioTransport
 from aria.tools.registry import TOOL_REGISTRY, ToolSpec
 
@@ -102,6 +103,7 @@ def validate_server(payload: dict) -> dict:
         "read_tools": _str_list(payload.get("read_tools"), "read_tools"),
         "trust_annotations": bool(payload.get("trust_annotations", False)),
         "enabled": bool(payload.get("enabled", True)),
+        "auth": "oauth" if str(payload.get("auth") or "").strip().lower() == "oauth" else None,
     }
 
 
@@ -157,6 +159,7 @@ class McpManager:
         self._registered: dict[str, list[str]] = {}   # server -> имена в TOOL_REGISTRY
         self._errors: dict[str, str] = {}
         self._origins: dict[str, tuple[str, str]] = {}  # registry_name -> (server, tool)
+        self._challenges: dict[str, str] = {}          # server -> WWW-Authenticate последнего 401
         self._lock = asyncio.Lock()
 
     # -- конфиг -----------------------------------------------------------
@@ -180,17 +183,33 @@ class McpManager:
                 "read_tools": list(cfg.get("read_tools") or []),
                 "trust_annotations": bool(cfg.get("trust_annotations")),
                 "enabled": bool(cfg.get("enabled", True)),
+                "auth": self._auth_label(cfg),
+                "oauth": oauth.status(name) if cfg.get("url") else None,
                 "connected": connected,
                 "tools": [t["name"] for t in self._tools.get(name, [])] if connected else None,
                 "error": self._errors.get(name),
             })
         return out
 
+    @staticmethod
+    def _auth_label(cfg: dict) -> str | None:
+        if not cfg.get("url"):
+            return None
+        if cfg.get("auth") == "oauth" or oauth.status(cfg["name"]) != "none":
+            return "oauth"
+        return None
+
+    def challenge(self, name: str) -> str:
+        return self._challenges.get(name, "")
+
     # -- соединения -------------------------------------------------------
     @staticmethod
     def _build_client(cfg: dict) -> McpClient:
         if cfg.get("url"):
-            return McpClient(HttpTransport(cfg["url"], headers=cfg.get("headers") or {}))
+            name = cfg["name"]
+            return McpClient(HttpTransport(
+                cfg["url"], headers=cfg.get("headers") or {}, token_provider=lambda: oauth.access_token(name),
+            ))
         return McpClient(StdioTransport(cfg["command"], cfg.get("args") or [], cfg.get("env") or {}))
 
     async def _ensure_client(self, cfg: dict) -> McpClient:
@@ -198,7 +217,9 @@ class McpManager:
         client = self._clients.get(name)
         if client is not None and client.is_alive and self._fingerprints.get(name) == _fingerprint(cfg):
             return client
-        await self._drop(name)
+        await self._drop_client_only(name)  # тулы остаются в реестре: переподключение не должно ломать идущую задачу
+        if cfg.get("url"):
+            await oauth.ensure_fresh(name)
         client = self._build_client(cfg)
         await client.connect(CONNECT_TIMEOUT)
         self._clients[name] = client
@@ -208,6 +229,16 @@ class McpManager:
     async def _drop(self, name: str) -> None:
         self._unregister(name)
         self._tools.pop(name, None)
+        self._fingerprints.pop(name, None)
+        client = self._clients.pop(name, None)
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:  # noqa: BLE001
+                logger.warning("mcp '%s': close failed", name, exc_info=True)
+
+    async def _drop_client_only(self, name: str) -> None:
+        """Закрыть соединение, оставив зарегистрированные тулы (повторное подключение после refresh)."""
         self._fingerprints.pop(name, None)
         client = self._clients.pop(name, None)
         if client is not None:
@@ -303,7 +334,10 @@ class McpManager:
             raw = await client.list_tools()
         except BaseException as exc:
             await self._drop(name)
-            if isinstance(exc, Exception):
+            if isinstance(exc, McpAuthRequired):
+                self._challenges[name] = exc.www_authenticate
+                self._errors[name] = "authorization required: open the MCP tab and press Authorize"
+            elif isinstance(exc, Exception):
                 self._errors[name] = str(exc)
             raise
         self._errors.pop(name, None)
@@ -346,7 +380,17 @@ class McpManager:
         async with self._lock:
             client = await self._ensure_client(cfg)
         try:
-            result = await client.call_tool(tool, arguments, timeout=timeout)
+            try:
+                result = await client.call_tool(tool, arguments, timeout=timeout)
+            except McpAuthRequired as exc:
+                # Токен мог истечь между подключением и вызовом: один раз обновляем и повторяем.
+                self._challenges[server] = exc.www_authenticate
+                if not (cfg.get("url") and await oauth.refresh(server)):
+                    raise McpError("authorization required: open the MCP tab and press Authorize") from exc
+                async with self._lock:
+                    await self._drop_client_only(server)
+                    client = await self._ensure_client(cfg)
+                result = await client.call_tool(tool, arguments, timeout=timeout)
         except McpError as exc:
             self._errors[server] = str(exc)
             raise
@@ -370,7 +414,8 @@ class McpManager:
             finally:
                 await client.close()
         except McpAuthRequired as exc:
-            return {"ok": False, "error": f"authorization required: {exc.www_authenticate or exc}", "auth_required": True, "tools": []}
+            self._challenges[name] = exc.www_authenticate
+            return {"ok": False, "error": "authorization required: press Authorize", "auth_required": True, "tools": []}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc) or exc.__class__.__name__, "tools": []}
 
