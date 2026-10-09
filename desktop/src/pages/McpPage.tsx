@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Package, Power, Server, Trash2, X, Zap } from "lucide-react";
+import { KeyRound, Package, Power, Server, ShieldOff, Trash2, X, Zap } from "lucide-react";
 import { Badge } from "@vendor/ui/ui/components/badge";
 import { Button } from "@vendor/ui/ui/components/button";
 import { Select, SelectOption } from "@vendor/ui/ui/components/select";
@@ -188,6 +188,54 @@ export default function McpPage() {
       showToast(`Error: ${e}`, "error");
     } finally {
       setTesting(null);
+    }
+  };
+
+  // ── OAuth 2.1 (0009) ─────────────────────────────────────────────────
+  const [authorizingName, setAuthorizingName] = useState<string | null>(null);
+
+  const handleAuthorize = async (server: McpServer) => {
+    setAuthorizingName(server.name);
+    try {
+      const { auth_url } = await api.startMcpOAuth(server.name);
+      window.open(auth_url, "_blank", "noopener,noreferrer");
+      showToast("Finish signing in in the browser…", "success");
+      // Браузер возвращается на callback бэкенда; здесь ждём, пока статус станет authorized (до 2 минут).
+      for (let i = 0; i < 60; i += 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const st = await api.getMcpOAuthStatus(server.name);
+        if (st.status === "authorized") {
+          showToast(`${server.name}: authorized`, "success");
+          await loadServers();
+          void handleTest(server);
+          return;
+        }
+      }
+      showToast(`${server.name}: authorization was not completed`, "error");
+    } catch (e) {
+      showToast(`Authorize failed: ${e}`, "error");
+    } finally {
+      setAuthorizingName(null);
+    }
+  };
+
+  const handleRevoke = async (server: McpServer) => {
+    try {
+      const res = await api.revokeMcpOAuth(server.name);
+      showToast(
+        res.revoked_remotely
+          ? `${server.name}: access revoked`
+          : `${server.name}: tokens erased here; also revoke in the service settings`,
+        "success",
+      );
+      setTestResults((prev) => {
+        const next = { ...prev };
+        delete next[server.name];
+        return next;
+      });
+      await loadServers();
+    } catch (e) {
+      showToast(`Error: ${e}`, "error");
     }
   };
 
@@ -584,6 +632,9 @@ export default function McpPage() {
                     {!server.enabled && (
                       <Badge tone="outline">disabled</Badge>
                     )}
+                    {server.transport === "http" && server.oauth === "authorized" && (
+                      <Badge tone="success">authorized</Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
                     {server.transport === "http" ? (
@@ -642,6 +693,33 @@ export default function McpPage() {
                     {server.enabled ? "Disable" : "Enable"}
                   </Button>
 
+                  {server.transport === "http" &&
+                    (server.auth === "oauth" || result?.auth_required) && (
+                      <Button
+                        ghost
+                        size="sm"
+                        title="Sign in with OAuth"
+                        onClick={() => handleAuthorize(server)}
+                        disabled={authorizingName === server.name}
+                        prefix={
+                          authorizingName === server.name ? <Spinner /> : <KeyRound />
+                        }
+                      >
+                        {server.oauth === "authorized" ? "Re-authorize" : "Authorize"}
+                      </Button>
+                    )}
+                  {server.transport === "http" && server.oauth === "authorized" && (
+                    <Button
+                      ghost
+                      size="icon"
+                      title="Revoke access"
+                      aria-label="Revoke access"
+                      onClick={() => handleRevoke(server)}
+                    >
+                      <ShieldOff />
+                    </Button>
+                  )}
+
                   <Button
                     ghost
                     size="icon"
@@ -683,7 +761,7 @@ export default function McpPage() {
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Browse Nous-approved MCP servers and install them with one click.
+          Built-in catalog (works offline). Installing only adds the server; tools that can change data still need your Approve.
         </p>
 
         {catalog.length === 0 && (

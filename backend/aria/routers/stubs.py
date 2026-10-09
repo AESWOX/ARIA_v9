@@ -167,22 +167,6 @@ async def gateway_restart(_: str = Depends(require_runtime_token)) -> dict[str, 
 
 
 # ---------------------------------------------------------------------------
-# MCP catalog (серверы MCP — aria/routers/mcp.py; каталог — патч 0009)
-# ---------------------------------------------------------------------------
-
-
-@router.get("/mcp/catalog")
-async def mcp_catalog(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {"entries": [], "diagnostics": []}
-
-
-@router.post("/mcp/catalog/install")
-async def mcp_catalog_install(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    name = str(payload.get("name", ""))
-    return {"ok": False, "name": name, "background": False, "action": "catalog-install", "error": "catalog is empty in the local build"}
-
-
-# ---------------------------------------------------------------------------
 # Ops: doctor / audit / backup / import / hooks / diagnostics / checkpoints
 # ---------------------------------------------------------------------------
 

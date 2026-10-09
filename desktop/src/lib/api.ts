@@ -1147,6 +1147,20 @@ export const api = {
         body: JSON.stringify({ enabled }),
       },
     ),
+  startMcpOAuth: (name: string) =>
+    fetchJSON<{ auth_url: string }>(
+      `/api/mcp/servers/${encodeURIComponent(name)}/oauth/start`,
+      { method: "POST" },
+    ),
+  getMcpOAuthStatus: (name: string) =>
+    fetchJSON<{ name: string; status: "none" | "authorized" | "expired" }>(
+      `/api/mcp/servers/${encodeURIComponent(name)}/oauth`,
+    ),
+  revokeMcpOAuth: (name: string) =>
+    fetchJSON<{ ok: boolean; revoked_remotely: boolean; erased_locally: boolean }>(
+      `/api/mcp/servers/${encodeURIComponent(name)}/oauth`,
+      { method: "DELETE" },
+    ),
   getMcpCatalog: () =>
     fetchJSON<{ entries: McpCatalogEntry[]; diagnostics: McpCatalogDiagnostic[] }>(
       "/api/mcp/catalog",
@@ -1504,6 +1518,8 @@ export interface McpServer {
   args: string[];
   env: Record<string, string>;
   auth: string | null;
+  /** OAuth 2.1 (0009): none — не авторизован, authorized — токен есть, expired — истёк без refresh; null — не HTTP. */
+  oauth?: "none" | "authorized" | "expired" | null;
   enabled: boolean;
   tools: string[] | null;
 }

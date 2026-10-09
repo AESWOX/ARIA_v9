@@ -218,17 +218,30 @@ def list_messages(db: OrmSession, session_id: uuid.UUID, limit: int = 200) -> li
     return list(db.execute(stmt).scalars().all())
 
 
+def _prompt_sort_key(message: m.Message) -> float:
+    """Сводка компрессии встаёт на место сжатого диапазона, а не в конец истории."""
+    cj = message.content_json
+    if isinstance(cj, dict) and cj.get("type") == "compression_summary":
+        seq_range = cj.get("compressed_seq_range") or []
+        if seq_range:
+            return float(seq_range[0]) - 0.5
+    return float(message.seq_no)
+
+
 def list_messages_for_prompt(db: OrmSession, session_id: uuid.UUID, limit: int = 500) -> list[m.Message]:
     """Как list_messages, но без строк, ушедших под компрессию — это то,
     что реально уходит в контекст LLM. Полная история остаётся в БД для
-    аудита/UI (см. list_messages)."""
+    аудита/UI (см. list_messages). При превышении limit берутся самые
+    НОВЫЕ сообщения; сводки компрессии стоят на месте сжатого диапазона."""
     stmt = (
         select(m.Message)
         .where(m.Message.session_id == session_id, m.Message.compressed_out.is_(False))
-        .order_by(m.Message.seq_no.asc())
+        .order_by(m.Message.seq_no.desc())
         .limit(limit)
     )
-    return list(db.execute(stmt).scalars().all())
+    rows = list(db.execute(stmt).scalars().all())
+    rows.sort(key=_prompt_sort_key)
+    return rows
 
 
 def mark_messages_compressed(db: OrmSession, message_ids: list[uuid.UUID]) -> None:

@@ -22,12 +22,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 
 from aria.api.auth import require_runtime_token
+from aria.config import get_settings
 from aria.core import runprofile
 from aria.db import models as m
 from aria.db import repository as repo
 from aria.db.base import session_scope
 from aria.db.enums import SourceTrust
 from aria.http_utils import emit_message_created, emit_session_updated, iso, serialize_message
+from aria.llm import compression
 from aria.llm.key_pool import NoAvailableKeys
 from aria.llm.providers.base import ChatMessage
 from aria.llm.router import ProviderUnavailable
@@ -67,18 +69,38 @@ def _real_provider_ids(request: Request) -> list[str]:
 
 
 def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> list[ChatMessage]:
-    """System prompt + the most recent turns that fit the budget (oldest dropped first)."""
+    """System prompt + the most recent turns that fit the budget (oldest dropped first).
+
+    CTX: сводки компрессии («[compression summary …]») идут в системный промпт одним блоком;
+    с включённой компрессией бюджет — порог токенов (по умолчанию 100к), иначе старые лимиты."""
+    settings = get_settings()
+    summaries = [text for role, text in history if role == "system" and text.startswith(compression.SUMMARY_PREFIX)]
     turns = [(role, text) for role, text in history if role in ("user", "assistant") and text]
-    turns = turns[-HISTORY_MESSAGES:]
-    kept: list[tuple[str, str]] = []
-    used = 0
-    for role, text in reversed(turns):
-        if used + len(text) > HISTORY_CHAR_BUDGET and kept:
-            break
-        kept.append((role, text))
-        used += len(text)
+    if settings.compression_enabled and settings.compression_token_threshold > 0:
+        token_budget = settings.compression_token_threshold
+        kept: list[tuple[str, str]] = []
+        used = sum(compression.estimate_tokens(t) for t in summaries)
+        for role, text in reversed(turns):
+            cost = compression.estimate_tokens(text)
+            if used + cost > token_budget and kept:
+                break
+            kept.append((role, text))
+            used += cost
+    else:
+        turns = turns[-HISTORY_MESSAGES:]
+        kept = []
+        used = 0
+        for role, text in reversed(turns):
+            if used + len(text) > HISTORY_CHAR_BUDGET and kept:
+                break
+            kept.append((role, text))
+            used += len(text)
     kept.reverse()
-    system = SYSTEM_PROMPT + ("\n\n" + memory_block if memory_block else "")
+    system = SYSTEM_PROMPT
+    if summaries:
+        system += "\n\nСводка более ранней части диалога (сжата автоматически):\n" + "\n\n".join(summaries[-3:])
+    if memory_block:
+        system += "\n\n" + memory_block
     return [ChatMessage(role="system", content=system)] + [ChatMessage(role=r, content=t) for r, t in kept]
 
 
@@ -235,10 +257,18 @@ async def chat_send(
         session.updated_at = datetime.now(timezone.utc)  # message inserts don't touch the sessions row
         if (session.title or "") in DEFAULT_TITLES:
             session.title = (content or user_msg.content).replace("\n", " ")[:60]
-        history = [(msg.role, msg.content) for msg in repo.list_messages_for_prompt(db, session_id, limit=500)]
         user_payload = serialize_message(user_msg)
     if not retry:
         emit_message_created(user_msg, session_id, None)
+
+    # 1a) CTX: сжать старую часть истории, если она выросла выше порога токенов.
+    # Вне DB-scope: сетевой вызов суммаризатора не держит writer-lock; сбой сжатия чат не роняет.
+    try:
+        await compression.maybe_compress(session_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("chat: compression failed, continuing with full history")
+    with session_scope() as db:
+        history = [(msg.role, msg.content) for msg in repo.list_messages_for_prompt(db, session_id, limit=5000)]
 
     # 1b) long-term memory (H3): «запомни: …» saves a fact; relevant notes go into the system prompt.
     # Outside the DB scope above: the memory store uses its own connection.
