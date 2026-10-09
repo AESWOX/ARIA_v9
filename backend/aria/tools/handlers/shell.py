@@ -10,8 +10,9 @@
 (не в allowlist либо совпало с high-risk-паттерном) — **команда не
 запускается вообще**, handler возвращает ``approval_required``, а вызывающий
 слой (core/loop.py, approvals.py) создаёт attention item и ждёт владельца.
-Явный ``input_json["approved"] = True`` означает, что подтверждение получено
-(так его выставляет api-слой после approve attention item).
+Подтверждение получено, только если вызывающий код передал ``approved=True``
+как отдельный аргумент (loop.resume_after_approval после Approve). Ключ
+``approved`` внутри input_json — это данные от модели и игнорируется.
 """
 from __future__ import annotations
 
@@ -21,12 +22,12 @@ import shlex
 from aria.tools.validators import classify_shell_command
 
 
-async def shell_execute(input_json: dict, timeout_sec: int, cwd: str | None = None) -> dict:
+async def shell_execute(input_json: dict, timeout_sec: int, cwd: str | None = None, *, approved: bool = False) -> dict:
     """§14.3 Emergency stop: SIGTERM -> через 3 сек SIGKILL реализован через
     asyncio subprocess + wait_for/terminate/kill каскад."""
     command = input_json["command"]
 
-    if not input_json.get("approved"):
+    if not approved:
         decision = classify_shell_command(command)
         if decision != "allow":
             return {

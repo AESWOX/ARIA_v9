@@ -114,7 +114,7 @@ async def cancel_task(task_id: uuid.UUID, request: Request, _: str = Depends(req
             raise HTTPException(status_code=404, detail="task not found")
         if runner is not None:
             runner.cancel(task_id)
-        if task.status not in (TaskStatus.done, TaskStatus.failed, TaskStatus.cancelled):
+        if task.status not in (TaskStatus.done, TaskStatus.done_unaudited, TaskStatus.failed, TaskStatus.cancelled):
             repo.set_task_status(db, task, TaskStatus.cancelled)
     emit_task_status(task)
     return {"ok": True, "cancelled": True, "task_id": str(task_id)}

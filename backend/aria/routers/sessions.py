@@ -335,6 +335,13 @@ async def post_message(
 
             await run_codex_task(task.id)
         else:
+            runner = getattr(request.app.state, "task_runner", None)
+            if runner is not None:
+                # Волна 1 (A10): агент больше не исполняется внутри HTTP-запроса.
+                # Результат приходит событиями WS (message.created, task.status_changed).
+                queued = runner.submit(task.id, mode="agent", source="ui")
+                return {"ok": True, "queued": bool(queued.get("queued")), "task_id": str(task.id)}
+            # Без раннера (юнит-тесты без lifespan) — прежний синхронный путь.
             await execute_agent_loop(task.id, request.app.state.router, settings.agent_sandbox_root)
 
     return {"ok": True}

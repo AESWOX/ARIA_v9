@@ -181,6 +181,11 @@ def test_cron_due_job_is_executed_and_last_run_is_recorded():
             allowed_tools=[],
         )
         job_id = job.job_id
+        # job «уже запускался 2 минуты назад» → следующая минута давно наступила
+        from aria.http_utils import utc_now
+        from datetime import timedelta
+
+        repo.update_scheduler_job(db, job_id, last_run_at=utc_now() - timedelta(minutes=2), last_run_status="ok")
 
     result = asyncio.run(run_due_jobs(router=None, runner=recorder))
 

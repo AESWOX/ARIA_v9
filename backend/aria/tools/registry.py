@@ -75,8 +75,13 @@ async def _log_decision(input_json: dict, **_ctx) -> dict:
 
 
 async def _shell_execute(input_json: dict, timeout_sec: int, sandbox_root: str, **_ctx) -> dict:
-    shell_handler.validate_shell_input(input_json)
-    return await shell_handler.shell_execute(input_json, timeout_sec=timeout_sec, cwd=sandbox_root)
+    # "approved" в аргументах тул-вызова приходит от модели — ему верить нельзя.
+    # Подтверждение владельца передаётся только системным kwarg (loop.resume_after_approval).
+    safe_input = {k: v for k, v in input_json.items() if k != "approved"}
+    shell_handler.validate_shell_input(safe_input)
+    return await shell_handler.shell_execute(
+        safe_input, timeout_sec=timeout_sec, cwd=sandbox_root, approved=bool(_ctx.get("approved")),
+    )
 
 
 async def _file_read(input_json: dict, sandbox_root: str, **_ctx) -> dict:

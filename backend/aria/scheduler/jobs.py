@@ -152,6 +152,7 @@ async def refresh_provider_models_job(router) -> int:
 # Волна 1 (A12) — расписания реально исполняются
 # ═══════════════════════════════════════════════════════════════════
 
+_FIRST_SEEN: dict[str, datetime] = {}
 _BUILTIN_RUNNERS = ("expire_stale_attention_items", "refresh_provider_models")
 
 
@@ -204,12 +205,11 @@ async def run_due_jobs(router=None, runner=None) -> dict:
         base = last_run_at
         if base is not None and base.tzinfo is None:
             base = base.replace(tzinfo=timezone.utc)
-        anchor = base or (now - timedelta(days=1))
+        # Никогда не запускавшийся job привязываем к моменту, когда планировщик
+        # впервые его увидел. Раньше якорем было «сутки назад», и свежесозданный
+        # «каждый день в 9:00» срабатывал на ближайшем тике, а не в 9:00.
+        anchor = base or _FIRST_SEEN.setdefault(job_id, now)
 
-        from datetime import timedelta as _td  # local alias, anchor arithmetic only
-
-        if base is None:
-            anchor = now - _td(days=1)
         nxt = _next_run_after(schedule, anchor)
         if nxt is None or nxt > now:
             continue

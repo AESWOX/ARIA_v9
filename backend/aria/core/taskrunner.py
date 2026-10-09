@@ -37,7 +37,35 @@ Mode = Literal["agent", "plan"]
 # Статусы, из которых задачу осмысленно (пере)запускать.
 RUNNABLE_STATUSES = (TaskStatus.approved, TaskStatus.in_progress, TaskStatus.needs_rework)
 
+TERMINAL_STATUSES = (TaskStatus.done, TaskStatus.done_unaudited, TaskStatus.failed, TaskStatus.cancelled)
+
 _LOW_RAM_MB = 1500
+
+
+def _build_notifier():
+    """Telegram-эскалации (ТЗ): раньше run-executor строил нотификатор сам, и при
+    переезде в очередь он был потерян (notifier=None) — вернули."""
+    try:
+        settings = get_settings()
+        if settings.telegram_bot_token and settings.telegram_chat_id:
+            from aria.core.notifiers.telegram import TelegramNotifier
+
+            return TelegramNotifier(bot_token=settings.telegram_bot_token, chat_id=settings.telegram_chat_id)
+    except Exception:
+        logger.warning("TelegramNotifier init failed", exc_info=True)
+    return None
+
+
+def _mark_failed(db, task, code: str, message: str) -> None:
+    """Перевести в failed по карте переходов §8.1. approved/needs_rework → failed
+    напрямую нельзя (карта запрещает), поэтому сначала in_progress. Без этого
+    задача, упавшая до старта (нет провайдера), навсегда оставалась ``approved``
+    и заново запускалась при каждом рестарте."""
+    if task.status in TERMINAL_STATUSES:
+        return
+    if task.status in (TaskStatus.approved, TaskStatus.needs_rework):
+        repo.set_task_status(db, task, TaskStatus.in_progress)
+    repo.set_task_status(db, task, TaskStatus.failed, error_code=code, error_message=message[:500])
 
 
 def available_ram_mb() -> int | None:
@@ -69,6 +97,7 @@ class TaskRunner:
         self._workers: list[asyncio.Task] = []
         self._running: dict[str, asyncio.Task] = {}
         self._cancelled: set[str] = set()
+        self._pending: set[str] = set()  # в очереди ИЛИ исполняется — защита от дублей
         self._stopping = False
         self._started = False
         configured = getattr(get_settings(), "runner_max_workers", 3)
@@ -114,7 +143,11 @@ class TaskRunner:
         if mode not in ("agent", "plan"):
             raise ValueError(f"unknown mode={mode!r} (expected 'agent' or 'plan')")
         key = str(task_id)
+        if key in self._pending:
+            logger.info("task %s already queued/running — duplicate submit ignored", key[:8])
+            return {"ok": True, "queued": False, "duplicate": True, "task_id": key, "mode": mode, "source": source}
         self._cancelled.discard(key)
+        self._pending.add(key)
         self._queue.put_nowait(Job(task_id=task_id, mode=mode, source=source))
         event_bus.emit("task.queued", {"task_id": key, "mode": mode, "source": source}, session_id=None, task_id=task_id)
         logger.info("queued task %s (mode=%s, source=%s, depth=%d)", key[:8], mode, source, self._queue.qsize())
@@ -133,6 +166,19 @@ class TaskRunner:
     async def resume_pending(self) -> int:
         """После рестарта снова поставить в очередь задачи, оставшиеся незакрытыми."""
         with session_scope() as db:
+            rows = (
+                db.execute(
+                    select(m.Task)
+                    .where(m.Task.status.in_(RUNNABLE_STATUSES))
+                    .order_by(m.Task.created_at.asc())
+                    .limit(20)
+                )
+                .scalars()
+                .all()
+            )
+            # Аудит, прерванный рестартом, не имеет исполнителя — отправляем на доработку.
+            for stale in db.execute(select(m.Task).where(m.Task.status == TaskStatus.under_audit)).scalars().all():
+                repo.set_task_status(db, stale, TaskStatus.needs_rework)
             rows = (
                 db.execute(
                     select(m.Task)
@@ -173,6 +219,7 @@ class TaskRunner:
             key = str(job.task_id)
             if key in self._cancelled:
                 self._cancelled.discard(key)
+                self._pending.discard(key)
                 self._queue.task_done()
                 logger.info("skipped cancelled task %s", key[:8])
                 continue
@@ -189,6 +236,7 @@ class TaskRunner:
             finally:
                 self._running.pop(key, None)
                 self._cancelled.discard(key)
+                self._pending.discard(key)
                 self._queue.task_done()
 
     async def _run(self, job: Job) -> dict[str, Any]:
@@ -203,33 +251,33 @@ class TaskRunner:
                 if job.mode == "plan":
                     from aria.core.executor import run_task as executor_run_task
 
-                    result = await executor_run_task(session=db, task=task, router=self._router, notifier=None)
+                    result = await executor_run_task(session=db, task=task, router=self._router, notifier=_build_notifier())
                 else:
                     from aria.core.loop import execute_agent_loop
 
                     await execute_agent_loop(job.task_id, self._router, self._sandbox_root)
                     result = {"status": "ok"}
         except asyncio.CancelledError:
-            # Отмена: состояние задачи фиксируем явно, иначе она останется in_progress.
+            if self._stopping:
+                # Остановка приложения — НЕ отмена пользователем: статус не трогаем,
+                # задача остаётся in_progress/approved и подхватится resume_pending().
+                logger.info("task %s interrupted by shutdown — left resumable", key[:8])
+                raise
+            # Отмена пользователем: состояние фиксируем явно.
             with session_scope() as db:
                 task = repo.get_task(db, job.task_id)
-                if task is not None and task.status not in (TaskStatus.done, TaskStatus.failed, TaskStatus.cancelled):
+                if task is not None and task.status not in TERMINAL_STATUSES:
                     repo.set_task_status(db, task, TaskStatus.cancelled)
             event_bus.emit("task.cancelled", {"task_id": key}, session_id=None, task_id=job.task_id)
             raise
         except Exception as exc:  # noqa: BLE001 — граница задачи: падение одной не рушит воркер
             logger.exception("task %s failed in runner", key[:8])
+            code = "provider_unavailable" if type(exc).__name__ == "ProviderUnavailable" else "runner_error"
             with session_scope() as db:
                 task = repo.get_task(db, job.task_id)
-                if task is not None and task.status not in (TaskStatus.done, TaskStatus.cancelled):
+                if task is not None and task.status != TaskStatus.cancelled:
                     try:
-                        repo.set_task_status(
-                            db,
-                            task,
-                            TaskStatus.failed,
-                            error_code="runner_error",
-                            error_message=str(exc)[:500],
-                        )
+                        _mark_failed(db, task, code, str(exc))
                     except Exception:
                         logger.exception("could not mark task %s failed", key[:8])
             return {"status": "failed", "error": str(exc)[:200]}
