@@ -438,7 +438,7 @@ async def list_attention_items(_: str = Depends(require_runtime_token)) -> list[
 
 @router.post("/attention-items/{item_id}/approve")
 async def approve_attention(item_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    from aria.core import approvals
+    from aria.core import approvals, toolhooks
     from aria.core.events import event_bus
 
     with session_scope() as db:
@@ -447,12 +447,13 @@ async def approve_attention(item_id: uuid.UUID, _: str = Depends(require_runtime
             raise HTTPException(status_code=404, detail="attention item not found")
         resolved = approvals.resolve(db, item, approve=True)
     event_bus.emit("attention_item.resolved", serialize_attention(resolved), session_id=resolved.session_id, task_id=resolved.task_id)
+    await toolhooks.lifecycle("on_approval", session_id=resolved.session_id, task_id=resolved.task_id, state="approved", item_id=str(item_id))
     return {"ok": True}
 
 
 @router.post("/attention-items/{item_id}/reject")
 async def reject_attention(item_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    from aria.core import approvals
+    from aria.core import approvals, toolhooks
     from aria.core.events import event_bus
 
     with session_scope() as db:
@@ -461,4 +462,5 @@ async def reject_attention(item_id: uuid.UUID, _: str = Depends(require_runtime_
             raise HTTPException(status_code=404, detail="attention item not found")
         resolved = approvals.resolve(db, item, approve=False)
     event_bus.emit("attention_item.resolved", serialize_attention(resolved), session_id=resolved.session_id, task_id=resolved.task_id)
+    await toolhooks.lifecycle("on_approval", session_id=resolved.session_id, task_id=resolved.task_id, state="rejected", item_id=str(item_id))
     return {"ok": True}

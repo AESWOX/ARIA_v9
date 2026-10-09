@@ -36,6 +36,7 @@ from aria.db.enums import AuditVerdict, SourceTrust, TaskStatus, ToolStatus
 from aria.llm.providers.base import ChatMessage
 from aria.llm.router import ProviderRouter, ProviderUnavailable
 from aria.tools.registry import get_tool
+from aria.core import toolhooks
 from aria.tools.validators import (
     ToolValidationError,
     assert_role_allowed,
@@ -112,6 +113,8 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
         repo.set_task_status(db, task, TaskStatus.in_progress)
         event_bus.emit("task.status_changed", {"status": TaskStatus.in_progress.value}, session_id=session.id, task_id=task.id, db=db)
 
+    await toolhooks.lifecycle("task_start", session_id=session.id, task_id=task_id, role=task.role)
+
     tool_whitelist = role.tool_whitelist
     tool_schemas = _tool_schemas_for_role(tool_whitelist)
     role_prompt = f"Ты в роли {role.role_id}. {role.description}\nДоступные инструменты: {', '.join(tool_whitelist) or 'нет'}."
@@ -146,6 +149,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
             routing = await router.route_chat(role.default_model_policy, messages, tool_schemas, allow_degrade=True)
         except ProviderUnavailable as exc:
             logger.error("task %s: provider_unavailable: %s", task_id, exc)
+            await toolhooks.lifecycle("on_error", session_id=session.id, task_id=task_id, code="provider_unavailable", message=str(exc))
             with session_scope() as db:
                 task = repo.get_task(db, task_id)
                 repo.set_task_status(db, task, TaskStatus.failed, error_code="provider_unavailable", error_message=str(exc))
@@ -160,6 +164,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                 repo.append_message(db, session, role="assistant", content=response.text or "")
             break
 
+        approval_ctx = None
         for call in response.tool_calls:
             with session_scope() as db:
                 task = repo.get_task(db, task_id)
@@ -183,7 +188,8 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                             db=db,
                         )
                         event_bus.emit("task.status_changed", {"status": TaskStatus.awaiting_attention.value}, session_id=session.id, task_id=task.id, db=db)
-                        return  # пауза до резолюции attention item
+                        approval_ctx = (session.id, task.id, str(item.id), command)
+                        break  # пауза: остальные tool calls ответа отбрасываются (как раньше при return)
 
                 # Создаём ToolCall запись для всех tool call'ов
                 tool_call_row = repo.start_tool_call(
@@ -268,6 +274,24 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                         content=f"{spec.tool_name} -> guardrail_warning: {guardrail_decision.message}",
                     )
 
+            # H4: pre_tool хуки (могут заблокировать тул) и чекпоинт файла перед записью.
+            hook_decision, checkpoint_id = await toolhooks.pre_tool(
+                spec.tool_name, call.arguments, session_id=task.session_id, task_id=task_id, sandbox_root=sandbox_root,
+            )
+            if hook_decision.blocked:
+                with session_scope() as db:
+                    repo.finish_tool_call(
+                        db, tool_call_row, ToolStatus.blocked_policy,
+                        output_json={"hook_blocked": True, "reason": hook_decision.reason},
+                        error_code="hook_blocked", error_message=hook_decision.reason,
+                    )
+                    session = repo.get_session(db, task.session_id)
+                    repo.append_message(
+                        db, session, role="tool",
+                        content=f"{spec.tool_name} -> hook_blocked: {hook_decision.reason}",
+                    )
+                continue
+
             output, status, error_code, error_message = await _execute_tool(spec, call.arguments, sandbox_root)
 
             # После tool call — guardrail recording для loop detection
@@ -284,6 +308,23 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                     task_id=task.id,
                     db=db,
                 )
+
+            await toolhooks.post_tool(
+                spec.tool_name, call.arguments, output, status.value,
+                session_id=task.session_id, task_id=task_id, sandbox_root=sandbox_root, checkpoint_id=checkpoint_id,
+            )
+            if status in (ToolStatus.error, ToolStatus.timeout):
+                await toolhooks.lifecycle(
+                    "on_error", session_id=task.session_id, task_id=task_id,
+                    tool=spec.tool_name, code=error_code, message=error_message,
+                )
+
+        if approval_ctx is not None:
+            await toolhooks.lifecycle(
+                "on_approval", session_id=approval_ctx[0], task_id=approval_ctx[1],
+                state="requested", item_id=approval_ctx[2], command=approval_ctx[3],
+            )
+            return  # пауза до резолюции attention item (loop продолжит resume_after_approval)
 
     await finalize_task(task_id, router)
 
@@ -342,6 +383,12 @@ def _observe_user_patterns(db: OrmSession, session: m.Session, task: m.Task) -> 
 
 
 async def finalize_task(task_id: uuid.UUID, router: ProviderRouter) -> None:
+    closing = await _finalize_task_inner(task_id, router)
+    if closing is not None:
+        await toolhooks.lifecycle("task_close", session_id=closing[0], task_id=closing[1], status=closing[2])
+
+
+async def _finalize_task_inner(task_id: uuid.UUID, router: ProviderRouter) -> tuple | None:
     with session_scope() as db:
         task = repo.get_task(db, task_id)
         session = repo.get_session(db, task.session_id)
@@ -358,7 +405,7 @@ async def finalize_task(task_id: uuid.UUID, router: ProviderRouter) -> None:
             logger.exception("audit crashed for task %s", task_id)
             repo.set_task_status(db, task, TaskStatus.failed, error_code="audit_crash", error_message=str(exc))
             event_bus.emit("task.status_changed", {"status": "failed"}, session_id=session.id, task_id=task.id, db=db)
-            return
+            return (session.id, task.id, "failed")
 
         event_bus.emit(
             "audit_report.created",
@@ -378,6 +425,7 @@ async def finalize_task(task_id: uuid.UUID, router: ProviderRouter) -> None:
             repo.set_task_status(db, task, TaskStatus.failed, error_code="fail_after_max_attempts")
 
         event_bus.emit("task.status_changed", {"status": task.status.value}, session_id=session.id, task_id=task.id, db=db)
+        return (session.id, task.id, task.status.value)
 
 
 async def resume_after_approval(task_id: uuid.UUID, router: ProviderRouter, sandbox_root: str, attention_item: m.AttentionItem) -> None:
@@ -395,7 +443,20 @@ async def resume_after_approval(task_id: uuid.UUID, router: ProviderRouter, sand
             source_trust_snapshot=session.source_trust_aggregate,
         )
 
-    output, status, error_code, error_message = await _execute_tool(spec, {"command": command}, sandbox_root, approved=True)
+    sess_id = task.session_id
+    hook_decision, _cp = await toolhooks.pre_tool(
+        "shell_execute", {"command": command}, session_id=sess_id, task_id=task_id, sandbox_root=sandbox_root,
+    )
+    if hook_decision.blocked:
+        output, status, error_code, error_message = (
+            {"hook_blocked": True, "reason": hook_decision.reason}, ToolStatus.blocked_policy, "hook_blocked", hook_decision.reason,
+        )
+    else:
+        output, status, error_code, error_message = await _execute_tool(spec, {"command": command}, sandbox_root, approved=True)
+        await toolhooks.post_tool(
+            "shell_execute", {"command": command}, output, status.value,
+            session_id=sess_id, task_id=task_id, sandbox_root=sandbox_root,
+        )
 
     with session_scope() as db:
         repo.finish_tool_call(db, tool_call_row, status, output_json=output, error_code=error_code, error_message=error_message)

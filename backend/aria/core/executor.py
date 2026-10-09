@@ -197,6 +197,25 @@ async def run_task(
     router: ProviderRouter | None = None,
     notifier: Notifier | None = None,
 ) -> dict[str, Any]:
+    """Stage 1–7 + хуки H4 ``task_start`` / ``task_close`` / ``on_error`` вокруг исполнения."""
+    from aria.core import toolhooks
+
+    await toolhooks.lifecycle("task_start", session_id=task.session_id, task_id=task.id, mode="plan")
+    try:
+        result = await _run_task_impl(session, task, router, notifier)
+    except Exception as exc:
+        await toolhooks.lifecycle("on_error", session_id=task.session_id, task_id=task.id, code=type(exc).__name__, message=str(exc))
+        raise
+    await toolhooks.lifecycle("task_close", session_id=task.session_id, task_id=task.id, status=str(result.get("status")))
+    return result
+
+
+async def _run_task_impl(
+    session: OrmSession,
+    task: Task,
+    router: ProviderRouter | None = None,
+    notifier: Notifier | None = None,
+) -> dict[str, Any]:
     """Stage 1–7 full loop.
 
     Args:
@@ -563,10 +582,23 @@ async def _stage3_execute(
                     if not handler_input:
                         raise ValueError(f"tool_ref={tool_ref} требует step.input/input_json")
 
+                from aria.core import toolhooks
+
+                hook_decision, checkpoint_id = await toolhooks.pre_tool(
+                    spec.tool_name, handler_input, session_id=task.session_id, task_id=task.id, sandbox_root=sandbox_root,
+                )
+                if hook_decision.blocked:
+                    raise ValueError(f"hook_blocked: {hook_decision.reason}")
+
                 output_json = await spec.handler(
                     input_json=handler_input,
                     timeout_sec=spec.timeout_sec,
                     sandbox_root=sandbox_root,
+                )
+                await toolhooks.post_tool(
+                    spec.tool_name, handler_input, output_json,
+                    "error" if isinstance(output_json, dict) and output_json.get("error") else "ok",
+                    session_id=task.session_id, task_id=task.id, sandbox_root=sandbox_root, checkpoint_id=checkpoint_id,
                 )
 
             status_ok = not (isinstance(output_json, dict) and output_json.get("error"))

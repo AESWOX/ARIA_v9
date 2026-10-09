@@ -442,6 +442,23 @@ export default function SystemPage() {
     }
   };
 
+  const restoreCheckpoint = async (id: string) => {
+    if (!window.confirm("Restore the files saved in this checkpoint? Current file contents will be overwritten.")) return;
+    try {
+      const res = await api.restoreCheckpoint(id);
+      const n = res.restored.length + res.removed.length;
+      showToast(
+        res.skipped.length
+          ? `Restored ${n} file(s), skipped ${res.skipped.length}`
+          : `Restored ${n} file(s)`,
+        res.skipped.length ? "error" : "success",
+      );
+      setCheckpoints(await api.getCheckpoints());
+    } catch (e) {
+      showToast(`Restore failed: ${e}`, "error");
+    }
+  };
+
   const checkpointsPrune = useConfirmDelete({
     onDelete: useCallback(async () => {
       try {
@@ -554,7 +571,7 @@ export default function SystemPage() {
         onCancel={checkpointsPrune.cancel}
         onConfirm={checkpointsPrune.confirm}
         title="Prune checkpoints"
-        description="Delete the rollback checkpoint shadow store? Existing /rollback points will be lost."
+        description="Delete checkpoints older than 14 days? Newer rollback points are kept."
         loading={checkpointsPrune.isDeleting}
       />
       <DeleteConfirmDialog
@@ -1231,10 +1248,21 @@ export default function SystemPage() {
               {checkpoints?.sessions.length ?? 0} session(s) ·{" "}
               {formatBytes(checkpoints?.total_bytes ?? 0)}
             </span>
-            <Button size="sm" ghost className="text-destructive" disabled={!checkpoints?.sessions.length} prefix={<Trash2 className="h-3.5 w-3.5" />} onClick={() => checkpointsPrune.requestDelete("all")}>
+            <Button size="sm" ghost className="text-destructive" disabled={!checkpoints?.checkpoints?.length} prefix={<Trash2 className="h-3.5 w-3.5" />} onClick={() => checkpointsPrune.requestDelete("all")}>
               Prune
             </Button>
           </CardContent>
+          {(checkpoints?.checkpoints ?? []).slice(-10).reverse().map((cp) => (
+            <CardContent key={cp.id} className="flex items-center justify-between gap-3 border-t py-2">
+              <span className="min-w-0 truncate text-xs text-muted-foreground" title={cp.files.join(", ")}>
+                {new Date(cp.created_at).toLocaleString()} · {cp.tool ?? "?"} · {cp.files.join(", ")}
+                {cp.complete ? "" : " (incomplete)"}
+              </span>
+              <Button size="sm" ghost onClick={() => restoreCheckpoint(cp.id)}>
+                Restore
+              </Button>
+            </CardContent>
+          ))}
         </Card>
       </section>
 

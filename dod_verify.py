@@ -901,6 +901,11 @@ def main():
 
     if report["checks"].get("self_test", {}).get("issues"):
         issues.append("self_test_issues")
+    # H4: хуки и чекпоинты должны быть живыми, а не заглушками
+    st_checks = report["checks"].get("self_test", {}).get("checks", {})
+    for _name in ("hooks", "checkpoints"):
+        if not str(st_checks.get(_name, "")).startswith("ok"):
+            issues.append(f"h4_{_name}_not_ok")
     bt = report["checks"].get("backend_tests", {})
     if not bt.get("exit_ok"):
         issues.append("backend_tests_failed")

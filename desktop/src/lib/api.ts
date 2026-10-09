@@ -1308,8 +1308,17 @@ export const api = {
 
 
   getCheckpoints: () => fetchJSON<CheckpointsResponse>("/api/ops/checkpoints"),
-  pruneCheckpoints: () =>
-    fetchJSON<ActionResponse>("/api/ops/checkpoints/prune", { method: "POST" }),
+  pruneCheckpoints: (opts?: { older_than_days?: number; max_bytes?: number }) =>
+    fetchJSON<ActionResponse>("/api/ops/checkpoints/prune", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts ?? {}),
+    }),
+  restoreCheckpoint: (id: string) =>
+    fetchJSON<CheckpointRestoreResponse>(
+      `/api/ops/checkpoints/${encodeURIComponent(id)}/restore`,
+      { method: "POST" },
+    ),
 
   // ── Admin: Skills hub ───────────────────────────────────────────────
   // ``profile`` scopes install/uninstall/update and the installed-state
@@ -1755,9 +1764,30 @@ export interface CheckpointSession {
   bytes: number;
 }
 
+export interface CheckpointEntry {
+  id: string;
+  session: string;
+  task_id: string | null;
+  tool: string | null;
+  created_at: string;
+  complete: boolean;
+  files: string[];
+  bytes: number;
+  has_task_state?: boolean;
+}
+
 export interface CheckpointsResponse {
   sessions: CheckpointSession[];
   total_bytes: number;
+  checkpoints?: CheckpointEntry[];
+}
+
+export interface CheckpointRestoreResponse {
+  ok: boolean;
+  id: string;
+  restored: string[];
+  removed: string[];
+  skipped: { path: string; reason: string }[];
 }
 
 /** Per-call overrides for {@link fetchJSON}. */

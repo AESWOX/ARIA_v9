@@ -405,60 +405,6 @@ async def ops_debug_share(payload: dict[str, Any], _: str = Depends(require_runt
     }
 
 
-@router.get("/ops/hooks")
-async def ops_hooks(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {
-        "hooks": _load_json("hooks.json", []),
-        "valid_events": ["session_created", "session_ended", "message_received", "task_completed", "action_finished"],
-    }
-
-
-@router.post("/ops/hooks")
-async def ops_hooks_create(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    event = str(payload.get("event", "")).strip()
-    command = str(payload.get("command", "")).strip()
-    if not event or not command:
-        raise HTTPException(status_code=400, detail="event and command required")
-    hooks = _load_json("hooks.json", [])
-    if any(h.get("event") == event and h.get("command") == command for h in hooks):
-        raise HTTPException(status_code=409, detail="hook already exists")
-    hooks.append(
-        {
-            "event": event,
-            "matcher": payload.get("matcher"),
-            "command": command,
-            "timeout": payload.get("timeout"),
-            "allowed": bool(payload.get("approve", False)),
-            "approved_at": None,
-            "executable": False,
-        }
-    )
-    _save_json("hooks.json", hooks)
-    return {"ok": True, "event": event, "command": command, "approved": bool(payload.get("approve", False))}
-
-
-@router.delete("/ops/hooks")
-async def ops_hooks_delete(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    event = payload.get("event")
-    command = payload.get("command")
-    hooks = _load_json("hooks.json", [])
-    remaining = [
-        h for h in hooks if not (h.get("event") == event and h.get("command") == command)
-    ]
-    _save_json("hooks.json", remaining)
-    return {"ok": True}
-
-
-@router.get("/ops/checkpoints")
-async def ops_checkpoints(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {"sessions": [], "total_bytes": 0}
-
-
-@router.post("/ops/checkpoints/prune")
-async def ops_checkpoints_prune(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return _action("ops-checkpoints-prune", True, "no checkpoints to prune")
-
-
 # ---------------------------------------------------------------------------
 # Dashboard plugins
 # ---------------------------------------------------------------------------
