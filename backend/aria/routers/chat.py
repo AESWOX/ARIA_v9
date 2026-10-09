@@ -30,6 +30,7 @@ from aria.http_utils import emit_message_created, emit_session_updated, iso, ser
 from aria.llm.key_pool import NoAvailableKeys
 from aria.llm.providers.base import ChatMessage
 from aria.llm.router import ProviderUnavailable
+from aria.memory import store as memory_store
 
 logger = logging.getLogger("local_agent.chat")
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -64,7 +65,7 @@ def _real_provider_ids(request: Request) -> list[str]:
     )
 
 
-def _build_prompt(history: list[tuple[str, str]]) -> list[ChatMessage]:
+def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> list[ChatMessage]:
     """System prompt + the most recent turns that fit the budget (oldest dropped first)."""
     turns = [(role, text) for role, text in history if role in ("user", "assistant") and text]
     turns = turns[-HISTORY_MESSAGES:]
@@ -76,7 +77,8 @@ def _build_prompt(history: list[tuple[str, str]]) -> list[ChatMessage]:
         kept.append((role, text))
         used += len(text)
     kept.reverse()
-    return [ChatMessage(role="system", content=SYSTEM_PROMPT)] + [ChatMessage(role=r, content=t) for r, t in kept]
+    system = SYSTEM_PROMPT + ("\n\n" + memory_block if memory_block else "")
+    return [ChatMessage(role="system", content=system)] + [ChatMessage(role=r, content=t) for r, t in kept]
 
 
 def _explain_llm_error(exc: Exception) -> HTTPException:
@@ -182,11 +184,25 @@ async def chat_send(
     if not retry:
         emit_message_created(user_msg, session_id, None)
 
+    # 1b) long-term memory (H3): «запомни: …» saves a fact; relevant notes go into the system prompt.
+    # Outside the DB scope above: the memory store uses its own connection.
+    last_user_text = content or user_payload.get("content") or ""
+    memory_block = ""
+    if not retry:
+        fact = memory_store.parse_remember(content)
+        if fact and memory_store.enabled():
+            try:
+                memory_store.add("fact", fact, source="user", session_id=str(session_id))
+            except Exception:  # noqa: BLE001 — память не должна ронять чат
+                logger.exception("chat: could not save memory")
+    if memory_store.enabled():
+        memory_block = memory_store.recall_block(last_user_text)
+
     # 2) call the model outside any DB transaction
     try:
         result = await request.app.state.router.route_chat(
             CHAT_PROVIDER_CLASS,
-            _build_prompt(history),
+            _build_prompt(history, memory_block),
             [],
             timeout_sec=60,
             resilient=True,

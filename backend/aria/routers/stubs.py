@@ -748,36 +748,6 @@ async def credentials_pool_remove(provider: str, index: int, _: str = Depends(re
 
 
 # ---------------------------------------------------------------------------
-# Memory provider
-# ---------------------------------------------------------------------------
-
-
-@router.get("/memory")
-async def memory_get(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {
-        "active": "local",
-        "providers": [
-            {"name": "local", "description": "Built-in local memory store", "configured": True}
-        ],
-        "builtin_files": {"memory": 0, "user": 0},
-    }
-
-
-@router.put("/memory/provider")
-async def memory_set_provider(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    provider = str(payload.get("provider", ""))
-    if provider not in ("local", "none"):
-        raise HTTPException(status_code=400, detail="unknown memory provider")
-    return {"ok": True, "active": provider}
-
-
-@router.post("/memory/reset")
-async def memory_reset(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    target = payload.get("target", "all")
-    return {"ok": True, "deleted": []}
-
-
-# ---------------------------------------------------------------------------
 # Curator
 # ---------------------------------------------------------------------------
 

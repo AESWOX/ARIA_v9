@@ -186,6 +186,28 @@ async def _friend_memory_read(input_json: dict, **_ctx) -> dict:
 # ── Tool Registry (§11) ────────────────────────────────────────────────────
 
 
+async def _memory_search(input_json: dict, **_ctx) -> dict:
+    from aria.memory import store
+
+    items = store.search(
+        str(input_json.get("query") or ""),
+        layer=input_json.get("layer"),
+        limit=int(input_json.get("limit", 5)),
+    )
+    return {"items": items, "total": len(items)}
+
+
+async def _memory_save(input_json: dict, **_ctx) -> dict:
+    from aria.memory import store
+
+    item = store.add(
+        str(input_json.get("layer") or "fact"),
+        str(input_json.get("content") or ""),
+        source="agent",  # недоверенный источник: в подсказку модели попадает с пометкой
+    )
+    return {"saved": True, "id": item["id"], "duplicate": bool(item.get("duplicate"))}
+
+
 TOOL_REGISTRY: dict[str, ToolSpec] = {
     "read_note": ToolSpec(
         tool_name="read_note",
@@ -557,6 +579,47 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         allowed_roles=("orchestrator", "research", "coder", "qa_auditor"),
         idempotency_class=IdempotencyClass.safe_read,
         handler=_task_status,
+    ),
+    "memory_search": ToolSpec(
+        tool_name="memory_search",
+        description="Ищет в долговременной памяти ARIA (факты, предпочтения, эпизоды прошлых задач) по словам запроса.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "layer": {"type": "string", "enum": ["episode", "fact", "preference"]},
+                "limit": {"type": "integer"},
+            },
+            "required": ["query"],
+        },
+        output_schema={"type": "object", "properties": {"items": {"type": "array"}, "total": {"type": "integer"}}},
+        timeout_sec=10,
+        risk_level=RiskLevel.low,
+        null_output_allowed=True,
+        requires_approval=False,
+        allowed_roles=("general", "orchestrator", "obsidian_keeper", "qa_auditor", "coder", "research"),
+        idempotency_class=IdempotencyClass.safe_read,
+        handler=_memory_search,
+    ),
+    "memory_save": ToolSpec(
+        tool_name="memory_save",
+        description="Сохраняет в долговременную память короткий факт, предпочтение или итог задачи. Не сохранять секреты и ключи.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "content": {"type": "string"},
+                "layer": {"type": "string", "enum": ["episode", "fact", "preference"]},
+            },
+            "required": ["content"],
+        },
+        output_schema={"type": "object", "properties": {"saved": {"type": "boolean"}, "id": {"type": "string"}}},
+        timeout_sec=10,
+        risk_level=RiskLevel.low,
+        null_output_allowed=False,
+        requires_approval=False,
+        allowed_roles=("general", "orchestrator", "obsidian_keeper", "coder", "research"),
+        idempotency_class=IdempotencyClass.safe_write,
+        handler=_memory_save,
     ),
     "friend_memory_read": ToolSpec(
         tool_name="friend_memory_read",
