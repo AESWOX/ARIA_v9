@@ -286,7 +286,7 @@ def check_backend_install() -> dict:
  
 def check_self_test(token: str | None) -> dict:
     """Hit /system/self-test and parse result."""
-    data = http_get("/system/self-test")
+    data = http_get("/system/self-test", token)
     if data is None:
         return {"status": "unreachable", "issues": ["Server not responding"]}
     return {

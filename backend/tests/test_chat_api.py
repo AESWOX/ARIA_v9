@@ -168,3 +168,16 @@ def test_saving_a_key_on_the_keys_page_enables_chat_without_restart(tmp_path, mo
     finally:
         os.environ.pop("GEMINI_API_KEYS", None)
         config.get_settings.cache_clear()
+
+
+def test_unknown_model_404_explains_how_to_fix_it():
+    """A19: provider 404 'model no longer available' must point the user at Env, not say 'HTTP 404'."""
+    err = httpx.HTTPStatusError("x", request=httpx.Request("POST", "http://x"), response=httpx.Response(404))
+    c = _client(FakeLlm(error=err))
+    sid = _new_session(c)
+    try:
+        r = c.post(f"/chat/sessions/{sid}/send", json={"content": "hi"})
+        assert r.status_code == 502
+        assert "GEMINI_FLASH_MODEL" in r.json()["detail"]
+    finally:
+        _cleanup(sid)

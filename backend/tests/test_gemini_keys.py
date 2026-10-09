@@ -110,7 +110,7 @@ def test_router_uses_free_tier_safe_models_and_overrides(monkeypatch):
     monkeypatch.delenv("GEMINI_FLASH_MODEL", raising=False)
     try:
         default = models()
-        assert default and set(default.values()) == {"gemini-2.5-flash"}  # no paid-only model by default
+        assert default and set(default.values()) == {"gemini-3.8-flash"}  # no paid-only model by default
         monkeypatch.setenv("GEMINI_PRO_MODEL", "gemini-2.5-pro")
         monkeypatch.setenv("GEMINI_FLASH_MODEL", "gemini-3.5-flash")
         over = models()

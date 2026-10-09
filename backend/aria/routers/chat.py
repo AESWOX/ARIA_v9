@@ -90,6 +90,12 @@ def _explain_llm_error(exc: Exception) -> HTTPException:
         code = exc.response.status_code
         if code == 429:
             return HTTPException(status_code=429, detail="The model's rate limit is reached. Retry in a minute.")
+        if code == 404:
+            return HTTPException(
+                status_code=502,
+                detail="The model name is not available at the provider (HTTP 404). "
+                "Open Env, set GEMINI_FLASH_MODEL to a model from the provider's list, and restart the app.",
+            )
         return HTTPException(status_code=502, detail=f"The model API answered HTTP {code}.")
     if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
         return HTTPException(status_code=504, detail="The model API did not answer in time (network or timeout).")

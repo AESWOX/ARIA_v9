@@ -446,7 +446,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
                 "file_path": {"type": "string", "description": "Absolute path to image file"},
                 "image_base64": {"type": "string", "description": "Base64-encoded image data"},
                 "prompt": {"type": "string", "description": "Optional text instruction (default: describe)"},
-                "model": {"type": "string", "description": "Gemini model (default: gemini-2.5-flash)"},
+                "model": {"type": "string", "description": "Gemini model (default: gemini-3.8-flash)"},
             },
             "oneOf": [
                 {"required": ["file_path"]},

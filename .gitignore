@@ -69,3 +69,6 @@ aria_full_delivery_audit.ps1
 # Binaries are build/installer outputs — never in git (wave 0 review: 3 exe were still tracked)
 *.exe
 *.msi
+
+# Editor / patch backups
+*.bak

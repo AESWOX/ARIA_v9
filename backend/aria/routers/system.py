@@ -62,7 +62,7 @@ async def shutdown_backend(_: str = Depends(require_runtime_token)) -> dict[str,
 
 
 @router.get("/system/self-test")
-async def system_self_test() -> dict[str, Any]:
+async def system_self_test(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
     """§0: живой эндпоинт целостности — проверяет БД, модели, репо, роутер, скиллы."""
     try:
         _ = m.ProviderHealth
