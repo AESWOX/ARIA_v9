@@ -70,3 +70,14 @@ cd backend
 - Риск, снимается только на живом: принимает ли Upwork redirect на `http://127.0.0.1:<порт>/mcp/oauth/callback` (порт установленной сборки случайный). Запасной вариант — фиксированный порт или deep-link Tauri.
 - Чтобы снять шумную нумерацию: пакет каталога/вкладки больше не отдельный 0010; следующий номер — 0010 для CTX.
 - 0010 (CTX): сжатие по порогу 100к токенов на сессию, подключено в чат; найдены и исправлены: сводка уходила в конец промпта, `list_messages_for_prompt(limit)` отбрасывал новые сообщения, суммаризатор не видел результатов тулов. 505 passed в песочнице; Windows и живой Gemini не проверены.
+
+## Установка 0009 и 0010 (PowerShell, корень клона, `main` @ `9d2def1`)
+```powershell
+git checkout -b feat/0009-0010 main
+git am --3way <путь>\0009-feat-0009-mcp-oauth-catalog.patch
+git am --3way <путь>\0010-feat-0010-ctx-compression.patch
+cd backend; .\.venv\Scripts\python.exe -m pytest -q     # ожидаем: 505 passed, 0 skipped
+cd ..\desktop; npm run typecheck                          # ожидаем: exit 0
+```
+Живая проверка после сборки: MCP → Install у Upwork → Authorize (принимает ли Upwork redirect на локальный порт); длинный диалог в Chat (сообщение после сжатия отвечает, в логе есть строка о сжатии).
+
