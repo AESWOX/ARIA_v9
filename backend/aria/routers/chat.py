@@ -35,6 +35,7 @@ logger = logging.getLogger("local_agent.chat")
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 CHAT_PROVIDER_CLASS = "free_tier_reasoning"  # Gemini Flash first, then Groq
+CHAT_FALLBACK_CLASSES = ("standard_reasoning",)  # DeepSeek chat, then Gemini Pro (A20)
 HISTORY_MESSAGES = 40
 HISTORY_CHAR_BUDGET = 60_000
 MAX_CONTENT_CHARS = 20_000
@@ -178,7 +179,12 @@ async def chat_send(
     # 2) call the model outside any DB transaction
     try:
         result = await request.app.state.router.route_chat(
-            CHAT_PROVIDER_CLASS, _build_prompt(history), [], timeout_sec=60
+            CHAT_PROVIDER_CLASS,
+            _build_prompt(history),
+            [],
+            timeout_sec=60,
+            resilient=True,
+            fallback_classes=CHAT_FALLBACK_CLASSES,
         )
     except Exception as exc:  # noqa: BLE001 - mapped to a clear HTTP error below
         logger.warning("chat: model call failed: %s", exc)
@@ -203,4 +209,5 @@ async def chat_send(
         "assistant": assistant_payload,
         "provider_id": result.provider_id,
         "degraded": bool(result.degraded_to_free),
+        "fallback": bool(result.fallback),
     }

@@ -9,16 +9,19 @@ premium/standard reasoning, простые подзадачи и sub-agents — 
 """
 from __future__ import annotations
 
+import asyncio
 import itertools
 import logging
 from dataclasses import dataclass, field
 
+import httpx
 from sqlalchemy.orm import Session as OrmSession
 
 from aria.config import get_settings
 from aria.db import repository as repo
 from aria.db.base import session_scope
 from aria.db.enums import ProviderStatus
+from aria.llm.key_pool import NoAvailableKeys
 from aria.llm.providers.base import ChatMessage, LlmProvider, LlmResponse
 
 logger = logging.getLogger("local_agent.router")
@@ -28,11 +31,18 @@ class ProviderUnavailable(Exception):
     pass
 
 
+# Transient upstream statuses: worth one more try / another provider.
+RETRYABLE_STATUS = frozenset({408, 425, 500, 502, 503, 504})
+RETRY_ATTEMPTS_PER_PROVIDER = 2      # same provider, on 5xx only
+RETRY_BACKOFF_SEC = 1.0              # 1s, then 2s
+
+
 @dataclass
 class RoutingResult:
     response: LlmResponse
     provider_id: str
     degraded_to_free: bool = False
+    fallback: bool = False  # answered by a provider other than the first choice
 
 
 @dataclass
@@ -104,7 +114,14 @@ class ProviderRouter:
         timeout_sec: float = 60,
         allow_degrade: bool = True,
         db: OrmSession | None = None,
+        resilient: bool = False,
+        fallback_classes: tuple[str, ...] = (),
+        retry_backoff_sec: float = RETRY_BACKOFF_SEC,
     ) -> RoutingResult:
+        if resilient:
+            return await self._route_resilient(
+                provider_class, messages, tools, timeout_sec, db, fallback_classes, retry_backoff_sec
+            )
         allowed, warn = self.budget_gate(provider_class)
         target_class = provider_class
         degraded = False
@@ -127,6 +144,82 @@ class ProviderRouter:
 
         response = await provider.chat(messages, tools, timeout_sec)
         return RoutingResult(response=response, provider_id=provider.provider_id, degraded_to_free=degraded)
+
+
+    # ---------- resilient path (A20): retry on 5xx, fail over across providers ----------
+
+    async def _connectivity_ok(self, provider: LlmProvider, db: OrmSession | None) -> bool:
+        settings = get_settings()
+        ok = await provider.check_connectivity(settings.providers_connectivity_timeout_sec)
+        if not ok:
+            ok = await provider.check_connectivity(settings.providers_connectivity_timeout_sec)
+        self._record_provider_status(provider, ProviderStatus.active if ok else ProviderStatus.offline, db=db)
+        return ok
+
+    async def _route_resilient(
+        self,
+        provider_class: str,
+        messages: list[ChatMessage],
+        tools: list[dict],
+        timeout_sec: float,
+        db: OrmSession | None,
+        fallback_classes: tuple[str, ...],
+        backoff_sec: float,
+    ) -> RoutingResult:
+        """Walk every provider of the class, then each fallback class.
+
+        - 5xx from a provider: retry it (backoff 1s, 2s), then move on.
+        - 429 / exhausted keys / timeout / network error: move on at once
+          (the provider already rotated its own keys; retrying only burns time).
+        - Anything else (400, 401 with no keys left handled inside the provider,
+          parse errors): raised as is, another provider would fail the same way.
+        Budget gate applies to every class tried.
+        """
+        classes = [provider_class, *[c for c in fallback_classes if c != provider_class]]
+        last_exc: Exception | None = None
+        tried = 0
+        degraded = False
+        for cls_index, cls in enumerate(classes):
+            allowed, _warn = self.budget_gate(cls)
+            if not allowed:
+                if cls_index == 0:
+                    degraded = True
+                    cls = "free_tier_reasoning"  # same degrade rule as the plain path
+                else:
+                    continue
+            for provider in self.providers_by_class.get(cls, []):
+                if not await self._connectivity_ok(provider, db):
+                    continue
+                for attempt in range(RETRY_ATTEMPTS_PER_PROVIDER):
+                    tried += 1
+                    try:
+                        response = await provider.chat(messages, tools, timeout_sec)
+                    except httpx.HTTPStatusError as exc:
+                        status = exc.response.status_code
+                        last_exc = exc
+                        if status in RETRYABLE_STATUS and attempt + 1 < RETRY_ATTEMPTS_PER_PROVIDER:
+                            logger.warning("%s: HTTP %s, retry %d", provider.provider_id, status, attempt + 1)
+                            await asyncio.sleep(backoff_sec * (2 ** attempt))
+                            continue
+                        if status == 429 or status in RETRYABLE_STATUS:
+                            logger.warning("%s: HTTP %s, switching provider", provider.provider_id, status)
+                            break
+                        raise
+                    except (NoAvailableKeys, httpx.TimeoutException, httpx.TransportError) as exc:
+                        logger.warning("%s: %s, switching provider", provider.provider_id, type(exc).__name__)
+                        last_exc = exc
+                        break
+                    else:
+                        return RoutingResult(
+                            response=response,
+                            provider_id=provider.provider_id,
+                            degraded_to_free=degraded or (cls != provider_class and cls == "free_tier_reasoning"),
+                            fallback=tried > 1,
+                        )
+        if last_exc is not None:
+            # keep the original error so callers map it as before (429 -> 429, timeout -> 504, ...)
+            raise last_exc
+        raise ProviderUnavailable(f"no available provider for class={provider_class} (§12.3)")
 
 
 def build_default_router() -> ProviderRouter:
