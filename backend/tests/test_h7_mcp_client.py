@@ -384,6 +384,7 @@ def _agent_run(tmp_path, monkeypatch, cfg, calls):
     _run(go())
     with session_scope() as db:
         rows = [(c.tool_name, c.status.value, c.error_code) for c in repo.list_tool_calls(db, task_id)]
+    _agent_run.last_task_id = task_id
     return std, rows
 
 
@@ -394,7 +395,16 @@ def test_agent_calls_read_only_mcp_tool_and_sees_its_result(data_dir, tmp_path, 
     assert "echo:hello" in after_tool and 'source_trust="untrusted"' in after_tool, "результат MCP — недоверенные данные в контексте модели"
 
 
-def test_agent_cannot_run_mcp_write_tool_without_approval(data_dir, tmp_path, monkeypatch):
+def test_agent_pauses_for_owner_approval_on_mcp_write_tool(data_dir, tmp_path, monkeypatch):
+    """Пишущий тул MCP не вызывается: создаётся запрос Approve, задача ждёт владельца (0008)."""
+    from aria.db import models as dbm
+
     std, rows = _agent_run(tmp_path, monkeypatch, _fake_cfg(), [tool_call("mcp__fake__write_thing", {"v": "x"})])
-    assert ("mcp__fake__write_thing", "blocked_policy", "approval_required") in rows
-    assert "wrote:x" not in "\n".join(m.content for m in std.seen[1]), "запись не должна была исполниться"
+    assert rows == [], "до Approve ни один tool_call не исполняется"
+    assert len(std.seen) == 1, "модель больше не вызывалась: задача на паузе"
+    with session_scope() as db:
+        task = repo.get_task(db, _agent_run.last_task_id)
+        items = [i for i in db.query(dbm.AttentionItem).all() if i.task_id == task.id]
+        assert task.status == TaskStatus.awaiting_attention
+        assert [i.type.value for i in items] == ["mcp_tool_approval"]
+        assert items[0].payload_json["tool_name"] == "mcp__fake__write_thing" and items[0].payload_json["arguments"] == {"v": "x"}

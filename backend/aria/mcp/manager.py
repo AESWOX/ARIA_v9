@@ -156,6 +156,7 @@ class McpManager:
         self._tools: dict[str, list[dict]] = {}       # server -> детали тулов (после классификации)
         self._registered: dict[str, list[str]] = {}   # server -> имена в TOOL_REGISTRY
         self._errors: dict[str, str] = {}
+        self._origins: dict[str, tuple[str, str]] = {}  # registry_name -> (server, tool)
         self._lock = asyncio.Lock()
 
     # -- конфиг -----------------------------------------------------------
@@ -231,6 +232,7 @@ class McpManager:
     def _unregister(self, server: str) -> None:
         for reg_name in self._registered.pop(server, []):
             TOOL_REGISTRY.pop(reg_name, None)
+            self._origins.pop(reg_name, None)
 
     @staticmethod
     def _is_read_only(cfg: dict, tool: dict) -> bool:
@@ -251,6 +253,7 @@ class McpManager:
                 digest = hashlib.sha1(f"{server}\0{tname}".encode("utf-8")).hexdigest()[:8]
                 reg_name = f"{reg_name[: MAX_TOOL_NAME - 9]}_{digest}"
             taken[reg_name] = tname
+            self._origins[reg_name] = (server, tname)
             read_only = self._is_read_only(cfg, tool)
             desc = str(tool.get("description") or tname)[:500]
             TOOL_REGISTRY[reg_name] = ToolSpec(
@@ -324,6 +327,10 @@ class McpManager:
                     await self._refresh_locked(name)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("mcp '%s' unavailable: %s", name, exc)
+
+    def origin(self, registry_name: str) -> tuple[str, str] | None:
+        """(сервер, исходное имя тула) по имени в реестре."""
+        return self._origins.get(registry_name)
 
     def tool_names_for_role(self, role_id: str) -> tuple[str, ...]:
         if role_id not in MCP_ROLES:

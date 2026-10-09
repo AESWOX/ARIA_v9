@@ -33,6 +33,34 @@ def request_high_risk_shell_approval(db: OrmSession, session: m.Session, task: m
     return item
 
 
+def request_mcp_tool_approval(
+    db: OrmSession, session: m.Session, task: m.Task, tool_name: str, arguments: dict, server: str = "", tool: str = ""
+) -> m.AttentionItem:
+    """H7: тул MCP-сервера, который может менять данные (default-deny). Без Approve сервер не вызывается."""
+    import json
+
+    try:
+        args_text = json.dumps(arguments, ensure_ascii=False, indent=2, default=str)
+    except (TypeError, ValueError):
+        args_text = str(arguments)
+    if len(args_text) > 2000:
+        args_text = args_text[:2000] + "\n...[truncated]"
+    item = repo.create_attention_item(
+        db,
+        type_=AttentionType.mcp_tool_approval,
+        title=f"Подтверждение MCP-тула: {server + ' / ' if server else ''}{tool or tool_name}",
+        body_md=(
+            f"Тул стороннего MCP-сервера может менять данные. Без вашего Approve он не вызывается.\n\n"
+            f"Сервер: {server or '?'}\nТул: {tool or tool_name}\nАргументы:\n{args_text}"
+        ),
+        session=session,
+        task=task,
+        payload_json={"kind": "mcp_tool", "tool_name": tool_name, "server": server, "tool": tool, "arguments": arguments},
+    )
+    repo.set_task_status(db, task, TaskStatus.awaiting_attention)
+    return item
+
+
 def request_task_tz_approval(db: OrmSession, session: m.Session, task: m.Task, draft_tz_md: str) -> m.AttentionItem:
     item = repo.create_attention_item(
         db,

@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 
 from aria.api.auth import require_runtime_token
+from aria.core import runprofile
 from aria.db import models as m
 from aria.db import repository as repo
 from aria.db.base import session_scope
@@ -108,6 +109,61 @@ def _explain_llm_error(exc: Exception) -> HTTPException:
 async def chat_status(request: Request, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
     providers = _real_provider_ids(request)
     return {"configured": bool(providers), "providers": providers, "hint": None if providers else NOT_CONFIGURED_HINT}
+
+
+@router.get("/models")
+async def chat_models(request: Request, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
+    """Что реально доступно по ключам владельца: классы (tier) и конкретные модели."""
+    llm_router = getattr(request.app.state, "router", None)
+    models: list[dict[str, Any]] = []
+    tiers: dict[str, bool] = {t: False for t in runprofile.TIERS}
+    if llm_router is not None:
+        for cls, providers in llm_router.providers_by_class.items():
+            for p in providers:
+                if p.provider_id.startswith("stub") or cls == "vision_multimodal":
+                    continue
+                models.append({"id": p.provider_id, "model": getattr(p, "model", p.provider_id), "tier": cls})
+                for tier, tier_class in runprofile.TIERS.items():
+                    if tier_class == cls:
+                        tiers[tier] = True
+    models.sort(key=lambda r: (-runprofile.class_rank(r["tier"]), r["id"]))
+    return {"tiers": tiers, "models": models}
+
+
+def _validated_profile(raw: Any, request: Request) -> tuple[dict, list[str]]:
+    try:
+        return runprofile.normalize(raw, getattr(request.app.state, "router", None))
+    except runprofile.ProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/profile")
+async def chat_default_profile(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
+    """Профиль для новой сессии: последний сохранённый, иначе встроенный."""
+    with session_scope() as db:
+        profile = repo.get_agent_state(db, runprofile.DEFAULT_KEY)
+    return {"profile": profile or runprofile.builtin_profile(), "saved": bool(profile)}
+
+
+@router.get("/sessions/{session_id}/profile")
+async def chat_get_profile(session_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
+    with session_scope() as db:
+        if repo.get_session(db, session_id) is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        profile = runprofile.get_profile(db, session_id)
+    return {"profile": profile or runprofile.builtin_profile(), "saved": bool(profile)}
+
+
+@router.put("/sessions/{session_id}/profile")
+async def chat_put_profile(
+    session_id: uuid.UUID, payload: dict[str, Any], request: Request, _: str = Depends(require_runtime_token)
+) -> dict[str, Any]:
+    profile, notes = _validated_profile(payload, request)
+    with session_scope() as db:
+        if repo.get_session(db, session_id) is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        runprofile.save_profile(db, session_id, profile)
+    return {"profile": profile, "notes": notes}
 
 
 @router.get("/sessions")
@@ -199,14 +255,24 @@ async def chat_send(
         memory_block = memory_store.recall_block(last_user_text)
 
     # 2) call the model outside any DB transaction
+    with session_scope() as db:
+        profile = runprofile.get_profile(db, session_id)
+    chat_class, chat_fallback, chat_prefer = runprofile.chat_target(
+        profile, request.app.state.router, CHAT_PROVIDER_CLASS, CHAT_FALLBACK_CLASSES
+    )
+    prompt = _build_prompt(history, memory_block)
+    hint = runprofile.thinking_hint(profile)
+    if hint:
+        prompt[0] = ChatMessage(role="system", content=prompt[0].content + "\n\n" + hint)
     try:
         result = await request.app.state.router.route_chat(
-            CHAT_PROVIDER_CLASS,
-            _build_prompt(history, memory_block),
+            chat_class,
+            prompt,
             [],
             timeout_sec=60,
             resilient=True,
-            fallback_classes=CHAT_FALLBACK_CLASSES,
+            fallback_classes=chat_fallback,
+            prefer_provider_id=chat_prefer,
         )
     except Exception as exc:  # noqa: BLE001 - mapped to a clear HTTP error below
         logger.warning("chat: model call failed: %s", exc)

@@ -106,6 +106,13 @@ class ProviderRouter:
 
     # ---------- entrypoint ----------
 
+    def find_provider(self, provider_id: str) -> LlmProvider | None:
+        for providers in self.providers_by_class.values():
+            for provider in providers:
+                if provider.provider_id == provider_id:
+                    return provider
+        return None
+
     async def route_chat(
         self,
         provider_class: str,
@@ -117,6 +124,40 @@ class ProviderRouter:
         resilient: bool = False,
         fallback_classes: tuple[str, ...] = (),
         retry_backoff_sec: float = RETRY_BACKOFF_SEC,
+        prefer_provider_id: str | None = None,
+    ) -> RoutingResult:
+        """``prefer_provider_id`` — конкретная модель, выбранная владельцем. Если она недоступна, упёрлась
+        в бюджет (§12.4) или ответила ошибкой, запрос идёт обычной цепочкой класса, а результат помечен
+        ``fallback=True`` (UI может сказать, что ответила другая модель)."""
+        preferred_failed = False
+        if prefer_provider_id:
+            preferred = self.find_provider(prefer_provider_id)
+            if preferred is not None and self.budget_gate(preferred.provider_class)[0]:
+                try:
+                    if await self._connectivity_ok(preferred, db):
+                        response = await preferred.chat(messages, tools, timeout_sec)
+                        return RoutingResult(response=response, provider_id=preferred.provider_id)
+                except Exception as exc:  # noqa: BLE001 — выбранная модель не должна ронять задачу
+                    logger.warning("preferred model %s failed (%s); using the class chain", prefer_provider_id, type(exc).__name__)
+            preferred_failed = True
+        result = await self._route_by_class(
+            provider_class, messages, tools, timeout_sec, allow_degrade, db, resilient, fallback_classes, retry_backoff_sec
+        )
+        if preferred_failed:
+            result.fallback = True
+        return result
+
+    async def _route_by_class(
+        self,
+        provider_class: str,
+        messages: list[ChatMessage],
+        tools: list[dict],
+        timeout_sec: float,
+        allow_degrade: bool,
+        db: OrmSession | None,
+        resilient: bool,
+        fallback_classes: tuple[str, ...],
+        retry_backoff_sec: float,
     ) -> RoutingResult:
         if resilient:
             return await self._route_resilient(

@@ -31,6 +31,7 @@ TERMINAL_TOOL_STATUSES = {
 APPROVAL_TTL_BY_TYPE = {
     AttentionType.budget_escalation: timedelta(minutes=30),
     AttentionType.high_risk_shell: timedelta(hours=2),
+    AttentionType.mcp_tool_approval: timedelta(hours=2),
 }
 
 
