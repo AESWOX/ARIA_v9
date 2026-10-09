@@ -155,10 +155,12 @@ class Settings(BaseSettings):
     compression_model: str = "gemini-3.8-flash"
     compression_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     compression_timeout_sec: int = 120
-    # message-count based trigger (token-based can replace this later):
-    # once history exceeds this many messages, compress everything except
-    # the first N and last N into a single summary message.
-    compression_hard_message_limit: int = 60
+    # CTX: основной триггер — оценка токенов истории сессии (порог на СЕССИЮ,
+    # не на ключ Gemini: ротация ключей по квоте историю не меняет).
+    # 0 = токенный триггер выключен.
+    compression_token_threshold: int = 100_000
+    # запасной триггер по числу сообщений; 0 = выключен (раньше было 60)
+    compression_hard_message_limit: int = 0
     compression_protect_first_n: int = 3
     compression_protect_last_n: int = 15
     compression_target_ratio: float = 0.2

@@ -18,16 +18,24 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 
 import httpx
+from sqlalchemy import func, select
 
 from aria.config import get_settings
 from aria.db import models as m
 from aria.db import repository as repo
+from aria.db.enums import TaskStatus
 from aria.llm.key_pool import KeyPool, NoAvailableKeys
 
 logger = logging.getLogger("local_agent.compression")
+
+SUMMARY_PREFIX = "[compression summary"
+_CHARS_PER_TOKEN = 3  # консервативно для кириллицы/кода: лучше сжать раньше, чем упереться в лимит
+_TOOL_TEXT_CAP = 2000  # символов результата тула, которые видит суммаризатор
+_MSG_TEXT_CAP = 8000
 
 _compression_pool: KeyPool | None = None
 
@@ -46,6 +54,44 @@ def _get_compression_pool() -> KeyPool | None:
     if _compression_pool is None:
         _compression_pool = KeyPool(keys, name="compression")
     return _compression_pool
+
+
+def estimate_tokens(text: str | None) -> int:
+    return (len(text) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN if text else 0
+
+
+def _message_text(msg: m.Message, cap: int) -> str:
+    """Текст сообщения для оценки/суммаризации; у тулов — их результат, а не только «tool -> status»."""
+    text = msg.content or ""
+    cj = msg.content_json
+    if msg.role == "tool" and isinstance(cj, dict) and cj.get("output") is not None:
+        try:
+            text = f"{text}: {json.dumps(cj['output'], ensure_ascii=False, default=str)}"
+        except (TypeError, ValueError):
+            pass
+    return text[:cap]
+
+
+def history_tokens(history: list[m.Message]) -> int:
+    """Оценка токенов промпта сессии (результаты тулов — в том виде, как их режет loop: до 6000 символов)."""
+    return sum(estimate_tokens(_message_text(msg, 6000)) for msg in history)
+
+
+def _needs_compression(history: list[m.Message], settings) -> bool:
+    if settings.compression_token_threshold > 0 and history_tokens(history) > settings.compression_token_threshold:
+        return True
+    limit = settings.compression_hard_message_limit
+    return limit > 0 and len(history) > limit
+
+
+def _protected_tail_start(history: list[m.Message], last_n: int) -> int:
+    """Индекс, с которого история остаётся дословной: последние last_n сообщений И всё от
+    последнего сообщения пользователя (текущий ход: вызовы и результаты тулов не теряются)."""
+    start = max(0, len(history) - last_n)
+    for i in range(len(history) - 1, -1, -1):
+        if history[i].role == "user":
+            return min(start, i)
+    return start
 
 
 async def _summarize(text_block: str) -> str:
@@ -110,22 +156,34 @@ async def maybe_compress(session_id) -> bool:
 
     with session_scope() as db:
         session = repo.get_session(db, session_id)
+        # Задача ждёт Approve — контекст не трогаем: возобновление должно увидеть ровно то, что видел агент.
+        if db.execute(
+            select(func.count()).select_from(m.Task).where(
+                m.Task.session_id == session.id, m.Task.status == TaskStatus.awaiting_attention
+            )
+        ).scalar_one():
+            return False
         history = repo.list_messages_for_prompt(db, session.id, limit=10_000)
-        if len(history) <= settings.compression_hard_message_limit:
+        if not _needs_compression(history, settings):
             return False
 
         first_n = settings.compression_protect_first_n
-        last_n = settings.compression_protect_last_n
-        if len(history) <= first_n + last_n:
+        tail_start = _protected_tail_start(history, settings.compression_protect_last_n)
+        if tail_start <= first_n:
             return False
 
-        middle = history[first_n : len(history) - last_n]
+        middle = history[first_n:tail_start]
         if not middle:
             return False
 
-        text_block = "\n".join(f"[{msg.role}] {msg.content}" for msg in middle if msg.content)
+        text_block = "\n".join(
+            f"[{msg.role}] {_message_text(msg, _TOOL_TEXT_CAP if msg.role == 'tool' else _MSG_TEXT_CAP)}"
+            for msg in middle
+            if msg.content or msg.content_json
+        )
         middle_ids = [msg.id for msg in middle]
-        seq_range = [middle[0].seq_no, middle[-1].seq_no]
+        # диапазон по реальным seq_no сжимаемых строк (включая вложенные прежние сводки)
+        seq_range = [min(msg.seq_no for msg in middle), max(msg.seq_no for msg in middle)]
         middle_count = len(middle)
     # ---- db-сессия закрыта, транзакции нет — теперь идём в сеть ----
 
@@ -142,7 +200,7 @@ async def maybe_compress(session_id) -> bool:
             db,
             session,
             role="system",
-            content=f"[compression summary of {middle_count} messages]\n{summary_text}",
+            content=f"{SUMMARY_PREFIX} of {middle_count} messages]\n{summary_text}",
             content_json={
                 "type": "compression_summary",
                 "compressed_message_count": middle_count,
