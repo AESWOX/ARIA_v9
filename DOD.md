@@ -1,12 +1,12 @@
 # ARIA — Definition of Done для 1.0.0
 
-Версия документа: 2026-10-09 (ревью волн 0–1, см. `REVIEW_WAVE0_1.md`). База: `main` @ `09034ec` (v0.2.0), прогон `aria_diag_v5_20261008_083232`, клон репозитория и `aria_sec_fixes.patch`.
+Версия документа: 2026-10-09 (после мержа волн 0–1 и первого прогона установленной сборки). База: `main` @ `080da9d` (мерж волн 0–1 поверх `09034ec` / v0.2.0). Связанные файлы: `REVIEW_WAVE0_1.md` (ревью), `OPERATOR_GUIDE.md` (регламент работы и карта окружения), `ARIA_GUIDE.md` (устройство). Прогон диагностики: прогон `aria_diag_v5_20261008_083232`, клон репозитория и `aria_sec_fixes.patch`.
 
 **Объём 1.0.0 (решение владельца 08.10):** ни одной заглушки. Каждая из 66 заглушек `stubs.py` реализуется по-настоящему; роут, не имеющий продуктового смысла, удаляется вместе с его UI (удаление тоже закрывает пункт, но решает его владелец). Кроме того, в 1.0.0 входят голос, зрение, рой агентов, хуки и циклы обработки информации — см. блок H. **Ограничение по железу:** локальных моделей нет, кроме Whisper (распознавание речи); всё остальное (LLM, зрение, эмбеддинги, озвучка) идёт через облачных провайдеров или встроенные средства ОС.
 
 **Правило.** Пункт закрыт только когда его команда даёт указанный результат. Формулировки «должно работать» не засчитываются. Единый источник правды — `python dod_verify.py --json` плюс `pytest`; этот файл описывает, что именно они обязаны подтверждать.
 
-**Статусы:** `DONE` — подтверждено командой · `PATCH` — исправлено в патчах (0001/0002/0003), ждёт мержа и прогона у вас · `OPEN` — не сделано · `ASK` — нужно решение владельца.
+**Статусы:** `DONE` — подтверждено командой · `MERGED` — в `main` (`080da9d`), 340 тестов зелёные на Windows владельца; вживую проверено не всё (см. примечание в строке) · `PARTIAL` — часть подтверждена живьём, остальное открыто · `OPEN` — не сделано · `ASK` — нужно решение владельца.
 
 ---
 
@@ -27,36 +27,39 @@
 
 | ID | Условие закрытия | Проверка | Статус |
 |---|---|---|---|
-| SEC-1 | `POST /sessions/prune` не возвращает 500 (`timedelta` импортирован) | `pytest tests/test_regression_sec_2026_10.py::test_sec1_prune_does_not_500` | PATCH |
-| SEC-2 | `rm` с любым порядком флагов (`-fr`, `-Rf`, `-rfv`, `-r -f`, `--recursive`) считается high-risk; `rm file`, `rm -f`, `rm -i` — нет | `pytest -k sec2` (14 кейсов) | PATCH |
-| #1 | `POST /curator/run` отвечает `ok: false` | `pytest -k curator_run_not_faked` | PATCH |
-| #7 | Тул `task_status` не падает на существующей задаче (поля `error_code`, `error_message`, `closed_at`; `summary` убран) | `pytest -k task_status_on_real_task` | PATCH |
-| #5 | Тест на 401/403 без токена и с битым токеном сохранён как защита от регресса | `pytest -k reveal_requires_token` | PATCH |
+| SEC-1 | `POST /sessions/prune` не возвращает 500 (`timedelta` импортирован) | `pytest tests/test_regression_sec_2026_10.py::test_sec1_prune_does_not_500` | MERGED |
+| SEC-2 | `rm` с любым порядком флагов (`-fr`, `-Rf`, `-rfv`, `-r -f`, `--recursive`) считается high-risk; `rm file`, `rm -f`, `rm -i` — нет | `pytest -k sec2` (14 кейсов) | MERGED |
+| #1 | `POST /curator/run` отвечает `ok: false` | `pytest -k curator_run_not_faked` | MERGED |
+| #7 | Тул `task_status` не падает на существующей задаче (поля `error_code`, `error_message`, `closed_at`; `summary` убран) | `pytest -k task_status_on_real_task` | MERGED |
+| #5 | Тест на 401/403 без токена и с битым токеном сохранён как защита от регресса | `pytest -k reveal_requires_token` | MERGED |
 | HOST | `TrustedHostMiddleware` (127.0.0.1, localhost, `ARIA_ALLOWED_HOSTS`); чужой Host → 400 | живая проба Host в `run_all_v5.py` | OPEN |
 | #4 | Удалены `backend/tests/test_diag_*.py`; в рабочем `backend.log` нет новых строк `testserver` после прогона pytest | `Select-String backend.log -Pattern testserver` — число не растёт | OPEN |
 | #9 | Живой запрос чата на невалидной модели оставляет в логе статус и до 300 символов тела ошибки (коммит `03e896d`) | один запрос + `Select-String backend.log -Pattern "HTTP 4"` | OPEN |
-| A9 | **Нет тихих моков в боевом пути:** удалены `_run_demo_task`, `_mock_oracle_plan`, мок-тул-вызов при `router is None`, регистрация `StubProvider` в `build_default_router`. Без ключей задача завершается `failed` с `error_code=provider_unavailable` (в обоих режимах, `agent` и `plan`), а не `done` | `pytest -k no_provider_fails_honestly` | PATCH (0002+0003; в 0002 режим `plan` оставлял задачу `approved`) |
-| A10 | **Одна точка входа для задач (TaskRunner):** очередь, воркеры, отмена, возобновление после перезапуска; окно, Telegram, расписания и рой вызывают один `submit_task`; агент не исполняется внутри HTTP-запроса (включая `POST /sessions/{id}/messages`); повторный `submit` той же задачи игнорируется; остановка приложения не помечает задачу `cancelled` | тесты: отмена, `shutdown_mid_task_leaves_task_resumable`, `duplicate_submit`, `post_message_goes_through_runner`, 2 параллельные задачи | PATCH (0002+0003). Не измерено: 3 воркера на SQLite под нагрузкой |
+| A9 | **Нет тихих моков в боевом пути:** удалены `_run_demo_task`, `_mock_oracle_plan`, мок-тул-вызов при `router is None`, регистрация `StubProvider` в `build_default_router`. Без ключей задача завершается `failed` с `error_code=provider_unavailable` (в обоих режимах, `agent` и `plan`), а не `done` | `pytest -k no_provider_fails_honestly` | MERGED (0002+0003; в 0002 режим `plan` оставлял задачу `approved`) |
+| A10 | **Одна точка входа для задач (TaskRunner):** очередь, воркеры, отмена, возобновление после перезапуска; окно, Telegram, расписания и рой вызывают один `submit_task`; агент не исполняется внутри HTTP-запроса (включая `POST /sessions/{id}/messages`); повторный `submit` той же задачи игнорируется; остановка приложения не помечает задачу `cancelled` | тесты: отмена, `shutdown_mid_task_leaves_task_resumable`, `duplicate_submit`, `post_message_goes_through_runner`, 2 параллельные задачи | MERGED (0002+0003). Не измерено: 3 воркера на SQLite под нагрузкой |
 | A11 | **Режимы задач:** `chat` (без тулов), `agent` (ReAct), `plan` (Stage 1–7 с аудитом честности); UI вызывает `plan` для действий; `run-executor` больше не «мёртвый» маршрут | тест маршрутизации + вызов из UI | OPEN — бэкенд-часть (`mode` на `/tasks/{id}/start`) есть, **UI не менялся**; `POST /sessions/{id}/messages` всегда ставит `agent` |
-| A12 | **Cron исполняет пользовательские расписания:** разбор cron-выражений, запуск через `submit_task`, учёт `last_run`; кнопка «запустить сейчас» работает для любой задачи; ни разу не запускавшееся расписание не срабатывает раньше своего времени | тест на 3 расписания с подменой часов + `new_cron_job_does_not_fire_before_its_time` | PATCH (0002+0003); «запустить сейчас» для произвольной задачи — OPEN |
-| A13 | **`shell_execute`: default-deny.** Разрешённые команды — по списку, остальное — через подтверждение; вне корня песочницы команды не выполняются без approval; чёрный список regex не единственная защита | тесты: обход через `cd`, вложенные команды, `rm`-варианты, PowerShell, `python -c`, `find -exec`, перенаправление за пределы корня, `&`, `sudo`; модель не может подставить `approved` сама; после Approve команда реально выполняется | `pytest tests/test_wave1_review_fixes.py` (68 кейсов) | PATCH (0002+0003). Остаётся: разрешённые `git`/`npm run`/`pytest` исполняют код проекта |
+| A12 | **Cron исполняет пользовательские расписания:** разбор cron-выражений, запуск через `submit_task`, учёт `last_run`; кнопка «запустить сейчас» работает для любой задачи; ни разу не запускавшееся расписание не срабатывает раньше своего времени | тест на 3 расписания с подменой часов + `new_cron_job_does_not_fire_before_its_time` | MERGED (0002+0003); «запустить сейчас» для произвольной задачи — OPEN |
+| A13 | **`shell_execute`: default-deny.** Разрешённые команды — по списку, остальное — через подтверждение; вне корня песочницы команды не выполняются без approval; чёрный список regex не единственная защита | тесты: обход через `cd`, вложенные команды, `rm`-варианты, PowerShell, `python -c`, `find -exec`, перенаправление за пределы корня, `&`, `sudo`; модель не может подставить `approved` сама; после Approve команда реально выполняется | `pytest tests/test_wave1_review_fixes.py` (68 кейсов) | MERGED (0002+0003). Остаётся: разрешённые `git`/`npm run`/`pytest` исполняют код проекта |
 | A14 | **`data/` не живёт только на диске:** навыки версионируются, vault — в отдельный репозиторий или резервную копию; чистый клон собирает `backend.exe` с навыками | сборка из свежего `git clone` | OPEN |
 | A15 | **Зависимости:** `psutil` и `croniter` в `requirements.txt`; `redis` удалён; `pytest*` — в `requirements-dev.txt` (0001) | `pip install -r requirements.txt` в чистом venv, `/system/stats` отдаёт `psutil: true` | OPEN |
-| A17 | **Windowed-запуск:** при `console=False` (`sys.stdout is None`) backend стартует и пишет в `backend.log`; без заглушки потоков uvicorn падает на настройке логов | `pytest -k entrypoint_survives_missing_stdio` + G1/G2 на установленной сборке | PATCH (0003); на Windows не запускалось |
-| A18 | **Статус задачи не врёт при сбое:** сбой до старта (нет провайдера) → `failed`, а не вечный `approved`; невыполненная shell-команда не получает `ToolStatus.ok`; Telegram-нотификатор подключён к режиму `plan` | тесты 0003 | PATCH (0003) |
-| A16 | **Ветки и мусор:** удалена `feat/multi-profile-l4` (0 впереди, 19 позади `main`); устаревший `MANIFEST.md` регенерирован или удалён; sidecar-exe вне git: `desktop/src-tauri/bin/*.exe` (0001), а также `aria_release__*/…/backend-*.exe`, `sandbox_share/*.exe` — **командой `git rm --cached`, не патчем** (патч с бинарным удалением весит 35–77 МБ); каталог `aria_release__5dvg4nh/` (копия релиза, 512 файлов) — ASK | `git ls-files | Select-String '\.exe$'` — пусто; `git branch -r` | OPEN |
+| A17 | **Windowed-запуск:** при `console=False` (`sys.stdout is None`) backend стартует и пишет в `backend.log`; без заглушки потоков uvicorn падает на настройке логов | `pytest -k entrypoint_survives_missing_stdio` + G1/G2 на установленной сборке | PARTIAL (0003): 09.10 собранный PyInstaller-exe и установленная сборка стартуют, слушают порт, пишут `backend.log`. НЕ подтверждено: что в `backend.spec` стоит именно `console=False` (вывод `Select-String backend.spec -Pattern console` не присылали) |
+| A18 | **Статус задачи не врёт при сбое:** сбой до старта (нет провайдера) → `failed`, а не вечный `approved`; невыполненная shell-команда не получает `ToolStatus.ok`; Telegram-нотификатор подключён к режиму `plan` | тесты 0003 | MERGED (0003) |
+| A16 | **Ветки и мусор:** удалена `feat/multi-profile-l4` (0 впереди, 19 позади `main`); устаревший `MANIFEST.md` регенерирован или удалён; sidecar-exe вне git: `desktop/src-tauri/bin/*.exe` (0001), а также `aria_release__*/…/backend-*.exe`, `sandbox_share/*.exe` — **командой `git rm --cached`, не патчем** (патч с бинарным удалением весит 35–77 МБ); каталог `aria_release__5dvg4nh/` (копия релиза, 512 файлов) — ASK | `git ls-files | Select-String '\.exe$'` — пусто; `git branch -r` | DONE 09.10: 4 exe убраны из git, `feat/multi-profile-l4` удалена. Открыто: устаревший `MANIFEST.md`, каталог `aria_release__5dvg4nh/` — ASK |
+| A19 | **Модель по умолчанию существует:** `GEMINI_FLASH_MODEL` в `.env` и дефолты в коде (`config.py:143`, `routers/env.py:83`, `tools/registry.py:449`) указывают на модель, которую провайдер отдаёт; ответ 404 «model no longer available» превращается в понятную ошибку, а не в «тишину» чата | живой запрос в чат; `Select-String backend.log -Pattern "HTTP 404"` — новых строк нет | PARTIAL 09.10: в `.env` вручную поставлен `gemini-3.8-flash` (из ответа Google; список `generateContent`-моделей запрошен у API), чат отвечает. Дефолты в коде всё ещё `gemini-2.5-flash` — OPEN |
+| A20 | **Фолбэк при 5xx/429 провайдера:** 503 «high demand» → повтор или запасной провайдер, ответ приходит | живой запрос + тест на роутер с моком 503 | PARTIAL: 09.10 живьём — 503 в логе, ответ в чате пришёл; теста нет (H0) |
+| A21 | **Путь `queued` из UI:** страница Sessions отправляет `POST /sessions/{id}/messages`, ответ `queued`, результат приходит событиями WS и показывается | ручной: сообщение из Sessions + `Select-String backend.log -Pattern "POST /sessions"` | OPEN — 09.10 проверен только Chat (`/chat/*`, без тулов и без очереди); Sessions не проверялась |
 
-**Критерий блока:** все строки `DONE` (включая A9–A16 из аудита репозитория), `run_all_v5.py` показывает 0 открытых дефектов на **пересобранном** `backend.exe`.
+**Критерий блока:** все строки `DONE` (включая A9–A21 из аудита репозитория), `run_all_v5.py` показывает 0 открытых дефектов на **пересобранном** `backend.exe`.
 
 ---
 
 ## 2. Блок B — тесты и покрытие
 
-Замеры 09.10 (Linux, Python 3.12): `main` — 203 passed, **19 skipped**; после 0001+0002 — 253 passed, 19 skipped; с `asyncio_mode=auto` (0003) — 272; с регрессами ревью — **340 passed, 0 skipped**. (Прежняя цифра «240» относилась к окружению владельца и не воспроизведена.) Покрытие `aria/`: **55 %** (строки и ветки вместе, `--cov-branch`). В вашем прогоне по `coverage.xml` строки дали 59 % (4216 из 7185); цифры не противоречат друг другу — разные метрики.
+Замер 09.10 на Windows владельца: **340 passed, 0 skipped, покрытие `aria/` 57 %** (`--cov-branch`). Замеры 09.10 в песочнице (Linux, Python 3.12): `main` — 203 passed, **19 skipped**; после 0001+0002 — 253 passed, 19 skipped; с `asyncio_mode=auto` (0003) — 272; с регрессами ревью — **340 passed, 0 skipped**. (Прежняя цифра «240» относилась к окружению владельца и не воспроизведена.) Покрытие `aria/`: **55 %** (строки и ветки вместе, `--cov-branch`). В вашем прогоне по `coverage.xml` строки дали 59 % (4216 из 7185); цифры не противоречат друг другу — разные метрики.
 
 | ID | Условие | Проверка | Статус |
 |---|---|---|---|
-| B1 | `pytest` — 0 failed, 0 error, без `skip` и `deselect`. Раньше 19 async-тестов молча пропускались из-за отсутствия `asyncio_mode` в `pytest.ini` | `cd backend; python -m pytest -q` → `340 passed`, строки `skipped` нет | PATCH (0003) |
+| B1 | `pytest` — 0 failed, 0 error, без `skip` и `deselect`. Раньше 19 async-тестов молча пропускались из-за отсутствия `asyncio_mode` в `pytest.ini` | `cd backend; python -m pytest -q` → `340 passed`, строки `skipped` нет | DONE 09.10: 340 passed, 0 skipped на Windows владельца (4 warnings: устаревший `@app.on_event` FastAPI) |
 | B2 | В CI включён `--cov-branch` и порог `--cov-fail-under` | `pytest --cov=aria --cov-branch --cov-fail-under=55` | OPEN |
 | B3 | Порог растёт: 55 → 60 → 70 → 80 → **90 % на `aria/`**; список исключений (Windows/sidecar-код, `codex_exec_bridge` при решении «оставить») задан явно в `.coveragerc` | `--cov-fail-under=90` | OPEN |
 | B4 | Каждая пара «маршрут + метод» из `/openapi.json` (193) вызывается тестом с корректным телом: успех, валидация, 404 | скрипт сверки openapi ↔ тесты, 193/193 | OPEN |
@@ -85,7 +88,7 @@
 | ID | Условие | Проверка | Статус |
 |---|---|---|---|
 | D1 | `npx tsc -p . --noEmit` — exit 0 | `cd desktop; npm run typecheck` | OPEN (не запускалось) |
-| D2 | `npm run build` — exit 0 | `cd desktop; npm run build` | OPEN |
+| D2 | `npm run build` — exit 0 | `cd desktop; npm run build` | DONE 09.10: `vite build` прошёл в составе `tauri build` (2238 модулей, 15,7 с) |
 | D3 | Главный JS-чанк < 500 КБ (сейчас `vendor-*.js` ≈ 580 КБ) | `check_bundle_budget` | OPEN — разбить vendor или поднять лимит осознанно |
 | D4 | Есть vitest для страниц Chat, Notes, Sessions | `npm test` | OPEN |
 | D5 | `npm audit`: 0 high, 0 critical | `check_npm_audit` | OPEN |
@@ -97,13 +100,13 @@
 
 | ID | Условие | Проверка | Статус |
 |---|---|---|---|
-| E1 | `console=False` в `backend.spec` **вместе с** защитой от `sys.stdout=None` в `run_aria.py` (см. A17) — одно без другого ломает запуск sidecar | `Select-String backend.spec -Pattern console`; G1/G2 | PATCH (0001+0003) |
-| E2 | Порядок сборки: `npm run build` → PyInstaller → копия sidecar → `npm run tauri build`; `desktop/dist` пересобран **до** PyInstaller | команды в `RELEASE_CHECKLIST.md` | OPEN |
+| E1 | `console=False` в `backend.spec` **вместе с** защитой от `sys.stdout=None` в `run_aria.py` (см. A17) — одно без другого ломает запуск sidecar | `Select-String backend.spec -Pattern console`; G1/G2 | PARTIAL (0001+0003): то же, что A17 |
+| E2 | Порядок сборки: `npm run build` → PyInstaller → копия sidecar → `npm run tauri build`; `desktop/dist` пересобран **до** PyInstaller | команды в `RELEASE_CHECKLIST.md` | PARTIAL 09.10: порядок отработан, установленная сборка содержит новый backend (в логе `TaskRunner started`, `cron tick`). Ловушка: после `git rm --cached` папка `desktop/src-tauri/bin/` исчезает — создавать (`New-Item -ItemType Directory -Force`) до копирования sidecar, иначе Tauri падает на `resource path ... doesn't exist` |
 | E3 | Хэш UI в установленной сборке совпадает с собранным (сейчас C14D0D2B… ≠ 853D73A6…) | `Get-FileHash` обоих `local-agent-ui.exe` | OPEN |
-| E4 | Ни один `*.exe`/`*.msi` не в git (`git rm --cached` + `.gitignore`: `*.exe`, `*.msi`) и не в `RELEASE_MANIFEST.txt` | `git ls-files | Select-String '\.(exe|msi)$'` — пусто | OPEN — 3 файла остаются, см. A16 |
+| E4 | Ни один `*.exe`/`*.msi` не в git (`git rm --cached` + `.gitignore`: `*.exe`, `*.msi`) и не в `RELEASE_MANIFEST.txt` | `git ls-files | Select-String '\.(exe|msi)$'` — пусто | DONE 09.10: `git ls-files | Select-String '\.(exe|msi)$'` пуст после мержа |
 | E5 | `RELEASE_MANIFEST.txt` не включает `backend/tests/**` в релизный tarball, либо включает осознанно (сейчас строки 36–37) | `Select-String RELEASE_MANIFEST.txt -Pattern tests` | ASK |
 | E6 | `build_release.py`: sidecar-exe ловится artifact-сканом (шаблон `*.exe` вне `src-tauri/bin/`), таймаут pytest обработан, `read_text(encoding="utf-8")` | ревью + запуск | OPEN |
-| E7 | Один процесс `backend.exe`, дублей нет | `Get-Process backend` — 1 | OPEN |
+| E7 | Нет дублей процессов: цепочка `local-agent-ui.exe` → `backend.exe` → `backend.exe` (onefile PyInstaller = загрузчик + дочерний, это норма); после закрытия окна не остаётся ни одного | `Get-CimInstance Win32_Process \| Where-Object { $_.Name -match 'backend\|local-agent' } \| Select ProcessId, ParentProcessId, Name` | PARTIAL 09.10: один цикл открыть/закрыть без сирот; нужно 5 подряд |
 | E8 | `coverage.xml` и `*.bak` вне git (`.gitignore`) | `git status` чистый | OPEN |
 
 ---
@@ -112,7 +115,7 @@
 
 | ID | Условие | Проверка | Статус |
 |---|---|---|---|
-| F1 | `GEMINI_API_KEY` ротирован (лежал открытым в архивах диагностики v3) | ключ в консоли провайдера пересоздан, старый отозван | OPEN — делает владелец |
+| F1 | `GEMINI_API_KEY` ротирован (лежал открытым в архивах диагностики v3) | ключ в консоли провайдера пересоздан, старый отозван | OPEN — **СРОЧНО**, делает владелец. 09.10 все 10 ключей `GEMINI_API_KEYS` и `GEMINI_API_KEY` попали открытым текстом в чат (маска вывода `.env` не покрывала `GEMINI_API_KEYS=`): отозвать все, выпустить новые, вносить только через страницу Env |
 | F2 | Secret scan: 0 совпадений в репо и в архивах, отдаваемых наружу | `check_secret_scan` | OPEN |
 | F3 | Все роуты, кроме явного allowlist, требуют runtime-токен; тест обходит все 193 маршрута без токена и ждёт 401/403 | тест по `/openapi.json` | OPEN |
 | F4 | CORS: чужой Origin отклоняётся (подтверждено живьём 08.10) | `run_all_v5.py` раздел E | DONE |
@@ -126,8 +129,8 @@
 
 | ID | Условие | Статус |
 |---|---|---|
-| G1 | Окно открывается, `/status` → 200 за < 6 с, нет белого экрана (пункт 12 `RELEASE_CHECKLIST.md`) | OPEN, не выполнялся ни разу |
-| G2 | P0.1: sidecar поднимается 20 из 20 раз, в т. ч. после force-kill; при отказе пользователь видит экран ошибки | OPEN |
+| G1 | Окно открывается, `/status` → 200 за < 6 с, нет белого экрана (пункт 12 `RELEASE_CHECKLIST.md`) | PARTIAL 09.10: установленная сборка, окно открылось, Sessions и Chat грузятся, `/status` отвечает 200. Не измерено: время до первого 200 (< 6 с), чистая машина |
+| G2 | P0.1: sidecar поднимается 20 из 20 раз, в т. ч. после force-kill; при отказе пользователь видит экран ошибки | PARTIAL: 1 запуск и 1 закрытие без сирот; нужно 20/20 и force-kill |
 | G3 | P2.3: Tab-навигация, видимый фокус, Escape закрывает модалки | OPEN |
 | G4 | Вкладки Notes (Tags, Decisions) и Sessions видны и работают в установленной сборке | OPEN |
 
@@ -136,6 +139,8 @@
 ## 7a. Блок H — продукт: гипер-ассистент на вашем ПК (0 заглушек, локально только Whisper)
 
 Состояние кода на `09034ec` (по клону): голоса (STT/TTS) **нет вообще**; роя агентов **нет** (есть делегирование `core/delegate.py`, 72 строки, и пустой по сути `agents/`); хуки и чекпоинты — заглушки; MCP — только серверная часть (`integrations/mcp_server`), клиента нет; зрение есть как тул `vision_analyze` и тесты; провайдеры LLM: `openai_compatible` (облачные) и `stub`; память: `friend_memory` без векторного поиска.
+
+**Подтверждено живьём 09.10:** страница Chat работает без тулов и без памяти (модель сама ответила, что не читает файлы и не помнит прошлые сессии) — это ожидаемо до H3/H4/H7 и A11. Тулы, память, хуки, MCP из интерфейса пока недоступны.
 
 **Общие требования ко всем эпикам (без них эпик не закрыт):**
 - Всё автономное проходит через существующие `approvals`, `risk_level`, `audit`, `guardrails`; новые тулы регистрируются в `TOOL_REGISTRY` с `allowed_roles` и `requires_approval`.
@@ -194,7 +199,7 @@
 
 ## 9. Порядок работ
 
-1. **Гигиена (сегодня):** применить патч, удалить `test_diag_*.py`, `git rm --cached` sidecar, `.gitignore`, ротация ключа.
+1. **Гигиена:** сделано 09.10 — патчи 0001–0003 в `main`, exe вне git, ветка `feat/multi-profile-l4` удалена. Осталось: ротация ключей (срочно, F1), удалить `test_diag_*.py`, HOST, дефолт модели (A19).
 2. **Блок A (≈ час):** мерж патча, TrustedHost, пересборка, `run_all_v5.py`.
 3. **Блок H** (основной объём продукта) вместе с **блоком B**: каждый эпик закрывается вместе с тестами и ростом порога покрытия; порядок эпиков — в блоке H.
 4. **Блок C:** ядро агента; после утверждения списка сценариев — живые прогоны.
