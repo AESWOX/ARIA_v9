@@ -1,6 +1,7 @@
 """Session & attention-item routes (moved from aria.main)."""
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -31,6 +32,8 @@ from aria.http_utils import (
     utc_now,
 )
 from aria.config import get_settings
+
+logger = logging.getLogger("local_agent.sessions")
 
 router = APIRouter(tags=["sessions"])
 
@@ -437,9 +440,10 @@ async def list_attention_items(_: str = Depends(require_runtime_token)) -> list[
 
 
 @router.post("/attention-items/{item_id}/approve")
-async def approve_attention(item_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
+async def approve_attention(item_id: uuid.UUID, request: Request, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
     from aria.core import approvals, toolhooks
     from aria.core.events import event_bus
+    from aria.db.enums import AttentionType
 
     with session_scope() as db:
         item = repo.get_attention_item(db, item_id)
@@ -448,7 +452,18 @@ async def approve_attention(item_id: uuid.UUID, _: str = Depends(require_runtime
         resolved = approvals.resolve(db, item, approve=True)
     event_bus.emit("attention_item.resolved", serialize_attention(resolved), session_id=resolved.session_id, task_id=resolved.task_id)
     await toolhooks.lifecycle("on_approval", session_id=resolved.session_id, task_id=resolved.task_id, state="approved", item_id=str(item_id))
-    return {"ok": True}
+
+    # A22: подтверждённая команда должна реально исполниться, а задача — продолжиться.
+    # Возобновление идёт через очередь, не внутри HTTP-запроса (A10).
+    resumed = False
+    if resolved.type == AttentionType.high_risk_shell and resolved.task_id is not None:
+        runner = getattr(request.app.state, "task_runner", None)
+        if runner is not None:
+            queued = runner.submit(resolved.task_id, mode="agent", source="approval", approval_item_id=resolved.id)
+            resumed = bool(queued.get("queued"))
+        else:
+            logger.warning("approve %s: task runner is not running, task %s was not resumed", item_id, resolved.task_id)
+    return {"ok": True, "resumed": resumed}
 
 
 @router.post("/attention-items/{item_id}/reject")

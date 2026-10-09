@@ -85,6 +85,17 @@ class Job:
     task_id: uuid.UUID
     mode: Mode
     source: str
+    # A22: если задан — это возобновление после Approve: исполнить подтверждённую
+    # команду из attention item и продолжить цикл, а не начинать задачу заново.
+    approval_item_id: uuid.UUID | None = None
+
+    @property
+    def key(self) -> str:
+        """Ключ дедупликации. У возобновления свой ключ: оно не должно теряться, если
+        исходное задание этой же задачи ещё дозавершается в воркере."""
+        if self.approval_item_id is not None:
+            return f"{self.task_id}:approval:{self.approval_item_id}"
+        return str(self.task_id)
 
 
 
@@ -163,28 +174,40 @@ class TaskRunner:
 
     # ── public API ───────────────────────────────────────────────────
 
-    def submit(self, task_id: uuid.UUID, mode: Mode = "plan", source: str = "ui") -> dict[str, Any]:
-        """Поставить задачу в очередь. Возврат — сразу, без ожидания исполнения."""
+    def submit(
+        self,
+        task_id: uuid.UUID,
+        mode: Mode = "plan",
+        source: str = "ui",
+        approval_item_id: uuid.UUID | None = None,
+    ) -> dict[str, Any]:
+        """Поставить задачу в очередь. Возврат — сразу, без ожидания исполнения.
+
+        ``approval_item_id`` (A22): возобновить задачу после Approve; исполняется в
+        режиме ``agent`` (цикл с тулами) независимо от ``mode``.
+        """
         if mode not in ("agent", "plan"):
             raise ValueError(f"unknown mode={mode!r} (expected 'agent' or 'plan')")
-        key = str(task_id)
+        job = Job(task_id=task_id, mode=mode, source=source, approval_item_id=approval_item_id)
+        key = job.key
         if key in self._pending:
             logger.info("task %s already queued/running — duplicate submit ignored", key[:8])
-            return {"ok": True, "queued": False, "duplicate": True, "task_id": key, "mode": mode, "source": source}
-        self._cancelled.discard(key)
+            return {"ok": True, "queued": False, "duplicate": True, "task_id": str(task_id), "mode": mode, "source": source}
+        self._cancelled.discard(str(task_id))
         self._pending.add(key)
-        self._queue.put_nowait(Job(task_id=task_id, mode=mode, source=source))
-        event_bus.emit("task.queued", {"task_id": key, "mode": mode, "source": source}, session_id=None, task_id=task_id)
+        self._queue.put_nowait(job)
+        event_bus.emit("task.queued", {"task_id": str(task_id), "mode": mode, "source": source}, session_id=None, task_id=task_id)
         logger.info("queued task %s (mode=%s, source=%s, depth=%d)", key[:8], mode, source, self._queue.qsize())
-        return {"ok": True, "queued": True, "task_id": key, "mode": mode, "source": source, "queue": self._queue.qsize()}
+        return {"ok": True, "queued": True, "task_id": str(task_id), "mode": mode, "source": source, "queue": self._queue.qsize()}
 
     def cancel(self, task_id: uuid.UUID) -> bool:
         """Отменить задачу: снять с очереди (если ждёт) и прервать (если идёт)."""
         key = str(task_id)
         self._cancelled.add(key)
-        running = self._running.get(key)
-        if running is not None:
-            running.cancel()
+        # Под одной задачей могут идти исходное задание и возобновления (ключи с префиксом).
+        running = [t for k, t in self._running.items() if k == key or k.startswith(f"{key}:")]
+        for job_task in running:
+            job_task.cancel()
         logger.info("cancel requested for task %s (%s)", key[:8], "running" if running else "queued")
         return True
 
@@ -241,12 +264,13 @@ class TaskRunner:
         logger.debug("taskrunner worker %d ready", index)
         while not self._stopping:
             job = await self._queue.get()
-            key = str(job.task_id)
-            if key in self._cancelled:
-                self._cancelled.discard(key)
+            key = job.key
+            task_key = str(job.task_id)
+            if task_key in self._cancelled:
+                self._cancelled.discard(task_key)
                 self._pending.discard(key)
                 self._queue.task_done()
-                logger.info("skipped cancelled task %s", key[:8])
+                logger.info("skipped cancelled task %s", task_key[:8])
                 continue
             inner = asyncio.create_task(self._run(job), name=f"task-{key[:8]}")
             self._running[key] = inner
@@ -255,33 +279,60 @@ class TaskRunner:
             except asyncio.CancelledError:
                 if self._stopping:
                     raise
-                logger.info("task %s cancelled", key[:8])
+                logger.info("task %s cancelled", task_key[:8])
             except Exception:
-                logger.exception("task %s crashed in runner", key[:8])
+                logger.exception("task %s crashed in runner", task_key[:8])
             finally:
                 self._running.pop(key, None)
-                self._cancelled.discard(key)
+                self._cancelled.discard(task_key)
                 self._pending.discard(key)
                 self._queue.task_done()
+
+    async def _run_fresh(self, job: Job) -> dict[str, Any]:
+        """Обычный запуск задачи: ``plan`` — через executor, ``agent`` — цикл с тулами."""
+        key = str(job.task_id)
+        with session_scope() as db:
+            task = repo.get_task(db, job.task_id)
+            if task is None:
+                logger.warning("task %s vanished before execution", key[:8])
+                return {"status": "not_found"}
+            if job.mode == "plan":
+                from aria.core.executor import run_task as executor_run_task
+
+                return await executor_run_task(session=db, task=task, router=self._router, notifier=_build_notifier())
+        from aria.core.loop import execute_agent_loop
+
+        await execute_agent_loop(job.task_id, self._router, self._sandbox_root)
+        return {"status": "ok"}
+
+    async def _run_approved(self, job: Job) -> dict[str, Any]:
+        """A22: после Approve исполнить подтверждённую команду и продолжить цикл.
+
+        До A22 ``resume_after_approval`` не вызывался нигде в боевом коде: Approve
+        переводил задачу в ``in_progress``, но команда не запускалась.
+        """
+        key = str(job.task_id)
+        with session_scope() as db:
+            task = repo.get_task(db, job.task_id)
+            item = repo.get_attention_item(db, job.approval_item_id)
+            if task is None or item is None:
+                logger.warning("task %s or approval item vanished before resume", key[:8])
+                return {"status": "not_found"}
+        from aria.core.loop import resume_after_approval
+
+        await resume_after_approval(job.task_id, self._router, self._sandbox_root, item)
+        return {"status": "ok", "resumed": True}
 
     async def _run(self, job: Job) -> dict[str, Any]:
         key = str(job.task_id)
         event_bus.emit("task.started", {"task_id": key, "mode": job.mode, "source": job.source}, session_id=None, task_id=job.task_id)
         try:
-            with session_scope() as db:
-                task = repo.get_task(db, job.task_id)
-                if task is None:
-                    logger.warning("task %s vanished before execution", key[:8])
-                    return {"status": "not_found"}
-                if job.mode == "plan":
-                    from aria.core.executor import run_task as executor_run_task
-
-                    result = await executor_run_task(session=db, task=task, router=self._router, notifier=_build_notifier())
-                else:
-                    from aria.core.loop import execute_agent_loop
-
-                    await execute_agent_loop(job.task_id, self._router, self._sandbox_root)
-                    result = {"status": "ok"}
+            if job.approval_item_id is not None:
+                result = await self._run_approved(job)
+            else:
+                result = await self._run_fresh(job)
+            if result.get("status") == "not_found":
+                return result
         except asyncio.CancelledError:
             if self._stopping:
                 # Остановка приложения — НЕ отмена пользователем: статус не трогаем,

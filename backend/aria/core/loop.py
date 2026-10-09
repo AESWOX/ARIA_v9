@@ -18,6 +18,7 @@ session_scope() — сетевой HTTP-запрос внутри открыто
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 
@@ -79,10 +80,41 @@ def _load_persona() -> str:
         return ""
 
 
+# A22: сколько символов результата тула показываем модели (остальное — в БД и UI).
+MAX_TOOL_RESULT_CHARS = 6000
+
+
+def _render_tool_result(msg: m.Message) -> str | None:
+    """Текст результата тула для модели или None, если у сообщения нет результата.
+
+    До A22 модель видела только «file_read -> ok» без тела результата: ни содержимого
+    файла, ни stdout команды. Результат — недоверенные данные (файл, веб, вывод команды
+    могут содержать инструкции-ловушки), поэтому он идёт в явных разделителях (§14.1).
+    """
+    payload = msg.content_json
+    if not isinstance(payload, dict) or "output" not in payload:
+        return None
+    name = str(payload.get("tool_name") or "tool")
+    status = str(payload.get("status") or "unknown")
+    try:
+        body = json.dumps(payload.get("output"), ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        body = str(payload.get("output"))
+    if len(body) > MAX_TOOL_RESULT_CHARS:
+        body = f"{body[:MAX_TOOL_RESULT_CHARS]}...[truncated {len(body) - MAX_TOOL_RESULT_CHARS} chars]"
+    return (
+        f'<tool_result tool="{name}" status="{status}" source_trust="untrusted">\n{body}\n</tool_result>'
+    )
+
+
 def _build_messages(role_prompt: str, history: list[m.Message]) -> list[ChatMessage]:
     messages = [ChatMessage(role="system", content=role_prompt)]
     for msg in history:
         content = msg.content
+        if msg.role == "tool":
+            rendered = _render_tool_result(msg)
+            if rendered is not None:
+                content = rendered
         if msg.source_trust == SourceTrust.untrusted:
             # §14.1: untrusted content изолируется явными delimiters, не может менять system policy
             content = f"<untrusted_content source_trust=\"untrusted\">\n{content}\n</untrusted_content>"
