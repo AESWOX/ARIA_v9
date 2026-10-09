@@ -148,6 +148,15 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
     await toolhooks.lifecycle("task_start", session_id=session.id, task_id=task_id, role=task.role)
 
     tool_whitelist = role.tool_whitelist
+    try:
+        # H7: тулы подключённых MCP-серверов (только для ролей из MCP_ROLES); сбой сервера не ломает задачу.
+        from aria.mcp.manager import get_manager as _get_mcp
+
+        _mcp = _get_mcp()
+        await _mcp.ensure_loaded()
+        tool_whitelist = tuple(role.tool_whitelist) + _mcp.tool_names_for_role(role.role_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("MCP tools unavailable for task %s", task_id, exc_info=True)
     tool_schemas = _tool_schemas_for_role(tool_whitelist)
     role_prompt = f"Ты в роли {role.role_id}. {role.description}\nДоступные инструменты: {', '.join(tool_whitelist) or 'нет'}."
     role_prompt += _load_persona()

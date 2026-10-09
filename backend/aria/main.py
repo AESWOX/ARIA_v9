@@ -44,6 +44,7 @@ from aria.routers.cron import router as cron_router
 from aria.routers.env import router as env_router
 from aria.routers.files import router as files_router
 from aria.routers.logs import router as logs_router
+from aria.routers.mcp import router as mcp_router
 from aria.routers.memory import router as memory_router
 from aria.routers.ops_hooks import router as ops_hooks_router
 from aria.routers.model import router as model_router
@@ -183,6 +184,7 @@ for _r in (
     env_router,
     files_router,
     logs_router,
+    mcp_router,
     memory_router,
     ops_hooks_router,
     model_router,
@@ -349,6 +351,12 @@ async def shutdown() -> None:
             await _runner.stop()
         except Exception:
             _app_logger.exception("task_runner stop failed")
+    try:
+        from aria.mcp.manager import get_manager
+
+        await get_manager().close_all()
+    except Exception:
+        _app_logger.exception("mcp close_all failed")
     _app_logger.info("shutting down %d background task(s)", len(_background_tasks))
     for name, task in list(_background_tasks.items()):
         task.cancel()

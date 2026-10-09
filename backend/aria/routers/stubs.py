@@ -167,67 +167,8 @@ async def gateway_restart(_: str = Depends(require_runtime_token)) -> dict[str, 
 
 
 # ---------------------------------------------------------------------------
-# MCP servers
+# MCP catalog (серверы MCP — aria/routers/mcp.py; каталог — патч 0009)
 # ---------------------------------------------------------------------------
-
-
-def _mcp_store() -> list[dict[str, Any]]:
-    return _load_json("mcp_servers.json", [])
-
-
-@router.get("/mcp/servers")
-async def mcp_list(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {"servers": _mcp_store()}
-
-
-@router.post("/mcp/servers")
-async def mcp_create(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    name = str(payload.get("name", "")).strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="name required")
-    servers = _mcp_store()
-    if any(s.get("name") == name for s in servers):
-        raise HTTPException(status_code=409, detail="server already exists")
-    entry: dict[str, Any] = {
-        "name": name,
-        "transport": "http" if payload.get("url") else "stdio" if payload.get("command") else "unknown",
-        "url": payload.get("url"),
-        "command": payload.get("command"),
-        "args": list(payload.get("args") or []),
-        "env": dict(payload.get("env") or {}),
-        "auth": payload.get("auth"),
-        "enabled": True,
-        "tools": None,
-    }
-    servers.append(entry)
-    _save_json("mcp_servers.json", servers)
-    return entry
-
-
-@router.delete("/mcp/servers/{name}")
-async def mcp_delete(name: str, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    servers = [s for s in _mcp_store() if s.get("name") != name]
-    _save_json("mcp_servers.json", servers)
-    return {"ok": True}
-
-
-@router.post("/mcp/servers/{name}/test")
-async def mcp_test(name: str, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    server = next((s for s in _mcp_store() if s.get("name") == name), None)
-    if not server:
-        raise HTTPException(status_code=404, detail="server not found")
-    return {"ok": False, "error": "MCP runtime is not available in the local build", "tools": []}
-
-
-@router.put("/mcp/servers/{name}/enabled")
-async def mcp_enabled(name: str, payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    servers = _mcp_store()
-    server = next((s for s in servers if s.get("name") == name), None)
-    if not server:
-        raise HTTPException(status_code=404, detail="server not found")
-    server["enabled"] = bool(payload.get("enabled", True))
-    _save_json("mcp_servers.json", servers)
-    return {"ok": True, "name": name, "enabled": server["enabled"]}
 
 
 @router.get("/mcp/catalog")

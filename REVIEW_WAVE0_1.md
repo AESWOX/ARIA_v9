@@ -47,3 +47,8 @@ cd backend
 - `console=False` подтверждён (`backend.spec:52`), запуск без консоли работает (A17/E1 закрыты).
 - Не проверено: Sessions → `queued` (A21), cron в свою минуту, 20/20 запусков (G2).
 - Новые находки: дефолт модели в коде протух (A19); маска вывода `.env` не покрывала `GEMINI_API_KEYS` — ключи утекли в чат (F1, срочно); после `git rm --cached` исчезает `desktop/src-tauri/bin/` (E2).
+
+## Дополнение (09.10, после обрыва сессии)
+
+- 0006 смержен владельцем: `main` @ `c482cae`, Windows: 440 passed.
+- 0007 (H7, ядро MCP-клиента) пересобран с нуля из `main` @ `c482cae` (прошлая сессия оборвалась на лимите, песочница сбросилась): `aria/mcp/{client,manager}.py`, `routers/mcp.py`, правки `loop.py`/`main.py`/`stubs.py`, фикстура `tests/fixtures/fake_mcp_server.py`, `tests/test_h7_mcp_client.py`. Песочница (Linux, Py 3.12): 464 passed. Windows, живые MCP-серверы и фронтенд не проверялись.

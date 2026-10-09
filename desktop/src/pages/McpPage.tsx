@@ -610,7 +610,7 @@ export default function McpPage() {
                           {result.tools.length === 0
                             ? "Connected — no tools"
                             : `Tools: ${result.tools
-                                .map((tool) => tool.name)
+                                .map((tool) => (typeof tool === "string" ? tool : tool.name))
                                 .join(", ")}`}
                         </p>
                       ) : (

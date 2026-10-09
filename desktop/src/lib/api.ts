@@ -1540,7 +1540,10 @@ export interface McpServerCreate {
 export interface McpTestResult {
   ok: boolean;
   error?: string;
-  tools: Array<{ name: string; description: string }>;
+  /** Бэкенд (H7) отдаёт имена строками; объекты {name, description} — прежний формат. */
+  tools: Array<string | { name: string; description: string }>;
+  server?: { name?: string; version?: string };
+  auth_required?: boolean;
 }
 
 export interface MessagingPlatformEnvVar {
