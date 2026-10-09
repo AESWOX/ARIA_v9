@@ -65,7 +65,7 @@ async def vision_analyze(input_json: dict, **_ctx) -> dict:
     import urllib.error
 
     base_url = secret_provider.get_key("VISION_GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta/openai"
-    model = input_json.get("model", "gemini-2.5-flash")
+    model = input_json.get("model", "gemini-3.8-flash")
     url = f"{base_url.rstrip('/')}/chat/completions"
 
     body = {

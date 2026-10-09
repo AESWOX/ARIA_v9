@@ -59,7 +59,7 @@ class TestVisionAnalyzeOffline:
 
         assert "text" in result
         assert result["text"] == "This is a red square pixel."
-        assert result["model"] == "gemini-2.5-flash"
+        assert result["model"] == "gemini-3.8-flash"
 
     async def test_successful_analysis_with_base64(self):
         with open(TEST_IMAGE, "rb") as f:

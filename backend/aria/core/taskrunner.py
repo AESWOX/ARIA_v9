@@ -87,6 +87,31 @@ class Job:
     source: str
 
 
+
+def _record_episode(task_id: uuid.UUID, mode: str) -> None:
+    """H3: итог завершённой задачи → слой ``episode`` долговременной памяти (недоверенный источник)."""
+    try:
+        from aria.memory import store as memory_store
+
+        if not memory_store.enabled():
+            return
+        with session_scope() as db:
+            task = repo.get_task(db, task_id)
+            if task is None or task.status not in TERMINAL_STATUSES or task.status == TaskStatus.cancelled:
+                return
+            status = task.status.value if hasattr(task.status, "value") else str(task.status)
+            objective = " ".join((task.objective or "").split())[:400]
+            session_id = str(task.session_id)
+        memory_store.add(
+            "episode",
+            f"Task ({mode}) finished as {status}: {objective}",
+            source="task",
+            session_id=session_id,
+            task_id=str(task_id),
+        )
+    except Exception:  # noqa: BLE001 — память не должна ломать завершение задачи
+        logger.exception("could not record task episode")
+
 class TaskRunner:
     """Очередь задач + пул воркеров + отмена + возобновление после рестарта."""
 
@@ -281,5 +306,6 @@ class TaskRunner:
                     except Exception:
                         logger.exception("could not mark task %s failed", key[:8])
             return {"status": "failed", "error": str(exc)[:200]}
+        _record_episode(job.task_id, job.mode)
         event_bus.emit("task.finished", {"task_id": key, "result": result}, session_id=None, task_id=job.task_id)
         return result

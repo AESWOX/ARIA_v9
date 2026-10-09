@@ -797,6 +797,21 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  // ---- Agent / Plan runs (backend: routers/sessions.py, one door via TaskRunner) ----
+  runPost: (sessionId: string, body: { content: string; mode: RunMode }) =>
+    fetchJSON<RunPostResult>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  runState: (sessionId: string) =>
+    fetchJSON<RunState>(`/api/sessions/${encodeURIComponent(sessionId)}/run`),
+  attentionApprove: (id: string) =>
+    fetchJSON<{ ok: boolean }>(`/api/attention-items/${encodeURIComponent(id)}/approve`, { method: "POST" }),
+  attentionReject: (id: string) =>
+    fetchJSON<{ ok: boolean }>(`/api/attention-items/${encodeURIComponent(id)}/reject`, { method: "POST" }),
+  runCancel: (taskId: string) =>
+    fetchJSON<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" }),
   // ---- Obsidian vault / notes (backend: routers/vault.py) ----
   getVaultTree: (subdir = "") =>
     fetchJSON<VaultTree>(`/api/vault/tree?subdir=${encodeURIComponent(subdir)}`),
@@ -1293,8 +1308,17 @@ export const api = {
 
 
   getCheckpoints: () => fetchJSON<CheckpointsResponse>("/api/ops/checkpoints"),
-  pruneCheckpoints: () =>
-    fetchJSON<ActionResponse>("/api/ops/checkpoints/prune", { method: "POST" }),
+  pruneCheckpoints: (opts?: { older_than_days?: number; max_bytes?: number }) =>
+    fetchJSON<ActionResponse>("/api/ops/checkpoints/prune", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts ?? {}),
+    }),
+  restoreCheckpoint: (id: string) =>
+    fetchJSON<CheckpointRestoreResponse>(
+      `/api/ops/checkpoints/${encodeURIComponent(id)}/restore`,
+      { method: "POST" },
+    ),
 
   // ── Admin: Skills hub ───────────────────────────────────────────────
   // ``profile`` scopes install/uninstall/update and the installed-state
@@ -1740,9 +1764,30 @@ export interface CheckpointSession {
   bytes: number;
 }
 
+export interface CheckpointEntry {
+  id: string;
+  session: string;
+  task_id: string | null;
+  tool: string | null;
+  created_at: string;
+  complete: boolean;
+  files: string[];
+  bytes: number;
+  has_task_state?: boolean;
+}
+
 export interface CheckpointsResponse {
   sessions: CheckpointSession[];
   total_bytes: number;
+  checkpoints?: CheckpointEntry[];
+}
+
+export interface CheckpointRestoreResponse {
+  ok: boolean;
+  id: string;
+  restored: string[];
+  removed: string[];
+  skipped: { path: string; reason: string }[];
 }
 
 /** Per-call overrides for {@link fetchJSON}. */
@@ -2136,6 +2181,32 @@ export interface ChatMsg {
   role: string;
   content: string;
   created_at: string | null;
+}
+
+export type RunMode = "agent" | "plan";
+
+export interface RunPostResult {
+  ok: boolean;
+  queued?: boolean;
+  task_id?: string;
+  mode?: RunMode;
+}
+
+export interface RunAttentionItem {
+  id: string;
+  type: string;
+  status: string;
+  title: string;
+  body_md: string | null;
+  task_id: string | null;
+}
+
+export interface RunState {
+  session_id: string;
+  task_id: string | null;
+  status: string | null;
+  terminal: boolean;
+  attention: RunAttentionItem[];
 }
 
 export interface ChatSendResult {

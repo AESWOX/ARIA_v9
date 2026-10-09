@@ -13,11 +13,12 @@
 
 Подтверждено вашим выводом:
 - `main` @ `080da9d`: волны 0–1 влиты; установленная сборка стартует; Chat отвечает через `gemini-3.8-flash`; `console=False` работает; exe вне git.
-- Патч A20 (`a20-chat-failover.patch`) применён в ветке `fix/a20-chat-failover` на актуальном `main`: **348 passed, 0 skipped** на Windows.
+- A20 влит в `main` @ `011fc02` (348 passed на Windows до мержа).
+- Этап 1 закоммичен в ветке `boost` (`3fa5feb`): **354 passed** на Windows. Ветка не запушена и не влита.
 
 Со слов владельца: ключи Gemini заменены (F1; вывод проверки не приложен).
 
-Не подтверждено: мерж A20 и живая проверка 503/fallback; Sessions → `queued` (A21); cron в свою минуту; 20/20 запусков; `npm run typecheck`.
+Не подтверждено: пересборка и живая проверка 503/fallback; Sessions → `queued` (A21); cron в свою минуту; 20/20 запусков; `npm run typecheck`.
 
 ## 2. Что сделано в A20 (для проверки)
 
@@ -38,7 +39,9 @@
 
 Все патчи — серия в ветке `boost`, отдельными коммитами (`git am`). Сборка и установка один раз в конце.
 
-### Этап 1. Гигиена и быстрые закрытия (без UI)
+### Этап 1. Гигиена и быстрые закрытия (без UI) — ВЫПОЛНЕН 09.10 (патч `0001-stage1-hygiene.patch`, 354 passed в песочнице; на Windows не прогонялся)
+
+Сверка по коду показала, что #4, HOST, A15, D6 уже были сделаны раньше (в DoD числились `OPEN`). Новое в патче: A19 (дефолты модели + понятная ошибка 404), F2 и F3 (тесты), закрытие утечек через публичные `/health`, `/status` (DSN) и `/system/self-test` (теперь под токеном), `.gitignore` для `*.bak`. Не сделано: B2 (порог покрытия в CI — в `clean-machine-verify.yml` pytest с покрытием не вызывается, нужно решение), B7 (порядок тестов), A12 «запустить сейчас». Исходный список:
 - #4: удалить `backend/tests/test_diag_*.py`.
 - HOST: `TrustedHostMiddleware` (127.0.0.1, localhost, `ARIA_ALLOWED_HOSTS`), чужой Host → 400.
 - A19: дефолты модели в `config.py`, `routers/env.py`, `tools/registry.py` → `gemini-3.8-flash` (подтверждена владельцем).
@@ -51,15 +54,18 @@
 - Проверка: `pytest` зелёный, число тестов растёт.
 
 ### Этап 2. «Одна дверь» в интерфейсе (A11 + A21)
+Статус: патч `0002-stage2-one-door.patch` (бэкенд `mode` + `GET /sessions/{id}/run`, переключатель Chat/Agent/Plan в Chat, Approve/Reject/Cancel). Страница Sessions без поля ввода не менялась; результат подтягивается опросом, не WS.
 - Выяснить по `SessionsPage.tsx`, `NativeChatPage.tsx`, `api.ts`: есть ли в Sessions поле ввода и вызов `POST /sessions/{id}/messages`.
 - Переключатель Chat / Agent / Plan; действия идут через очередь.
 - Проверка: `tsc`, `vite build` в песочнице; живой смоук после установки.
 
 ### Этап 3. Тулы, память, MCP, Upwork
+Статус H3 (память): патч `0003-stage3-h3-memory.patch` — `aria/memory/store.py` (SQLite FTS5, BM25, слои episode/fact/preference, профили, провайдер local/none, reset с `older_than_days`), роутер `/memory/*` (status, search, items, reset, provider; формы совместимы со страницей System), тулы `memory_search` / `memory_save`, подсказка в Chat и команда «запомни: …», эпизод по итогам задачи в TaskRunner. Облачные эмбеддинги и суммаризация не сделаны (отложены; поиск работает без них). Таблицы создаются лениво (`CREATE TABLE IF NOT EXISTS`), вне Alembic. Записи, сделанные агентом или задачей, помечены недоверенными. UI для просмотра/редактирования памяти не добавлялся (есть только кнопки сброса на System). Не подтверждено: Windows-прогон, живой Chat с памятью.
 - **3а. MCP-клиент (H7):** stdio, SSE, streamable HTTP; OAuth 2.1 (динамическая регистрация клиента, PKCE, обновление токена, отзыв); токены в `backend/aria/secrets/`; риск-классы и Approve на тулы; результаты помечаются недоверенными.
 - **3б. Каталог и кнопка «Подключить»:** встроенный JSON-каталог (работает без сети), замена заглушки `/mcp/catalog`; вкладка MCP: «Подключить», «Проверить» (список тулов), «Отключить» (стереть токены).
 - **3в. Срез плагинов (H8):** импорт манифеста Agent Plugins (`plugin.json`, `mcp.json`, `skills/*/SKILL.md`); официальный Upwork Agent Plugin вшит с закреплённой версией и лицензией Apache-2.0.
 - **H3 память** (SQLite FTS5) и **H4 хуки/чекпоинты** — по DoD; идут до или параллельно с 3а.
+Статус H4 (хуки и чекпоинты): патч `0004-stage3-h4-hooks-checkpoints.patch` — `aria/hooks/engine.py` (события `pre_tool`, `post_tool`, `task_start`, `task_close`, `on_approval`, `on_error`; исполняются только одобренные хуки, таймаут с убийством дерева процессов, лимит вывода 64 КБ, из окружения убраны переменные с KEY/TOKEN/SECRET/PASSWORD, блокировать тул может только `pre_tool`: код 2 или JSON `{"block": true}`), `aria/checkpoints/store.py` (снимок файла и состояния задачи перед `file_write`, откат побайтно, `prune` по возрасту и объёму, `selftest`), склейка `core/toolhooks.py` в `core/loop.py` (agent) и `core/executor.py` (plan), события approve/reject в `routers/sessions.py`, роутер `routers/ops_hooks.py` вместо заглушек (+ `/ops/checkpoints/{id}/restore`, `/ops/checkpoints/restore-task/{task_id}`), проверки `hooks`/`checkpoints` в `/system/self-test` и гейт в `dod_verify.py`, UI: список чекпоинтов с кнопкой Restore на странице System. Песочница хуков: подпроцесс в каталоге песочницы с таймаутом и очищенным окружением, без OS-изоляции (на Windows отдельной изоляции нет). Не сделано: чекпоинт для `shell_execute`; откат статуса задачи в БД (снимок состояния возвращается в ответе restore, но БД не меняется); хуки от плагинов (H8). В песочнице Linux: 429 passed, покрытие нового кода 97 %, `tsc` и `vite build` зелёные. Не подтверждено: Windows-прогон (убийство дерева через `taskkill /T`), живой клик Restore.
 - **3г. Upwork (H15):**
   - 3г-1 база тегов и поиск (`upwork_search`, `upwork_local_search`, `upwork_tags`);
   - 3г-2 радар по расписанию, ранжирование, дайджест;

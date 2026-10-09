@@ -299,6 +299,39 @@ async def get_session_messages(session_id: uuid.UUID, _: str = Depends(require_r
         return {"session_id": str(session_id), "messages": items}
 
 
+_TERMINAL_TASK_STATUSES = (
+    TaskStatus.done,
+    TaskStatus.done_unaudited,
+    TaskStatus.failed,
+    TaskStatus.cancelled,
+)
+
+
+@router.get("/sessions/{session_id}/run")
+async def get_session_run(session_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
+    """Лёгкое состояние запуска для опроса из UI: статус задачи + ожидающие подтверждения."""
+    with session_scope() as db:
+        session = repo.get_session(db, session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        task = repo.get_task(db, session.current_task_id) if session.current_task_id else None
+        status = None
+        if task is not None:
+            status = task.status.value if hasattr(task.status, "value") else str(task.status)
+        pending = [
+            serialize_attention(item)
+            for item in repo.list_attention_items(db, only_pending=True)
+            if item.session_id == session.id or (task is not None and item.task_id == task.id)
+        ]
+    return {
+        "session_id": str(session_id),
+        "task_id": str(task.id) if task is not None else None,
+        "status": status,
+        "terminal": status in {s.value for s in _TERMINAL_TASK_STATUSES},
+        "attention": pending,
+    }
+
+
 @router.post("/sessions/{session_id}/messages")
 async def post_message(
     session_id: uuid.UUID,
@@ -308,6 +341,9 @@ async def post_message(
 ) -> dict[str, Any]:
     content = str(payload.get("content") or "").strip()
     role = str(payload.get("role") or "user")
+    mode = str(payload.get("mode") or "agent").strip().lower()
+    if mode not in ("agent", "plan"):
+        raise HTTPException(status_code=400, detail="mode must be one of ['agent', 'plan']")
     if not content:
         raise HTTPException(status_code=400, detail="content required")
     with session_scope() as db:
@@ -315,6 +351,11 @@ async def post_message(
         if session is None:
             raise HTTPException(status_code=404, detail="session not found")
         task = repo.get_task(db, session.current_task_id) if session.current_task_id else None
+        # «Одна дверь»: сообщение пользователя в сессии без задачи (чат) или с
+        # завершённой задачей начинает новую задачу, а не оседает в истории.
+        if role == "user" and (task is None or task.status in _TERMINAL_TASK_STATUSES):
+            task = repo.create_task(db, session, role="general", objective=content, draft_tz_md=f"# {content[:80]}\n")
+            repo.set_task_status(db, task, TaskStatus.draft)
         msg = repo.append_message(db, session, role=role, content=content, source_trust=SourceTrust.trusted)
         if task and role == "user":
             task.objective = content
@@ -339,8 +380,8 @@ async def post_message(
             if runner is not None:
                 # Волна 1 (A10): агент больше не исполняется внутри HTTP-запроса.
                 # Результат приходит событиями WS (message.created, task.status_changed).
-                queued = runner.submit(task.id, mode="agent", source="ui")
-                return {"ok": True, "queued": bool(queued.get("queued")), "task_id": str(task.id)}
+                queued = runner.submit(task.id, mode=mode, source="ui")
+                return {"ok": True, "queued": bool(queued.get("queued")), "task_id": str(task.id), "mode": mode}
             # Без раннера (юнит-тесты без lifespan) — прежний синхронный путь.
             await execute_agent_loop(task.id, request.app.state.router, settings.agent_sandbox_root)
 
@@ -397,7 +438,7 @@ async def list_attention_items(_: str = Depends(require_runtime_token)) -> list[
 
 @router.post("/attention-items/{item_id}/approve")
 async def approve_attention(item_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    from aria.core import approvals
+    from aria.core import approvals, toolhooks
     from aria.core.events import event_bus
 
     with session_scope() as db:
@@ -406,12 +447,13 @@ async def approve_attention(item_id: uuid.UUID, _: str = Depends(require_runtime
             raise HTTPException(status_code=404, detail="attention item not found")
         resolved = approvals.resolve(db, item, approve=True)
     event_bus.emit("attention_item.resolved", serialize_attention(resolved), session_id=resolved.session_id, task_id=resolved.task_id)
+    await toolhooks.lifecycle("on_approval", session_id=resolved.session_id, task_id=resolved.task_id, state="approved", item_id=str(item_id))
     return {"ok": True}
 
 
 @router.post("/attention-items/{item_id}/reject")
 async def reject_attention(item_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    from aria.core import approvals
+    from aria.core import approvals, toolhooks
     from aria.core.events import event_bus
 
     with session_scope() as db:
@@ -420,4 +462,5 @@ async def reject_attention(item_id: uuid.UUID, _: str = Depends(require_runtime_
             raise HTTPException(status_code=404, detail="attention item not found")
         resolved = approvals.resolve(db, item, approve=False)
     event_bus.emit("attention_item.resolved", serialize_attention(resolved), session_id=resolved.session_id, task_id=resolved.task_id)
+    await toolhooks.lifecycle("on_approval", session_id=resolved.session_id, task_id=resolved.task_id, state="rejected", item_id=str(item_id))
     return {"ok": True}

@@ -206,6 +206,15 @@ def render_session_export_markdown(
     return "\n".join(lines).strip() + "\n"
 
 
+def _redact_dsn(dsn: str | None) -> str:
+    """/health and /status are public (the Tauri shell polls /status before it has a token),
+    so never echo file paths, hosts or credentials from the DSN."""
+    scheme = (dsn or "").split(":", 1)[0].split("+", 1)[0].lower()
+    if scheme == "sqlite":
+        return "sqlite (local file)"
+    return f"{scheme} (configured)" if scheme else "not configured"
+
+
 def health_payload(ws_connected: bool = False, reconnect_mode: str = "live") -> dict[str, Any]:
     with session_scope() as db:
         providers = repo.list_provider_health(db)
@@ -216,7 +225,7 @@ def health_payload(ws_connected: bool = False, reconnect_mode: str = "live") -> 
         "checked_at": iso(utc_now()),
         "components": [
             {"key": "backend", "label": "Backend API", "status": "online", "detail": "FastAPI running"},
-            {"key": "postgres", "label": "Database", "status": "online", "detail": settings.POSTGRES_DSN},
+            {"key": "postgres", "label": "Database", "status": "online", "detail": _redact_dsn(settings.POSTGRES_DSN)},
             {"key": "redis", "label": "Redis", "status": "reduced", "detail": settings.REDIS_URL or "not connected in MVP"},
         ],
         "provider_health": [serialize_provider(row) for row in providers],

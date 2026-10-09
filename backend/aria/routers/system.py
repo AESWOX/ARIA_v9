@@ -62,7 +62,7 @@ async def shutdown_backend(_: str = Depends(require_runtime_token)) -> dict[str,
 
 
 @router.get("/system/self-test")
-async def system_self_test() -> dict[str, Any]:
+async def system_self_test(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
     """§0: живой эндпоинт целостности — проверяет БД, модели, репо, роутер, скиллы."""
     try:
         _ = m.ProviderHealth
@@ -184,6 +184,28 @@ async def system_self_test() -> dict[str, Any]:
     except Exception as exc:
         checks["guardrails"] = f"error: {exc}"
         issues.append(f"Guardrail check failed: {exc}")
+
+    # 10. H4: хуки и чекпоинты — реальные проверки, а не декларация
+    try:
+        from aria.checkpoints import store as _cps
+        from aria.hooks import EVENTS as _EVENTS, load_hooks as _load_hooks
+
+        hooks = _load_hooks()
+        unknown = sorted({str(h.get("event")) for h in hooks} - set(_EVENTS))
+        approved = sum(1 for h in hooks if h.get("allowed"))
+        checks["hooks"] = f"ok ({len(hooks)} hooks, {approved} approved, events: {len(_EVENTS)})"
+        if unknown:
+            checks["hooks"] += f"; inert (unknown event): {unknown}"
+        probe = _cps.selftest()
+        if probe["ok"]:
+            checks["checkpoints"] = "ok (snapshot/restore byte-exact)"
+        else:
+            checks["checkpoints"] = f"error: {probe['error']}"
+            issues.append(f"Checkpoint probe failed: {probe['error']}")
+    except Exception as exc:
+        checks["hooks"] = checks.get("hooks", f"error: {exc}")
+        checks["checkpoints"] = f"error: {exc}"
+        issues.append(f"Hooks/checkpoints check failed: {exc}")
 
     status = "ok" if not issues else "degraded"
     return {
