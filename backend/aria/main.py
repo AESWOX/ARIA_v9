@@ -45,6 +45,7 @@ from aria.routers.env import router as env_router
 from aria.routers.files import router as files_router
 from aria.routers.logs import router as logs_router
 from aria.routers.mcp import router as mcp_router
+from aria.routers.plugins import router as plugins_router
 from aria.routers.memory import router as memory_router
 from aria.routers.ops_hooks import router as ops_hooks_router
 from aria.routers.model import router as model_router
@@ -187,6 +188,7 @@ for _r in (
     mcp_router,
     memory_router,
     ops_hooks_router,
+    plugins_router,
     model_router,
     profiles_router,
     providers_router,
