@@ -338,6 +338,10 @@ def emit_task_status(task: m.Task) -> None:
     event_bus.emit("task.status_changed", serialize_task(task) or {}, session_id=task.session_id, task_id=task.id)
 
 
+BOOTSTRAP_SESSION_TITLE = "Bootstrap session"
+BOOTSTRAP_TASK_PREFIX = "Проверить backend-owned bootstrap"
+
+
 def seed_database() -> None:
     with session_scope() as db:
         sessions = repo.list_sessions(db)
@@ -352,15 +356,17 @@ def seed_database() -> None:
             failure_rate_pct=0,
             usage_pct=12,
         )
-        session = repo.create_session(db, "Bootstrap session", active_role="orchestrator")
+        session = repo.create_session(db, BOOTSTRAP_SESSION_TITLE, active_role="orchestrator")
         task = repo.create_task(
             db,
             session,
             role="coder",
-            objective="Проверить backend-owned bootstrap, runtime token, WS backfill и контракты UI/HTTP по ТЗ v7.1",
+            objective=f"{BOOTSTRAP_TASK_PREFIX}, runtime token, WS backfill и контракты UI/HTTP по ТЗ v7.1",
             draft_tz_md="# Draft TZ\n\n- backend source of truth\n- bootstrap.json owned by backend\n- verify PIN on backend\n- UI via HTTP/WS\n",
         )
-        repo.set_task_status(db, task, TaskStatus.approved)
+        # Демо-задача НЕ approved: approved/needs_rework считаются возобновляемыми, и раннер перезапускал бы
+        # её (с реальным LLM и тулами coder'а) при каждом старте приложения. Запускает её владелец сам.
+        repo.set_task_status(db, task, TaskStatus.draft)
         welcome = repo.append_message(
             db,
             session,

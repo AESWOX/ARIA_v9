@@ -262,6 +262,15 @@ class TaskRunner:
                 .scalars()
                 .all()
             )
+            # Профили, созданные старой версией, хранят демо-задачу Bootstrap в approved/needs_rework: она
+            # перезапускалась при КАЖДОМ старте (токены, тулы coder'а). Закрываем её один раз.
+            from aria.http_utils import BOOTSTRAP_SESSION_TITLE, BOOTSTRAP_TASK_PREFIX
+
+            for seed_task in rows:
+                sess = repo.get_session(db, seed_task.session_id)
+                if sess is not None and sess.title == BOOTSTRAP_SESSION_TITLE and (seed_task.objective or "").startswith(BOOTSTRAP_TASK_PREFIX):
+                    repo.set_task_status(db, seed_task, TaskStatus.cancelled)
+                    logger.info("parked the demo bootstrap task %s (it must not auto-run on every start)", seed_task.id)
             # Аудит, прерванный рестартом, не имеет исполнителя — отправляем на доработку.
             for stale in db.execute(select(m.Task).where(m.Task.status == TaskStatus.under_audit)).scalars().all():
                 repo.set_task_status(db, stale, TaskStatus.needs_rework)

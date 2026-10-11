@@ -170,3 +170,21 @@ def test_chat_send_triggers_compression_and_sends_summary(ctx):
         assert len(ctx) == 1
     finally:
         _cleanup(sid)
+
+
+def test_build_prompt_keeps_protected_head_when_summary_exists(monkeypatch):
+    """Найдено e2e-репетицией: после сжатия голова диалога (её компрессия защищает) терялась бюджетом."""
+    s = get_settings()
+    monkeypatch.setattr(s, "compression_enabled", True)
+    monkeypatch.setattr(s, "compression_token_threshold", 100)  # ~300 символов: заведомо меньше головы+хвоста
+    history = (
+        [("user", "HEAD-0 " + "h" * 200), ("assistant", "HEAD-1 " + "h" * 200)]
+        + [("system", f"{compression.SUMMARY_PREFIX} of 5 messages]\nSUM")]
+        + [("user" if i % 2 == 0 else "assistant", f"t{i} " + "q" * 200) for i in range(6)]
+    )
+    prompt = _build_prompt(history)
+    texts = [x.content for x in prompt[1:]]
+    assert texts[0].startswith("HEAD-0") and texts[1].startswith("HEAD-1")  # голова цела при любом бюджете
+    assert texts[-1].startswith("t5")  # самое свежее остаётся
+    assert "SUM" in prompt[0].content
+    assert len(texts) < 8  # а вот хвост обрезан бюджетом
