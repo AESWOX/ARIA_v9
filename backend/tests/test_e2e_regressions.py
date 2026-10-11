@@ -184,3 +184,88 @@ def test_agent_loop_reports_provider_400_body_instead_of_generic_error(tmp_path)
     assert status == TaskStatus.failed
     assert code == "provider_http_400"  # а не безликий runner_error
     assert "Invalid JSON payload" in msg and "HTTP 400" in msg
+
+
+# ── 402/403: ошибка аккаунта провайдера (живой смоук 11.10: «Insufficient Balance») ──
+
+def _stub(pid, cls, status=None, body="", answer="OK"):
+    from aria.llm.providers.stub import StubProvider, final_answer
+
+    class _P(StubProvider):
+        calls = 0
+
+        async def chat(self, messages, tools, timeout_sec):
+            type(self).calls += 1
+            if status is not None:
+                raise _http_error(status, body)
+            return final_answer(answer)
+
+    p = _P(provider_id=pid)
+    p.provider_class = cls
+    return p
+
+
+async def test_402_switches_provider_and_puts_it_on_cooldown():
+    from aria.llm.router import ACCOUNT_COOLDOWN_SEC, ProviderRouter
+
+    broke = _stub("deepseek-like", "standard_reasoning", 402, '{"error":{"message":"Insufficient Balance"}}')
+    fine = _stub("gemini-like", "standard_reasoning", answer="FROM-GEMINI")
+    router = ProviderRouter()
+    now = [1000.0]
+    router.clock = lambda: now[0]
+    router.register(broke)
+    router.register(fine)
+    res = await router.route_chat("standard_reasoning", [], [], resilient=True)
+    assert res.response.text == "FROM-GEMINI" and res.provider_id == "gemini-like" and res.fallback
+    assert type(broke).calls == 1 and router.cooldown_until["deepseek-like"] == 1000.0 + ACCOUNT_COOLDOWN_SEC
+    # пока идёт карантин, оплаченный провайдер пробуется первым, а «без средств» — не дёргается
+    await router.route_chat("standard_reasoning", [], [], resilient=True)
+    assert type(broke).calls == 1 and type(fine).calls == 2
+    # после карантина провайдер снова пробуется (мог пополнить счёт)
+    now[0] += ACCOUNT_COOLDOWN_SEC + 1
+    await router.route_chat("standard_reasoning", [], [], resilient=True)
+    assert type(broke).calls == 2
+
+
+async def test_402_everywhere_names_the_provider_in_the_error():
+    import httpx
+    import pytest
+
+    from aria.llm.router import ProviderRouter
+
+    router = ProviderRouter()
+    router.register(_stub("only-provider", "standard_reasoning", 402, "Insufficient Balance"))
+    with pytest.raises(httpx.HTTPStatusError) as ei:
+        await router.route_chat("standard_reasoning", [], [], resilient=True)
+    assert ei.value.provider_id == "only-provider" and ei.value.response.status_code == 402
+
+
+async def test_cooling_provider_is_still_tried_as_last_resort():
+    from aria.llm.router import ProviderRouter
+
+    p = _stub("lonely", "standard_reasoning", answer="STILL-ANSWERS")
+    router = ProviderRouter()
+    router.register(p)
+    router.cooldown_until["lonely"] = router.clock() + 500  # карантин, но других нет: не отказываем сразу
+    res = await router.route_chat("standard_reasoning", [], [], resilient=True)
+    assert res.response.text == "STILL-ANSWERS"
+
+
+def test_chat_explains_402_with_provider_and_what_to_do():
+    from aria.routers.chat import _explain_llm_error
+
+    exc = _http_error(402, "Insufficient Balance")
+    exc.provider_id = "deepseek-chat"
+    err = _explain_llm_error(exc)
+    assert err.status_code == 502 and "deepseek-chat" in err.detail and "Top up" in err.detail
+
+
+def test_agent_failure_message_names_the_provider(tmp_path):
+    from aria.db.enums import TaskStatus
+    from aria.llm.router import ProviderRouter
+
+    router = ProviderRouter()
+    router.register(_failing_stub(402, "Insufficient Balance", pid="deepseek-chat"))
+    status, code, msg, _ = _run_loop_with(router, tmp_path)
+    assert status == TaskStatus.failed and code == "provider_http_402"
+    assert "deepseek-chat" in msg and "Insufficient Balance" in msg
