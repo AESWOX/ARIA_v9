@@ -319,8 +319,10 @@ async def get_session_run(session_id: uuid.UUID, _: str = Depends(require_runtim
             raise HTTPException(status_code=404, detail="session not found")
         task = repo.get_task(db, session.current_task_id) if session.current_task_id else None
         status = None
+        error_code = error_message = None
         if task is not None:
             status = task.status.value if hasattr(task.status, "value") else str(task.status)
+            error_code, error_message = task.error_code, task.error_message
         pending = [
             serialize_attention(item)
             for item in repo.list_attention_items(db, only_pending=True)
@@ -332,6 +334,9 @@ async def get_session_run(session_id: uuid.UUID, _: str = Depends(require_runtim
         "status": status,
         "terminal": status in {s.value for s in _TERMINAL_TASK_STATUSES},
         "attention": pending,
+        # причина падения (provider_unavailable, runner_error, ...) — чтобы UI и смоук не гадали
+        "error_code": error_code,
+        "error_message": error_message,
     }
 
 

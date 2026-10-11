@@ -60,6 +60,12 @@ class FakeLlm:
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0") or 0)) or b"{}")
+                if os.environ.get("ARIA_FAKE_LLM_FAIL_TOOLS") == "1" and body.get("tools"):
+                    # имитация сбоя провайдера на агентских запросах (с тулами): проверка диагностики смоука
+                    self.send_response(503)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 out = outer.answer(body)
                 payload = json.dumps(out).encode()
                 self.send_response(200)

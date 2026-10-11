@@ -344,7 +344,9 @@ def _run_agent(ctx: Ctx, title: str, prompt: str, expect_type: str, profile: dic
         run = wait_for(_poll, LLM_TIMEOUT, "an approval card", every=1.5)
     except AssertionError as exc:
         raise AssertionError(f"{exc}; task status stayed {last['status']!r} (the model did not request the tool?)") from None
-    assert run["attention"], f"task ended without a card: status={run['status']}"
+    if not run["attention"]:
+        why = f" error_code={run.get('error_code')!r} error_message={str(run.get('error_message'))[:300]!r}" if run.get("error_code") or run.get("error_message") else ""
+        raise AssertionError(f"task ended without a card: status={run['status']}{why}")
     item = run["attention"][0]
     assert item["type"] == expect_type, f"expected {expect_type}, got {item['type']}"
     return sid, item
