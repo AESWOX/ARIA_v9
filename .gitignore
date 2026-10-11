@@ -72,3 +72,6 @@ aria_full_delivery_audit.ps1
 
 # Editor / patch backups
 *.bak
+
+# rebuild_and_smoke.py logs
+reports/

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import shlex
+from pathlib import Path
 
 from aria.tools.validators import classify_shell_command
 
@@ -39,6 +40,10 @@ async def shell_execute(input_json: dict, timeout_sec: int, cwd: str | None = No
                     "подтверждение владельца (§14.2), исполнение не начато"
                 ),
             }
+
+    if cwd:
+        # песочница создаётся лениво: на свежем профиле её ещё нет, и спавн падал с ENOENT
+        Path(cwd).mkdir(parents=True, exist_ok=True)
 
     proc = await asyncio.create_subprocess_shell(
         command,

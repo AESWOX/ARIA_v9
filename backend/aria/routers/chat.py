@@ -72,17 +72,20 @@ def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> lis
     """System prompt + the most recent turns that fit the budget (oldest dropped first).
 
     CTX: сводки компрессии («[compression summary …]») идут в системный промпт одним блоком;
-    с включённой компрессией бюджет — порог токенов (по умолчанию 100к), иначе старые лимиты."""
+    с включённой компрессией бюджет — порог токенов (по умолчанию 100к), иначе старые лимиты.
+    Если сводка уже есть, «голова» диалога (всё до неё) остаётся дословно и бюджетом не обрезается:
+    именно её компрессия и защищает, а режется только хвост."""
     settings = get_settings()
+    last_summary = max((i for i, (role, text) in enumerate(history) if role == "system" and text.startswith(compression.SUMMARY_PREFIX)), default=-1)
     summaries = [text for role, text in history if role == "system" and text.startswith(compression.SUMMARY_PREFIX)]
-    turns = [(role, text) for role, text in history if role in ("user", "assistant") and text]
+    head = [(r, t) for r, t in history[:last_summary] if r in ("user", "assistant") and t] if last_summary >= 0 else []
+    turns = [(r, t) for r, t in history[last_summary + 1:] if r in ("user", "assistant") and t]
     if settings.compression_enabled and settings.compression_token_threshold > 0:
-        token_budget = settings.compression_token_threshold
+        used = sum(compression.estimate_tokens(t) for t in summaries) + sum(compression.estimate_tokens(t) for _, t in head)
         kept: list[tuple[str, str]] = []
-        used = sum(compression.estimate_tokens(t) for t in summaries)
         for role, text in reversed(turns):
             cost = compression.estimate_tokens(text)
-            if used + cost > token_budget and kept:
+            if used + cost > settings.compression_token_threshold and kept:
                 break
             kept.append((role, text))
             used += cost
@@ -101,7 +104,7 @@ def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> lis
         system += "\n\nСводка более ранней части диалога (сжата автоматически):\n" + "\n\n".join(summaries[-3:])
     if memory_block:
         system += "\n\n" + memory_block
-    return [ChatMessage(role="system", content=system)] + [ChatMessage(role=r, content=t) for r, t in kept]
+    return [ChatMessage(role="system", content=system)] + [ChatMessage(role=r, content=t) for r, t in head + kept]
 
 
 def _explain_llm_error(exc: Exception) -> HTTPException:
