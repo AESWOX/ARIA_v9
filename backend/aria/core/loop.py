@@ -22,6 +22,8 @@ import json
 import logging
 import uuid
 
+import httpx
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
 
@@ -130,6 +132,9 @@ def _build_messages(role_prompt: str, history: list[m.Message]) -> list[ChatMess
 # ══════════════════════════════════════════════════════════════════
 
 
+AGENT_FALLBACK_CLASSES = ("standard_reasoning",)  # запасной класс агентского цикла (как CHAT_FALLBACK_CLASSES)
+
+
 async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox_root: str) -> None:
     """Run the agent loop for a given task."""
     settings = get_settings()
@@ -196,14 +201,25 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
 
         try:
             model_class, preferred_model = runprofile.resolve_for_task(profile, role.default_model_policy, delegation_depth, router)
-            routing = await router.route_chat(model_class, messages, tool_schemas, allow_degrade=True, prefer_provider_id=preferred_model)
-        except ProviderUnavailable as exc:
-            logger.error("task %s: provider_unavailable: %s", task_id, exc)
-            await toolhooks.lifecycle("on_error", session_id=session.id, task_id=task_id, code="provider_unavailable", message=str(exc))
+            # resilient: повтор 5xx и переход на запасной класс/провайдера (как в чате, A20). Без этого один
+            # 503/429 от Gemini сразу ронял всю задачу (живой смоук 11.10: агентские стадии падали за 1.7 с).
+            routing = await router.route_chat(
+                model_class, messages, tool_schemas, allow_degrade=True, prefer_provider_id=preferred_model,
+                resilient=True, fallback_classes=AGENT_FALLBACK_CLASSES,
+            )
+        except (ProviderUnavailable, httpx.HTTPStatusError) as exc:
+            if isinstance(exc, httpx.HTTPStatusError):
+                # тело ответа провайдера — единственное, что объясняет 400/404 (модель, схема тулов, параметры)
+                code = f"provider_http_{exc.response.status_code}"
+                message = f"HTTP {exc.response.status_code} from the model provider: {exc.response.text[:400]}"
+            else:
+                code, message = "provider_unavailable", str(exc)
+            logger.error("task %s: %s: %s", task_id, code, message)
+            await toolhooks.lifecycle("on_error", session_id=session.id, task_id=task_id, code=code, message=message)
             with session_scope() as db:
                 task = repo.get_task(db, task_id)
-                repo.set_task_status(db, task, TaskStatus.failed, error_code="provider_unavailable", error_message=str(exc))
-                event_bus.emit("task.status_changed", {"status": "failed", "error": str(exc)}, session_id=task.session_id, task_id=task.id, db=db)
+                repo.set_task_status(db, task, TaskStatus.failed, error_code=code, error_message=message[:500])
+                event_bus.emit("task.status_changed", {"status": "failed", "error": message}, session_id=task.session_id, task_id=task.id, db=db)
             return
 
         response = routing.response
