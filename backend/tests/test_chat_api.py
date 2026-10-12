@@ -181,3 +181,31 @@ def test_unknown_model_404_explains_how_to_fix_it():
         assert "GEMINI_FLASH_MODEL" in r.json()["detail"]
     finally:
         _cleanup(sid)
+
+
+def test_session_list_has_attention_and_reply_indicators():
+    """0024: список чатов отдаёт pending_approvals / busy / last_reply_at для мигающих индикаторов."""
+    import uuid
+    from aria.db import models as m
+    from aria.db import repository as repo
+    from aria.db.enums import AttentionType
+
+    c = _client(FakeLlm(answers=["ok"]))
+    sid = _new_session(c)
+    try:
+        row = next(s for s in c.get("/chat/sessions").json() if s["id"] == sid)
+        assert row["pending_approvals"] == 0 and row["busy"] is False and row["last_reply_at"] is None
+
+        assert c.post(f"/chat/sessions/{sid}/send", json={"content": "hi"}).status_code == 200
+        row = next(s for s in c.get("/chat/sessions").json() if s["id"] == sid)
+        assert row["last_reply_at"] is not None
+
+        with session_scope() as db:
+            sess = repo.get_session(db, uuid.UUID(sid))
+            repo.create_attention_item(db, AttentionType.high_risk_shell, "Run rm?", "x", session=sess)
+        row = next(s for s in c.get("/chat/sessions").json() if s["id"] == sid)
+        assert row["pending_approvals"] == 1
+    finally:
+        with session_scope() as db:
+            db.query(m.AttentionItem).filter(m.AttentionItem.session_id == uuid.UUID(sid)).delete()
+        _cleanup(sid)

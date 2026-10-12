@@ -30,6 +30,34 @@ const MODES: { id: Mode; label: string; hint: string }[] = [
 ];
 
 const POLL_MS = 2000;
+const LIST_POLL_MS = 3000;
+const SEEN_KEY = "aria.chat.seen";
+
+type SeenMap = Record<string, string>;
+
+function loadSeen(): SeenMap {
+  try {
+    return JSON.parse(localStorage.getItem(SEEN_KEY) || "{}") as SeenMap;
+  } catch {
+    return {};
+  }
+}
+
+function saveSeen(m: SeenMap) {
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify(m));
+  } catch {
+    /* storage can be blocked; the indicator just forgets */
+  }
+}
+
+/** Row indicator: waiting for you (blinks amber) > unread reply (blinks green) > working (spinner). */
+export function rowIndicator(s: ChatSessionRow, activeId: string | null, seen: SeenMap): "approve" | "unread" | "busy" | null {
+  if ((s.pending_approvals ?? 0) > 0) return "approve";
+  if (s.id !== activeId && s.last_reply_at && seen[s.id] !== s.last_reply_at) return "unread";
+  if (s.busy) return "busy";
+  return null;
+}
 
 function runBusy(run: RunState | null): boolean {
   return run !== null && run.status !== null && !run.terminal;
@@ -50,6 +78,7 @@ export default function NativeChatPage() {
   const [profile, setProfile] = useState<RunProfile | null>(null);
   const [models, setModels] = useState<ChatModels | null>(null);
   const [profileNotes, setProfileNotes] = useState<string[]>([]);
+  const [seen, setSeen] = useState<SeenMap>(() => loadSeen());
   const profileDirty = useRef(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -146,6 +175,22 @@ export default function NativeChatPage() {
       clearInterval(timer);
     };
   }, [watching, activeId, refreshSessions]);
+
+  // keep the list fresh so other chats can start blinking while you work in this one
+  useEffect(() => {
+    const timer = setInterval(() => void refreshSessions(), LIST_POLL_MS);
+    return () => clearInterval(timer);
+  }, [refreshSessions]);
+
+  // the open chat counts as read: remember its latest reply time
+  useEffect(() => {
+    if (!activeId) return;
+    const row = sessions.find((x) => x.id === activeId);
+    if (!row?.last_reply_at || seen[activeId] === row.last_reply_at) return;
+    const next = { ...seen, [activeId]: row.last_reply_at };
+    setSeen(next);
+    saveSeen(next);
+  }, [activeId, sessions, seen]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -281,7 +326,9 @@ export default function NativeChatPage() {
           {sessions.length === 0 && !loading && (
             <p className="p-2 text-xs text-muted-foreground">No chats yet.</p>
           )}
-          {sessions.map((s) => (
+          {sessions.map((s) => {
+            const ind = rowIndicator(s, activeId, seen);
+            return (
             <button
               type="button"
               key={s.id}
@@ -295,8 +342,30 @@ export default function NativeChatPage() {
               <MessageCircle className="mr-1 inline h-3 w-3 text-muted-foreground" />
               {s.title || "Untitled"}
               <span className="ml-1 text-muted-foreground">({s.message_count})</span>
+              {ind === "approve" && (
+                <span className="ml-1 inline-flex items-center gap-1 text-amber-500" title="Waiting for your Approve / Reject">
+                  <span className="relative inline-flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+                  </span>
+                  needs you
+                </span>
+              )}
+              {ind === "unread" && (
+                <span className="ml-1 inline-flex items-center gap-1 text-emerald-500" title="New reply you have not read">
+                  <span className="relative inline-flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                  </span>
+                  new
+                </span>
+              )}
+              {ind === "busy" && (
+                <Loader2 className="ml-1 inline h-3 w-3 animate-spin text-muted-foreground" aria-label="Working" />
+              )}
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -360,7 +429,7 @@ export default function NativeChatPage() {
             <div className="flex items-center justify-between gap-2">
               <span>
                 {runBusy(run) && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />}
-                Task: <span className="font-medium">{run.status.replace(/_/g, " ")}</span>
+                {run.attention.length > 0 ? <span className="font-medium text-amber-500">Waiting for your decision</span> : <>Task: <span className="font-medium">{run.status.replace(/_/g, " ")}</span></>}
               </span>
               {runBusy(run) && (
                 <Button ghost size="sm" onClick={() => void cancelRun()}>

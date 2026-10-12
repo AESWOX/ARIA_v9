@@ -201,20 +201,42 @@ async def chat_put_profile(
 
 @router.get("/sessions")
 async def chat_sessions(_: str = Depends(require_runtime_token)) -> list[dict[str, Any]]:
+    """Список чатов + индикаторы для UI: pending_approvals (ждёт Approve), busy (задача идёт),
+    last_reply_at (время последнего ответа ассистента - UI сравнивает с «прочитано»)."""
     with session_scope() as db:
         counts = dict(
             db.execute(select(m.Message.session_id, func.count()).group_by(m.Message.session_id)).all()
         )
+        last_reply = dict(
+            db.execute(
+                select(m.Message.session_id, func.max(m.Message.created_at))
+                .where(m.Message.role == "assistant")
+                .group_by(m.Message.session_id)
+            ).all()
+        )
+        pending = repo.list_attention_items(db, only_pending=True)
+        terminal = {"done", "done_unaudited", "failed", "cancelled"}
         sessions = repo.list_sessions(db)
-        rows = [
-            {
-                "id": str(s.id),
-                "title": s.title,
-                "message_count": int(counts.get(s.id, 0)),
-                "updated_at": iso(getattr(s, "updated_at", None) or getattr(s, "created_at", None)),
-            }
-            for s in sessions
-        ]
+        rows = []
+        for s in sessions:
+            task = repo.get_task(db, s.current_task_id) if getattr(s, "current_task_id", None) else None
+            status = None
+            if task is not None:
+                status = task.status.value if hasattr(task.status, "value") else str(task.status)
+            n_pending = sum(
+                1 for it in pending if it.session_id == s.id or (task is not None and it.task_id == task.id)
+            )
+            rows.append(
+                {
+                    "id": str(s.id),
+                    "title": s.title,
+                    "message_count": int(counts.get(s.id, 0)),
+                    "updated_at": iso(getattr(s, "updated_at", None) or getattr(s, "created_at", None)),
+                    "pending_approvals": n_pending,
+                    "busy": status is not None and status not in terminal,
+                    "last_reply_at": iso(last_reply.get(s.id)),
+                }
+            )
     rows.sort(key=lambda r: r["updated_at"] or "", reverse=True)
     return rows
 
