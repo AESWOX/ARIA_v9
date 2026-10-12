@@ -183,6 +183,15 @@ def stage(name: str, needs_llm: bool = False):
     return deco
 
 
+def _hint(code: str | None) -> str:
+    """Подсказка владельцу: часть падений — это счёт/квота провайдера, а не баг приложения."""
+    if code in ("provider_http_402", "provider_http_403"):
+        return "  [provider account problem: no balance/access at that provider; top it up or remove its key, not an app bug]"
+    if code == "provider_http_429":
+        return "  [provider quota/rate limit reached; wait or add keys, not an app bug]"
+    return ""
+
+
 def wait_for(fn, timeout: float, what: str, every: float = 1.0):
     deadline = time.time() + timeout
     last = None
@@ -199,7 +208,12 @@ def messages(ctx: Ctx, sid: str) -> list[dict]:
 
 
 def send_chat(ctx: Ctx, sid: str, text: str) -> str:
-    data = ctx.api.ok("POST", f"/chat/sessions/{sid}/send", {"content": text}, timeout=LLM_TIMEOUT)
+    try:
+        data = ctx.api.ok("POST", f"/chat/sessions/{sid}/send", {"content": text}, timeout=LLM_TIMEOUT)
+    except AssertionError as exc:
+        if " 502:" in str(exc) and ("account" in str(exc) or "HTTP 402" in str(exc)):
+            raise AssertionError(f"{exc}{_hint('provider_http_402')}") from None
+        raise
     # ответ ассистента: берём из ответа, при другой форме — из истории
     for key in ("assistant", "message", "reply"):
         v = data.get(key) if isinstance(data, dict) else None
@@ -241,6 +255,7 @@ def s_surface(ctx: Ctx):
     assert "upwork" in names, f"catalog has no Upwork entry: {sorted(names)}"
     status = api.ok("GET", "/chat/status")
     ctx.llm_ready = bool(status.get("configured"))
+    print(f"      providers: {', '.join(status.get('providers') or []) or 'none'}")
     if ctx.args.llm == "require" and not ctx.llm_ready:
         raise AssertionError(f"no real model provider configured: {status.get('hint')}")
 
@@ -346,7 +361,7 @@ def _run_agent(ctx: Ctx, title: str, prompt: str, expect_type: str, profile: dic
         raise AssertionError(f"{exc}; task status stayed {last['status']!r} (the model did not request the tool?)") from None
     if not run["attention"]:
         why = f" error_code={run.get('error_code')!r} error_message={str(run.get('error_message'))[:300]!r}" if run.get("error_code") or run.get("error_message") else ""
-        raise AssertionError(f"task ended without a card: status={run['status']}{why}")
+        raise AssertionError(f"task ended without a card: status={run['status']}{why}{_hint(run.get('error_code'))}")
     item = run["attention"][0]
     assert item["type"] == expect_type, f"expected {expect_type}, got {item['type']}"
     return sid, item

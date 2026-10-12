@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -33,6 +34,11 @@ class ProviderUnavailable(Exception):
 
 # Transient upstream statuses: worth one more try / another provider.
 RETRYABLE_STATUS = frozenset({408, 425, 500, 502, 503, 504})
+# Ошибки, привязанные к АККАУНТУ провайдера, а не к запросу: 402 (нет средств на счёте, «Insufficient
+# Balance»), 403 (ключ не имеет доступа). Повтор бесполезен, а другой провайдер отвечает нормально:
+# переходим дальше, а этого провайдера на время откладываем в конец очереди.
+ACCOUNT_STATUS = frozenset({402, 403})
+ACCOUNT_COOLDOWN_SEC = 600.0
 RETRY_ATTEMPTS_PER_PROVIDER = 2      # same provider, on 5xx only
 RETRY_BACKOFF_SEC = 1.0              # 1s, then 2s
 
@@ -48,6 +54,16 @@ class RoutingResult:
 @dataclass
 class ProviderRouter:
     providers_by_class: dict[str, list[LlmProvider]] = field(default_factory=dict)
+    # provider_id -> момент (по self.clock), до которого провайдер откладывается в конец очереди
+    cooldown_until: dict[str, float] = field(default_factory=dict)
+    clock: callable = time.monotonic
+
+    def _cooling(self, provider: LlmProvider) -> bool:
+        return self.cooldown_until.get(provider.provider_id, 0.0) > self.clock()
+
+    def _ordered(self, providers: list[LlmProvider]) -> list[LlmProvider]:
+        """Здоровые провайдеры вперёд, «на карантине» (402/403) в конец: последняя попытка, а не отказ."""
+        return [p for p in providers if not self._cooling(p)] + [p for p in providers if self._cooling(p)]
 
     def register(self, provider: LlmProvider) -> None:
         self.providers_by_class.setdefault(provider.provider_class, []).append(provider)
@@ -228,7 +244,7 @@ class ProviderRouter:
                     cls = "free_tier_reasoning"  # same degrade rule as the plain path
                 else:
                     continue
-            for provider in self.providers_by_class.get(cls, []):
+            for provider in self._ordered(self.providers_by_class.get(cls, [])):
                 if not await self._connectivity_ok(provider, db):
                     continue
                 for attempt in range(RETRY_ATTEMPTS_PER_PROVIDER):
@@ -238,6 +254,11 @@ class ProviderRouter:
                     except httpx.HTTPStatusError as exc:
                         status = exc.response.status_code
                         last_exc = exc
+                        exc.provider_id = provider.provider_id  # чтобы вызывающий мог назвать виновника
+                        if status in ACCOUNT_STATUS:
+                            self.cooldown_until[provider.provider_id] = self.clock() + ACCOUNT_COOLDOWN_SEC
+                            logger.warning("%s: HTTP %s (account/billing), switching provider for %.0fs", provider.provider_id, status, ACCOUNT_COOLDOWN_SEC)
+                            break
                         if status in RETRYABLE_STATUS and attempt + 1 < RETRY_ATTEMPTS_PER_PROVIDER:
                             logger.warning("%s: HTTP %s, retry %d", provider.provider_id, status, attempt + 1)
                             await asyncio.sleep(backoff_sec * (2 ** attempt))

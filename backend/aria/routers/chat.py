@@ -118,6 +118,13 @@ def _explain_llm_error(exc: Exception) -> HTTPException:
         code = exc.response.status_code
         if code == 429:
             return HTTPException(status_code=429, detail="The model's rate limit is reached. Retry in a minute.")
+        if code in (402, 403):
+            who = getattr(exc, "provider_id", None)
+            return HTTPException(
+                status_code=502,
+                detail=(f"The model provider {who + ' ' if who else ''}rejected the account (HTTP {code}: no balance or no access). "
+                        "Top up that account or remove its key in Keys; other providers are tried automatically."),
+            )
         if code == 404:
             return HTTPException(
                 status_code=502,

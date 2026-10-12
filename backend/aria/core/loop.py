@@ -211,7 +211,8 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
             if isinstance(exc, httpx.HTTPStatusError):
                 # тело ответа провайдера — единственное, что объясняет 400/404 (модель, схема тулов, параметры)
                 code = f"provider_http_{exc.response.status_code}"
-                message = f"HTTP {exc.response.status_code} from the model provider: {exc.response.text[:400]}"
+                who = getattr(exc, "provider_id", None) or "the model provider"
+                message = f"HTTP {exc.response.status_code} from {who}: {exc.response.text[:400]}"
             else:
                 code, message = "provider_unavailable", str(exc)
             logger.error("task %s: %s: %s", task_id, code, message)
