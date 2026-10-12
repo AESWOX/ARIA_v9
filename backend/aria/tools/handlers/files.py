@@ -10,7 +10,8 @@ class PathEscapeError(Exception):
 def _resolve_within(base: Path, relative: str) -> Path:
     base = base.resolve()
     target = (base / relative).resolve()
-    if not str(target).startswith(str(base)):
+    # is_relative_to, а не startswith: «/tmp/sandbox_evil» не внутри «/tmp/sandbox» (D8)
+    if not target.is_relative_to(base):
         raise PathEscapeError(f"path {relative} escapes sandbox root {base}")
     return target
 

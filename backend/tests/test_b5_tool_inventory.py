@@ -377,7 +377,7 @@ def test_run_parallel_runs_5_concurrently_and_rejects_6():
         asyncio.run(delegate_mod.run_parallel([_req() for _ in range(6)], fn))
 
 
-# --------------------------------------------------------------------------- F. known defects (strict xfail)
+# --------------------------------------------------------------------------- F. known defects (strict xfail; D8 уже исправлен)
 
 _PROD = [p for p in (BACKEND / "aria").rglob("*.py")]
 
@@ -461,8 +461,7 @@ def test_guardrail_mutating_tools_config_is_used():
     assert uses, "mutating_tools только объявлен"
 
 
-@pytest.mark.xfail(strict=True, reason="D8: files._resolve_within проверяет границу через str.startswith: "
-                                       "соседняя папка с тем же префиксом (sandbox_evil) считается внутри песочницы")
+# D8 исправлен: files._resolve_within теперь через Path.is_relative_to
 def test_sandbox_blocks_sibling_prefix_escape(tmp_path):
     root = tmp_path / "sandbox"
     root.mkdir()
