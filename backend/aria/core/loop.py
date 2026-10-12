@@ -38,7 +38,7 @@ from aria.db import repository as repo
 from aria.db.base import session_scope
 from aria.db.enums import AuditVerdict, SourceTrust, TaskStatus, ToolStatus
 from aria.llm.providers.base import ChatMessage
-from aria.llm.router import ProviderRouter, ProviderUnavailable
+from aria.llm.router import ProviderRouter, ProviderUnavailable, tried_suffix
 from aria.tools.registry import get_tool
 from aria.core import toolhooks
 from aria.tools.validators import (
@@ -132,7 +132,9 @@ def _build_messages(role_prompt: str, history: list[m.Message]) -> list[ChatMess
 # ══════════════════════════════════════════════════════════════════
 
 
-AGENT_FALLBACK_CLASSES = ("standard_reasoning",)  # запасной класс агентского цикла (как CHAT_FALLBACK_CLASSES)
+# Запасные классы агентского цикла: standard, затем быстрая модель (free_tier: на ней чат и так работает).
+# Без free_tier агент не имел запасного пути, если оба standard-провайдера отвечали 402/404.
+AGENT_FALLBACK_CLASSES = ("standard_reasoning", "free_tier_reasoning")
 
 
 async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox_root: str) -> None:
@@ -212,7 +214,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                 # тело ответа провайдера — единственное, что объясняет 400/404 (модель, схема тулов, параметры)
                 code = f"provider_http_{exc.response.status_code}"
                 who = getattr(exc, "provider_id", None) or "the model provider"
-                message = f"HTTP {exc.response.status_code} from {who}: {exc.response.text[:400]}"
+                message = f"HTTP {exc.response.status_code} from {who}: {exc.response.text[:300]}{tried_suffix(exc)}"
             else:
                 code, message = "provider_unavailable", str(exc)
             logger.error("task %s: %s: %s", task_id, code, message)

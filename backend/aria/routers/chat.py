@@ -32,7 +32,7 @@ from aria.http_utils import emit_message_created, emit_session_updated, iso, ser
 from aria.llm import compression
 from aria.llm.key_pool import NoAvailableKeys
 from aria.llm.providers.base import ChatMessage
-from aria.llm.router import ProviderUnavailable
+from aria.llm.router import ProviderUnavailable, tried_suffix
 from aria.memory import store as memory_store
 
 logger = logging.getLogger("local_agent.chat")
@@ -116,22 +116,23 @@ def _explain_llm_error(exc: Exception) -> HTTPException:
         )
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
+        tried = tried_suffix(exc)
         if code == 429:
-            return HTTPException(status_code=429, detail="The model's rate limit is reached. Retry in a minute.")
+            return HTTPException(status_code=429, detail=f"The model's rate limit is reached. Retry in a minute.{tried}")
         if code in (402, 403):
             who = getattr(exc, "provider_id", None)
             return HTTPException(
                 status_code=502,
                 detail=(f"The model provider {who + ' ' if who else ''}rejected the account (HTTP {code}: no balance or no access). "
-                        "Top up that account or remove its key in Keys; other providers are tried automatically."),
+                        f"Top up that account or remove its key in Keys; other providers are tried automatically.{tried}"),
             )
         if code == 404:
             return HTTPException(
                 status_code=502,
                 detail="The model name is not available at the provider (HTTP 404). "
-                "Open Env, set GEMINI_FLASH_MODEL to a model from the provider's list, and restart the app.",
+                f"Open Env, fix GEMINI_FLASH_MODEL / GEMINI_PRO_MODEL to a model from the provider's list, and restart the app.{tried}",
             )
-        return HTTPException(status_code=502, detail=f"The model API answered HTTP {code}.")
+        return HTTPException(status_code=502, detail=f"The model API answered HTTP {code}.{tried}")
     if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
         return HTTPException(status_code=504, detail="The model API did not answer in time (network or timeout).")
     return HTTPException(status_code=502, detail=f"Model call failed: {type(exc).__name__}")

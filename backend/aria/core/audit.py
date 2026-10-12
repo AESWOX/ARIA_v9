@@ -210,7 +210,7 @@ async def run_audit(
                 ]
                 result = await router.route_chat(
                     auditor_class, messages, tools=[], allow_degrade=True, db=db, prefer_provider_id=auditor_prefer,
-                    resilient=True, fallback_classes=("standard_reasoning",),
+                    resilient=True, fallback_classes=("standard_reasoning", "free_tier_reasoning"),
                 )
                 auditor_model = result.provider_id
                 budget_degraded = result.degraded_to_free

@@ -32,12 +32,19 @@ class ProviderUnavailable(Exception):
     pass
 
 
+def tried_suffix(exc: Exception) -> str:
+    """' (tried: gemini-flash HTTP 429; deepseek-chat HTTP 402; ...)' — для сообщений об ошибках."""
+    attempts = getattr(exc, "attempts", None)
+    return f" (tried: {'; '.join(attempts)})" if attempts else ""
+
+
 # Transient upstream statuses: worth one more try / another provider.
 RETRYABLE_STATUS = frozenset({408, 425, 500, 502, 503, 504})
-# Ошибки, привязанные к АККАУНТУ провайдера, а не к запросу: 402 (нет средств на счёте, «Insufficient
-# Balance»), 403 (ключ не имеет доступа). Повтор бесполезен, а другой провайдер отвечает нормально:
-# переходим дальше, а этого провайдера на время откладываем в конец очереди.
-ACCOUNT_STATUS = frozenset({402, 403})
+# Ошибки, привязанные к ПРОВАЙДЕРУ (аккаунту или имени модели), а не к запросу: 402 (нет средств,
+# «Insufficient Balance»), 403 (ключ не имеет доступа), 404 (имени модели нет у провайдера: «models/x is
+# not found»). Повтор бесполезен, а другой провайдер отвечает нормально: переходим дальше, а этого
+# провайдера на время откладываем в конец очереди (404 лечится правкой .env и перезапуском).
+ACCOUNT_STATUS = frozenset({402, 403, 404})
 ACCOUNT_COOLDOWN_SEC = 600.0
 RETRY_ATTEMPTS_PER_PROVIDER = 2      # same provider, on 5xx only
 RETRY_BACKOFF_SEC = 1.0              # 1s, then 2s
@@ -236,6 +243,7 @@ class ProviderRouter:
         last_exc: Exception | None = None
         tried = 0
         degraded = False
+        attempts: list[str] = []  # кого и с чем пробовали: корень (429 у Flash) не должен прятаться за последней ошибкой
         for cls_index, cls in enumerate(classes):
             allowed, _warn = self.budget_gate(cls)
             if not allowed:
@@ -255,6 +263,7 @@ class ProviderRouter:
                         status = exc.response.status_code
                         last_exc = exc
                         exc.provider_id = provider.provider_id  # чтобы вызывающий мог назвать виновника
+                        attempts.append(f"{provider.provider_id} HTTP {status}")
                         if status in ACCOUNT_STATUS:
                             self.cooldown_until[provider.provider_id] = self.clock() + ACCOUNT_COOLDOWN_SEC
                             logger.warning("%s: HTTP %s (account/billing), switching provider for %.0fs", provider.provider_id, status, ACCOUNT_COOLDOWN_SEC)
@@ -270,6 +279,7 @@ class ProviderRouter:
                     except (NoAvailableKeys, httpx.TimeoutException, httpx.TransportError) as exc:
                         logger.warning("%s: %s, switching provider", provider.provider_id, type(exc).__name__)
                         last_exc = exc
+                        attempts.append(f"{provider.provider_id} {type(exc).__name__}")
                         break
                     else:
                         return RoutingResult(
@@ -280,6 +290,7 @@ class ProviderRouter:
                         )
         if last_exc is not None:
             # keep the original error so callers map it as before (429 -> 429, timeout -> 504, ...)
+            last_exc.attempts = attempts
             raise last_exc
         raise ProviderUnavailable(f"no available provider for class={provider_class} (§12.3)")
 
