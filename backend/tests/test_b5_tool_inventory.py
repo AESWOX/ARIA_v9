@@ -202,7 +202,8 @@ def test_file_write_read_search_roundtrip(sandbox):
     out, _, *_ = run_tool("file_read", {"path": "a/b.txt"}, sandbox)
     assert out["content"] == "xyz+1"
     out, _, *_ = run_tool("file_search", {"glob": "**/*.txt"}, sandbox)
-    assert "a/b.txt" in str(out).replace("\\", "/")
+    # на Windows file_search отдаёт «a\\b.txt»: сравниваем элементы списка, а не str(dict) (там слеш удвоен)
+    assert "a/b.txt" in [m.replace("\\", "/") for m in out["matches"]]
 
 
 def test_file_read_missing_is_a_clean_answer_not_a_crash(sandbox):
