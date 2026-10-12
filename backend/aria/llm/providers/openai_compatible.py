@@ -27,6 +27,8 @@ def _log_http_error(provider_id: str, model: str, resp: httpx.Response) -> None:
 
 FORBIDDEN_COOLDOWN_SEC = 15 * 60
 DAILY_QUOTA_COOLDOWN_SEC = 60 * 60
+MAX_QUOTA_COOLDOWN_SEC = 24 * 60 * 60
+_RETRY_DELAY_RE = re.compile(r'"retrydelay":\s*"(\d+(?:\.\d+)?)s"')
 
 _INVALID_KEY_MARKERS = (
     "api_key_invalid",
@@ -59,6 +61,10 @@ def _cooldown_for_429(resp: httpx.Response, body_lower: str, default: float) -> 
             return max(default, float(retry_after))
         except ValueError:
             pass
+    # Gemini кладёт точное время в тело: "retryDelay": "64600s" (суточная квота — это ~18 часов, а не 1 час).
+    match = _RETRY_DELAY_RE.search(body_lower)
+    if match:
+        return min(max(default, float(match.group(1))), MAX_QUOTA_COOLDOWN_SEC)
     if "perday" in body_lower.replace(" ", "").replace("_", "") or "per day" in body_lower:
         return max(default, DAILY_QUOTA_COOLDOWN_SEC)
     return default
