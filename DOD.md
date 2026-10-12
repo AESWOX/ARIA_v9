@@ -226,3 +226,6 @@
 - C4: входят ли `multi-profile-l4` и `scheduler-l2` в 1.0.0, и где `fix/task-status-l1` (в origin его нет).
 - E5: тесты в релизном tarball — да или нет.
 - D3: уменьшать `vendor-*.js` или поднять лимит бюджета.
+
+| A29 | **Квота Gemini на проект и модель не умножается пулами:** у провайдеров с одной моделью общий пул ключей (cooldown делится), у разных моделей раздельный; cooldown 429 берётся из `retryDelay` ответа Google (до 24 ч), а не фиксированный час | `tests/test_gemini_pools_per_model.py` (4) | PARTIAL: песочница 555 passed; на Windows и живьём не проверено. Предпосылка найдена живой проверкой ключей 12.10: суточная квота `gemini-3.8-flash` исчерпана (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, retry 64600 с), `3.7/3.6/3.5-flash`, `3.5-flash-lite`, `3.1-flash-lite`, `2.5-flash`, `2.5-flash-lite` отвечали 200, `3.1-pro-preview` 429 (free tier), `2.5-pro` 404 |
+

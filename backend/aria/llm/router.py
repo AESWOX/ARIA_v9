@@ -334,15 +334,23 @@ def build_default_router() -> ProviderRouter:
     gemini_keys = settings.gemini_api_keys_list
     if gemini_keys:
         has_any_real_provider = True
-        gemini_pool_flash = KeyPool(gemini_keys, name="gemini-answers")
-        gemini_pool_pro = KeyPool(gemini_keys, name="gemini-answers")  # свой курсор на класс
+        # Квота Gemini считается на проект И МОДЕЛЬ. Поэтому пул ключей общий для всех провайдеров с одной
+        # моделью (429 у Flash тут же известен «запасному» провайдеру на той же модели, а не перебирается
+        # заново), и раздельный для разных моделей (исчерпанная модель A не блокирует модель B).
+        gemini_pools: dict[str, KeyPool] = {}
+
+        def _gemini_pool(model: str) -> KeyPool:
+            if model not in gemini_pools:
+                gemini_pools[model] = KeyPool(gemini_keys, name=f"gemini-{model}")
+            return gemini_pools[model]
+
         router.register(
             OpenAICompatibleProvider(
                 provider_id="gemini-flash",
                 provider_class="free_tier_reasoning",
                 base_url=settings.gemini_base_url,
                 model=settings.gemini_flash_model,
-                key_pool=gemini_pool_flash,
+                key_pool=_gemini_pool(settings.gemini_flash_model),
             )
         )
         router.register(
@@ -351,18 +359,18 @@ def build_default_router() -> ProviderRouter:
                 provider_class="standard_reasoning",
                 base_url=settings.gemini_base_url,
                 model=settings.gemini_pro_model,
-                key_pool=gemini_pool_pro,
+                key_pool=_gemini_pool(settings.gemini_pro_model),
             )
         )
         # DeepSeek приоритет для premium_reasoning; если DeepSeek не задан/недоступен —
-        # полный фолбэк на Gemini, тем же объектом что и standard_reasoning (свой key_pool).
+        # полный фолбэк на Gemini (пул общий с gemini-pro: та же модель — та же квота).
         router.providers_by_class.setdefault("premium_reasoning", []).append(
             OpenAICompatibleProvider(
                 provider_id="gemini-pro-premium-fallback",
                 provider_class="premium_reasoning",
                 base_url=settings.gemini_base_url,
                 model=settings.gemini_pro_model,
-                key_pool=KeyPool(gemini_keys, name="gemini-answers"),
+                key_pool=_gemini_pool(settings.gemini_pro_model),
             )
         )
 
