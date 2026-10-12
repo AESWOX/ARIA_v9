@@ -269,3 +269,74 @@ def test_agent_failure_message_names_the_provider(tmp_path):
     status, code, msg, _ = _run_loop_with(router, tmp_path)
     assert status == TaskStatus.failed and code == "provider_http_402"
     assert "deepseek-chat" in msg and "Insufficient Balance" in msg
+
+
+# ── 404 «модель не найдена» (живой смоук 12.10: GEMINI_PRO_MODEL=gemini-3.1-pro у провайдера нет) ──
+
+async def test_404_model_not_found_switches_provider_instead_of_failing():
+    from aria.llm.router import ProviderRouter
+
+    broken = _stub("gemini-pro", "standard_reasoning", 404, '{"error": {"message": "models/gemini-3.1-pro is not found"}}')
+    fine = _stub("deepseek-ok", "standard_reasoning", answer="FROM-NEXT")
+    router = ProviderRouter()
+    router.register(broken)
+    router.register(fine)
+    res = await router.route_chat("standard_reasoning", [], [], resilient=True)
+    assert res.response.text == "FROM-NEXT" and type(broken).calls == 1
+
+
+async def test_final_error_lists_everything_that_was_tried():
+    import httpx
+    import pytest
+
+    from aria.llm.router import ProviderRouter, tried_suffix
+
+    router = ProviderRouter()
+    router.register(_stub("gemini-flash", "free_tier_reasoning", 429, "quota"))
+    router.register(_stub("deepseek-chat", "standard_reasoning", 402, "Insufficient Balance"))
+    router.register(_stub("gemini-pro", "standard_reasoning", 404, "no such model"))
+    with pytest.raises(httpx.HTTPStatusError) as ei:
+        await router.route_chat("free_tier_reasoning", [], [], resilient=True, fallback_classes=("standard_reasoning",))
+    text = tried_suffix(ei.value)
+    # корень (429 у Flash) не прячется за последней ошибкой (404)
+    assert "gemini-flash HTTP 429" in text and "deepseek-chat HTTP 402" in text and "gemini-pro HTTP 404" in text
+
+
+def test_agent_loop_can_fall_back_to_the_fast_model(tmp_path):
+    """Без free_tier в запасных классах агент не имел пути, когда оба standard-провайдера были сломаны."""
+    from aria.db.enums import TaskStatus
+    from aria.llm.providers.stub import StubProvider, final_answer
+    from aria.llm.router import ProviderRouter
+
+    flash = StubProvider(provider_id="gemini-flash")
+    flash.provider_class = "free_tier_reasoning"
+    for _ in range(4):
+        flash.push(final_answer("FAST-MODEL-ANSWER"))
+    router = ProviderRouter()
+    router.register(_failing_stub(404, "models/gemini-3.1-pro is not found", pid="gemini-pro", cls="standard_reasoning"))
+    router.register(_failing_stub(402, "Insufficient Balance", pid="deepseek-chat", cls="standard_reasoning"))
+    router.register(_failing_stub(402, "Insufficient Balance", pid="coder-primary", cls="subagent_execution"))
+    router.register(flash)
+    status, code, _msg, messages = _run_loop_with(router, tmp_path)
+    assert status != TaskStatus.failed and code is None, (status, code, _msg)
+    assert any("FAST-MODEL-ANSWER" in (c or "") for c in messages)
+
+
+def test_agent_failure_message_lists_attempts(tmp_path):
+    from aria.llm.router import ProviderRouter
+
+    router = ProviderRouter()
+    router.register(_failing_stub(402, "Insufficient Balance", pid="deepseek-chat", cls="standard_reasoning"))
+    router.register(_failing_stub(404, "no such model", pid="gemini-pro", cls="subagent_execution"))
+    status, code, msg, _ = _run_loop_with(router, tmp_path)
+    assert code in ("provider_http_402", "provider_http_404")
+    assert "tried:" in msg and "HTTP 404" in msg
+
+
+def test_chat_404_message_points_to_both_model_settings_and_lists_attempts():
+    from aria.routers.chat import _explain_llm_error
+
+    exc = _http_error(404, "models/gemini-3.1-pro is not found")
+    exc.attempts = ["gemini-flash HTTP 429", "gemini-pro HTTP 404"]
+    err = _explain_llm_error(exc)
+    assert "GEMINI_PRO_MODEL" in err.detail and "gemini-flash HTTP 429" in err.detail

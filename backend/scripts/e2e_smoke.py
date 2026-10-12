@@ -185,6 +185,8 @@ def stage(name: str, needs_llm: bool = False):
 
 def _hint(code: str | None) -> str:
     """Подсказка владельцу: часть падений — это счёт/квота провайдера, а не баг приложения."""
+    if code == "provider_http_404":
+        return "  [the provider has no such model: fix GEMINI_*_MODEL in Env, restart; not an app bug]"
     if code in ("provider_http_402", "provider_http_403"):
         return "  [provider account problem: no balance/access at that provider; top it up or remove its key, not an app bug]"
     if code == "provider_http_429":
@@ -256,6 +258,9 @@ def s_surface(ctx: Ctx):
     status = api.ok("GET", "/chat/status")
     ctx.llm_ready = bool(status.get("configured"))
     print(f"      providers: {', '.join(status.get('providers') or []) or 'none'}")
+    # настроенные модели (не секрет): сразу видно протухшее имя вроде GEMINI_PRO_MODEL
+    for m in api.ok("GET", "/chat/models").get("models", []):
+        print(f"      model  {m['tier']:<20} {m['id']:<28} -> {m['model']}")
     if ctx.args.llm == "require" and not ctx.llm_ready:
         raise AssertionError(f"no real model provider configured: {status.get('hint')}")
 
