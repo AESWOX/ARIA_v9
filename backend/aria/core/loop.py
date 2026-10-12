@@ -87,6 +87,29 @@ def _load_persona() -> str:
 MAX_TOOL_RESULT_CHARS = 6000
 
 
+# A26: сколько раз подряд цикл подавляет немедленный повтор уже выполненного вызова, прежде чем завершить задачу.
+MAX_REPEAT_SUPPRESSED = 2
+TOOL_RESULT_NOTE = (
+    "\n(Это результат вызова, который ты уже сделал и который уже выполнен. Не вызывай тот же тул с теми же "
+    "аргументами снова: используй результат и дай итоговый ответ.)"
+)
+
+
+def _is_immediate_repeat(history: list, tool_name: str, arguments: dict) -> bool:
+    """A26: модель просит тот же вызов (тул + аргументы), результат которого последним лежит в истории и был ok."""
+    if not history:
+        return False
+    last = history[-1]
+    payload = getattr(last, "content_json", None)
+    if getattr(last, "role", None) != "tool" or not isinstance(payload, dict):
+        return False
+    return (
+        payload.get("tool_name") == tool_name
+        and payload.get("status") in ("ok", "repeat_suppressed")
+        and payload.get("arguments") == dict(arguments or {})
+    )
+
+
 def _render_tool_result(msg: m.Message) -> str | None:
     """Текст результата тула для модели или None, если у сообщения нет результата.
 
@@ -105,8 +128,18 @@ def _render_tool_result(msg: m.Message) -> str | None:
         body = str(payload.get("output"))
     if len(body) > MAX_TOOL_RESULT_CHARS:
         body = f"{body[:MAX_TOOL_RESULT_CHARS]}...[truncated {len(body) - MAX_TOOL_RESULT_CHARS} chars]"
+    args = payload.get("arguments")
+    args_attr = ""
+    if args:
+        try:
+            args_attr = " arguments=" + json.dumps(json.dumps(args, ensure_ascii=False, default=str)[:300], ensure_ascii=False)
+        except (TypeError, ValueError):
+            args_attr = ""
+    # A26: в истории нет хода ассистента с вызовом тула, поэтому модель не знала, что вызов уже сделан и выполнен,
+    # и просила его снова (живой смоук 12.10: shell_execute x3, write_note x2). Говорим это прямо.
+    note = TOOL_RESULT_NOTE if status == "ok" else ""
     return (
-        f'<tool_result tool="{name}" status="{status}" source_trust="untrusted">\n{body}\n</tool_result>'
+        f'<tool_result tool="{name}" status="{status}" source_trust="untrusted"{args_attr}>\n{body}\n</tool_result>{note}'
     )
 
 
@@ -183,6 +216,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
     final_verdict_needed = True
     guardrails = ToolCallGuardrailController()
     delegate_failures: dict[tuple[str, str], int] = {}
+    repeat_suppressed = 0
 
     while iterations < settings.loop_max_iterations:
         iterations += 1
@@ -248,6 +282,19 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                     spec = get_tool(call.tool_name)
                 except (ToolValidationError, KeyError) as exc:
                     repo.append_message(db, session, role="tool", content=f"blocked_policy: {exc}")
+                    continue
+
+                if _is_immediate_repeat(history, call.tool_name, call.arguments):
+                    repeat_suppressed += 1
+                    logger.warning("task %s: immediate repeat of %s suppressed (%d)", task_id, call.tool_name, repeat_suppressed)
+                    repo.append_message(
+                        db, session, role="tool",
+                        content=f"{call.tool_name} -> repeat_suppressed",
+                        content_json={
+                            "tool_name": call.tool_name, "arguments": dict(call.arguments or {}), "status": "repeat_suppressed",
+                            "output": {"message": "Этот вызов уже выполнен, его результат выше. Не повторяй его: дай итоговый ответ."},
+                        },
+                    )
                     continue
 
                 if call.tool_name.startswith("mcp__") and spec.requires_approval:
@@ -421,7 +468,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
             with session_scope() as db:
                 repo.finish_tool_call(db, tool_call_row, status, output_json=output, error_code=error_code, error_message=error_message)
                 session = repo.get_session(db, task.session_id)
-                repo.append_message(db, session, role="tool", content_json={"tool_name": spec.tool_name, "output": output, "status": status.value}, content=f"{spec.tool_name} -> {status.value}")
+                repo.append_message(db, session, role="tool", content_json={"tool_name": spec.tool_name, "arguments": dict(call.arguments or {}), "output": output, "status": status.value}, content=f"{spec.tool_name} -> {status.value}")
                 event_bus.emit(
                     "tool_call.updated",
                     {"id": str(tool_call_row.id), "tool_name": spec.tool_name, "status": status.value},
@@ -450,6 +497,10 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                 state="requested", item_id=approval_ctx[2], command=approval_ctx[3],
             )
             return  # пауза до резолюции attention item (loop продолжит resume_after_approval)
+
+        if repeat_suppressed >= MAX_REPEAT_SUPPRESSED:
+            logger.warning("task %s: model keeps repeating an executed call; finishing the task", task_id)
+            break
 
     await finalize_task(task_id, router)
 
@@ -626,7 +677,7 @@ async def resume_after_approval(task_id: uuid.UUID, router: ProviderRouter, sand
         with session_scope() as db:
             repo.finish_tool_call(db, tool_call_row, status, output_json=output, error_code=error_code, error_message=error_message)
             session = repo.get_session(db, sess_id)
-            repo.append_message(db, session, role="tool", content_json={"tool_name": tool_name, "output": output, "status": status.value}, content=f"{tool_name} (approved) -> {status.value}")
+            repo.append_message(db, session, role="tool", content_json={"tool_name": tool_name, "arguments": arguments, "output": output, "status": status.value}, content=f"{tool_name} (approved) -> {status.value}")
             event_bus.emit("tool_call.updated", {"id": str(tool_call_row.id), "status": status.value}, session_id=session.id, task_id=task_id, db=db)
 
     await execute_agent_loop(task_id, router, sandbox_root)
