@@ -28,7 +28,9 @@ from aria.config import get_settings
 from aria.db import models as m
 from aria.db import repository as repo
 from aria.db.enums import TaskStatus
+from aria.llm import gemini_pools
 from aria.llm.key_pool import KeyPool, NoAvailableKeys
+from aria.llm.providers.openai_compatible import _cooldown_for_429, _error_text
 
 logger = logging.getLogger("local_agent.compression")
 
@@ -37,23 +39,20 @@ _CHARS_PER_TOKEN = 3  # консервативно для кириллицы/к�
 _TOOL_TEXT_CAP = 2000  # символов результата тула, которые видит суммаризатор
 _MSG_TEXT_CAP = 8000
 
-_compression_pool: KeyPool | None = None
-
-
-def _get_compression_pool() -> KeyPool | None:
-    """Ленивая инициализация — свой собственный, полностью независимый
-    от router.py курсор ротации по тому же (или отдельно заданному)
-    списку Gemini-ключей."""
-    global _compression_pool
+def _get_compression_pool(model: str | None = None) -> KeyPool | None:
+    """Пул ключей для модели сжатия (по умолчанию — первой в цепочке). Пул берётся из общего реестра:
+    те же ключи и та же модель, что у чата, = одна квота и один cooldown (квота Gemini на проект и модель);
+    другая модель или отдельные COMPRESSION_GEMINI_API_KEYS дают отдельный пул."""
     settings = get_settings()
     if not settings.compression_enabled:
         return None
     keys = settings.compression_gemini_api_keys_list
     if not keys:
         return None
-    if _compression_pool is None:
-        _compression_pool = KeyPool(keys, name="compression")
-    return _compression_pool
+    chain = settings.compression_chain
+    if not chain:
+        return None
+    return gemini_pools.pool_for(keys, model or chain[0])
 
 
 def estimate_tokens(text: str | None) -> int:
@@ -94,19 +93,13 @@ def _protected_tail_start(history: list[m.Message], last_n: int) -> int:
     return start
 
 
-async def _summarize(text_block: str) -> str:
+# Статусы, при которых имеет смысл попробовать следующую модель цепочки (квота/доступ/перегрузка/неверное имя).
+_NEXT_MODEL_STATUS = frozenset({401, 403, 404, 408, 425, 429, 500, 502, 503, 504})
+
+
+async def _summarize_with_model(pool: KeyPool, model: str, prompt: str) -> str:
+    """Один проход по ключам пула одной модели: 429 -> cooldown (по retryDelay Google), 401/403 -> dead."""
     settings = get_settings()
-    pool = _get_compression_pool()
-    if pool is None:
-        raise RuntimeError("compression pool not configured (no compression keys)")
-
-    prompt = (
-        "Сожми диалог ниже в краткое фактологическое summary для памяти агента. "
-        "Сохрани: принятые решения, важные факты, незавершённые задачи. "
-        "Не сохраняй: технический шум, повторы, приветствия.\n\n"
-        f"{text_block}"
-    )
-
     last_error: Exception | None = None
     for _ in range(len(pool)):
         try:
@@ -120,7 +113,7 @@ async def _summarize(text_block: str) -> str:
                     f"{settings.compression_base_url}/chat/completions",
                     headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
                     json={
-                        "model": settings.compression_model,
+                        "model": model,
                         "messages": [{"role": "user", "content": prompt}],
                     },
                 )
@@ -130,7 +123,7 @@ async def _summarize(text_block: str) -> str:
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             if status == 429:
-                pool.mark_rate_limited(key)
+                pool.mark_rate_limited(key, _cooldown_for_429(exc.response, _error_text(exc.response), pool.cooldown_sec))
                 last_error = exc
                 continue
             if status in (401, 403):
@@ -138,6 +131,37 @@ async def _summarize(text_block: str) -> str:
                 last_error = exc
                 continue
             raise
+    raise last_error or NoAvailableKeys("compression pool exhausted")
+
+
+async def _summarize(text_block: str) -> str:
+    settings = get_settings()
+    if _get_compression_pool() is None:
+        raise RuntimeError("compression pool not configured (no compression keys)")
+
+    prompt = (
+        "Сожми диалог ниже в краткое фактологическое summary для памяти агента. "
+        "Сохрани: принятые решения, важные факты, незавершённые задачи. "
+        "Не сохраняй: технический шум, повторы, приветствия.\n\n"
+        f"{text_block}"
+    )
+
+    # Цепочка моделей (COMPRESSION_MODELS): у каждой модели своя квота на тех же ключах, исчерпанная модель
+    # отдаёт запрос следующей. С одной моделью поведение прежнее: последняя ошибка поднимается как есть.
+    last_error: Exception | None = None
+    for model in settings.compression_chain:
+        pool = _get_compression_pool(model)
+        if pool is None:
+            break
+        try:
+            return await _summarize_with_model(pool, model, prompt)
+        except NoAvailableKeys as exc:
+            last_error = exc
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in _NEXT_MODEL_STATUS:
+                raise
+            last_error = exc
+            logger.warning("compression model %s failed with HTTP %s; trying the next model", model, exc.response.status_code)
     raise last_error or NoAvailableKeys("compression pool exhausted")
 
 
