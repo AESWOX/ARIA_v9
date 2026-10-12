@@ -477,7 +477,7 @@ async def approve_attention(item_id: uuid.UUID, request: Request, _: str = Depen
 
 
 @router.post("/attention-items/{item_id}/reject")
-async def reject_attention(item_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
+async def reject_attention(item_id: uuid.UUID, request: Request, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
     from aria.core import approvals, toolhooks
     from aria.core.events import event_bus
 
@@ -488,4 +488,13 @@ async def reject_attention(item_id: uuid.UUID, _: str = Depends(require_runtime_
         resolved = approvals.resolve(db, item, approve=False)
     event_bus.emit("attention_item.resolved", serialize_attention(resolved), session_id=resolved.session_id, task_id=resolved.task_id)
     await toolhooks.lifecycle("on_approval", session_id=resolved.session_id, task_id=resolved.task_id, state="rejected", item_id=str(item_id))
-    return {"ok": True}
+    woken = False
+    if resolved.task_id is not None:
+        # A23: отказ по делегированной задаче — родитель получает «failed» и решает, что делать дальше.
+        from aria.core.loop import deliver_child_result
+
+        parent_id = deliver_child_result(resolved.task_id)
+        runner = getattr(request.app.state, "task_runner", None) if request is not None else None
+        if parent_id is not None and runner is not None:
+            woken = bool(runner.submit(parent_id, mode="agent", source="child_rejected").get("queued"))
+    return {"ok": True, "parent_resumed": woken}
