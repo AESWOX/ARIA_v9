@@ -59,7 +59,15 @@ class KeyPool:
                 key = self._keys[idx]
                 if self._is_usable(key):
                     return key
-            raise NoAvailableKeys(f"pool '{self.name}': all {len(self._keys)} keys dead/cooling down")
+            wait = self._soonest_available_locked()
+            hint = f", first one frees up in ~{wait:.0f}s" if wait is not None else ", all dead until restart"
+            raise NoAvailableKeys(f"pool '{self.name}': all {len(self._keys)} keys dead/cooling down{hint}")
+
+    def _soonest_available_locked(self) -> float | None:
+        """Секунд до освобождения ближайшего не мёртвого ключа (None, если все мертвы). Вызывать под self._lock."""
+        now = time.monotonic()
+        waits = [max(0.0, self._cooldown_until.get(k, 0.0) - now) for k in self._keys if k not in self._dead]
+        return min(waits) if waits else None
 
     def mark_rate_limited(self, key: str, cooldown_sec: float | None = None) -> None:
         """Put the key on cooldown (default ``self.cooldown_sec``).
@@ -86,4 +94,5 @@ class KeyPool:
                 "total": len(self._keys),
                 "dead": len(self._dead),
                 "cooling_down": sum(1 for until in self._cooldown_until.values() if until > now),
+                "retry_in_sec": self._soonest_available_locked(),
             }

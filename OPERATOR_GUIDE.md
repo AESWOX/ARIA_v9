@@ -178,3 +178,25 @@ Select-String -Path $e -Pattern "MODEL"
 
 **Квота Gemini (12.10).** Квота free tier считается на проект и модель; когда она исчерпана, ответ 429 содержит `quotaId` с `PerDay` и `retryDelay`. Классы Flash и Pro по умолчанию указывают на одну модель, поэтому запасного пути между ними нет. Разведите модели в `.env` (`GEMINI_FLASH_MODEL`, `GEMINI_PRO_MODEL`, `COMPRESSION_MODEL`), выбрав из тех, что отвечают вашему ключу; список — `GET https://generativelanguage.googleapis.com/v1beta/openai/models` с вашим ключом. Качество вызова тулов у выбранных моделей вживую не проверялось. Для прогона без сжатия: `rebuild_and_smoke.py --live-only --no-ctx`.
 
+
+**Цепочки моделей Gemini (0021).** У каждой модели Gemini своя квота на проект, поэтому на класс можно задать список: когда одна модель исчерпана (429), запрос сам уходит на следующую, а исчерпанная пропускается до конца `retryDelay`. Переменные (через запятую, порядок = порядок попыток): `GEMINI_FLASH_MODELS` (чат, сабы), `GEMINI_PRO_MODELS` (агент, аудит), `COMPRESSION_MODELS` (сжатие). Не заданы: работают прежние `GEMINI_FLASH_MODEL`, `GEMINI_PRO_MODEL`, `COMPRESSION_MODEL`. Первое звено цепочки сохраняет прежнее имя провайдера (`gemini-flash`, `gemini-pro`), остальные называются `gemini-flash-<модель>`, `gemini-pro-<модель>`. Имена брать из `GET .../v1beta/openai/models` с вашим ключом, не из головы: неверное имя даёт 404, провайдер откладывается на 10 минут и цепочка идёт дальше.
+
+Сколько запросов в сутки даёт каждая модель, зависит от вашего проекта, и точные цифры показывает только консоль `aistudio.google.com/rate-limit`; ориентируйтесь на неё, а не на сторонние сводки. Если все 10 ключей из одного проекта, они делят квоту каждой модели, и умножает ёмкость только число моделей в цепочке. Пример (порядок ваш, цифры не проверены):
+
+```powershell
+$e = "$env:APPDATA\ARIA\.env"
+Copy-Item $e "$e.bak"
+$lines = Get-Content $e
+$set = [ordered]@{
+  GEMINI_FLASH_MODELS = 'gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite'
+  GEMINI_PRO_MODELS   = 'gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash'
+  COMPRESSION_MODELS  = 'gemini-2.5-flash-lite,gemini-3.1-flash-lite'
+}
+foreach ($kv in $set.GetEnumerator()) {
+  if ($lines -match "^$($kv.Key)=") { $lines = $lines -replace "^$($kv.Key)=.*$","$($kv.Key)=$($kv.Value)" } else { $lines += "$($kv.Key)=$($kv.Value)" }
+}
+[IO.File]::WriteAllLines($e, $lines, (New-Object Text.UTF8Encoding($false)))
+Select-String -Path $e -Pattern "MODELS"
+```
+
+Агент идёт по цепочке `GEMINI_PRO_MODELS`, затем по запасному классу (быстрые модели из `GEMINI_FLASH_MODELS`), так что модели из второго списка тоже работают как запас агента. Слабее по рассуждениям Flash-Lite и их вызов инструментов вживую не проверялся.

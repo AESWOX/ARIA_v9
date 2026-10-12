@@ -298,12 +298,14 @@ class ProviderRouter:
 def build_default_router() -> ProviderRouter:
     """Собирает роутер из env-конфигурации: DeepSeek как standard/premium,
     Gemini/Groq с ротацией ключей. Всегда есть deterministic stub для smoke/MVP."""
+    from aria.llm import gemini_pools
     from aria.llm.key_pool import KeyPool
     from aria.llm.providers.openai_compatible import OpenAICompatibleProvider
     from aria.llm.providers.stub import StubProvider
 
     settings = get_settings()
     router = ProviderRouter()
+    gemini_pools.reset()  # новая сборка роутера (старт или смена .env): cooldown пулов начинается с нуля
 
     has_any_real_provider = False
 
@@ -334,45 +336,35 @@ def build_default_router() -> ProviderRouter:
     gemini_keys = settings.gemini_api_keys_list
     if gemini_keys:
         has_any_real_provider = True
-        # Квота Gemini считается на проект И МОДЕЛЬ. Поэтому пул ключей общий для всех провайдеров с одной
-        # моделью (429 у Flash тут же известен «запасному» провайдеру на той же модели, а не перебирается
-        # заново), и раздельный для разных моделей (исчерпанная модель A не блокирует модель B).
-        gemini_pools: dict[str, KeyPool] = {}
+        # Квота Gemini считается на проект И МОДЕЛЬ (0020): пул ключей общий для всех, кто ходит в одну
+        # модель этими ключами (реестр gemini_pools), и раздельный для разных моделей. С 0021 на класс
+        # можно задать ЦЕПОЧКУ моделей (GEMINI_FLASH_MODELS / GEMINI_PRO_MODELS): у каждой модели своя
+        # квота на тех же ключах, и когда одна исчерпана, запрос идёт на следующую по порядку.
+        def _short(model: str) -> str:
+            return model[len("gemini-"):] if model.startswith("gemini-") else model
 
-        def _gemini_pool(model: str) -> KeyPool:
-            if model not in gemini_pools:
-                gemini_pools[model] = KeyPool(gemini_keys, name=f"gemini-{model}")
-            return gemini_pools[model]
+        def _register_chain(base_id: str, provider_class: str, models: list[str], *, direct: bool) -> None:
+            for i, model in enumerate(models):
+                provider = OpenAICompatibleProvider(
+                    # первое звено сохраняет прежний id (профили запуска и выбор модели в UI ссылаются на него)
+                    provider_id=base_id if i == 0 else f"{base_id}-{_short(model)}",
+                    provider_class=provider_class,
+                    base_url=settings.gemini_base_url,
+                    model=model,
+                    key_pool=gemini_pools.pool_for(gemini_keys, model),
+                )
+                if direct:
+                    router.register(provider)
+                else:
+                    router.providers_by_class.setdefault(provider_class, []).append(provider)
 
-        router.register(
-            OpenAICompatibleProvider(
-                provider_id="gemini-flash",
-                provider_class="free_tier_reasoning",
-                base_url=settings.gemini_base_url,
-                model=settings.gemini_flash_model,
-                key_pool=_gemini_pool(settings.gemini_flash_model),
-            )
-        )
-        router.register(
-            OpenAICompatibleProvider(
-                provider_id="gemini-pro",
-                provider_class="standard_reasoning",
-                base_url=settings.gemini_base_url,
-                model=settings.gemini_pro_model,
-                key_pool=_gemini_pool(settings.gemini_pro_model),
-            )
-        )
-        # DeepSeek приоритет для premium_reasoning; если DeepSeek не задан/недоступен —
-        # полный фолбэк на Gemini (пул общий с gemini-pro: та же модель — та же квота).
-        router.providers_by_class.setdefault("premium_reasoning", []).append(
-            OpenAICompatibleProvider(
-                provider_id="gemini-pro-premium-fallback",
-                provider_class="premium_reasoning",
-                base_url=settings.gemini_base_url,
-                model=settings.gemini_pro_model,
-                key_pool=_gemini_pool(settings.gemini_pro_model),
-            )
-        )
+        flash_chain = settings.gemini_flash_chain
+        pro_chain = settings.gemini_pro_chain
+        _register_chain("gemini-flash", "free_tier_reasoning", flash_chain, direct=True)
+        _register_chain("gemini-pro", "standard_reasoning", pro_chain, direct=True)
+        # DeepSeek приоритет для premium_reasoning; если DeepSeek не задан/недоступен — полный фолбэк
+        # на Gemini (пулы общие с gemini-pro: та же модель — та же квота).
+        _register_chain("gemini-pro-premium-fallback", "premium_reasoning", pro_chain, direct=False)
 
     groq_keys = settings.groq_api_keys_list
     if groq_keys:
@@ -412,14 +404,16 @@ def build_default_router() -> ProviderRouter:
     vision_keys = settings.vision_gemini_api_keys_list
     if vision_keys:
         has_any_real_provider = True
-        vision_pool = KeyPool(vision_keys, name="vision")
+        # Те же ключи и та же модель, что у чата, = тот же пул (одна квота, один cooldown). Отдельные
+        # VISION_GEMINI_API_KEYS дают отдельный набор ключей и потому свой пул.
+        vision_model = settings.gemini_flash_chain[0]
         router.register(
             OpenAICompatibleProvider(
                 provider_id="gemini-vision",
                 provider_class="vision_multimodal",
                 base_url=settings.gemini_base_url,
-                model=settings.gemini_flash_model,
-                key_pool=vision_pool,
+                model=vision_model,
+                key_pool=gemini_pools.pool_for(vision_keys, vision_model),
             )
         )
 

@@ -142,6 +142,12 @@ class Settings(BaseSettings):
     # GEMINI_PRO_MODEL=gemini-2.5-pro in .env.
     gemini_flash_model: str = "gemini-3.8-flash"
     gemini_pro_model: str = "gemini-3.8-flash"
+    # 0021: цепочки моделей (через запятую). Квота Gemini считается на проект И МОДЕЛЬ, поэтому каждая
+    # модель в цепочке даёт свою отдельную квоту на тех же ключах: когда исчерпана одна, запрос идёт на
+    # следующую. Пусто = одна модель из GEMINI_FLASH_MODEL / GEMINI_PRO_MODEL / COMPRESSION_MODEL (как раньше).
+    # Пример: GEMINI_FLASH_MODELS=gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite
+    gemini_flash_models: str = ""
+    gemini_pro_models: str = ""
 
     groq_api_key: str = ""
     # GROQ_API_KEYS=key1,key2,...,key10
@@ -153,6 +159,7 @@ class Settings(BaseSettings):
     compression_enabled: bool = True
     compression_gemini_api_keys: str = ""  # falls back to gemini_api_keys if empty
     compression_model: str = "gemini-3.8-flash"
+    compression_models: str = ""  # цепочка моделей сжатия (см. gemini_flash_models); пусто = compression_model
     compression_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     compression_timeout_sec: int = 120
     # CTX: основной триггер — оценка токенов истории сессии (порог на СЕССИЮ,
@@ -167,13 +174,39 @@ class Settings(BaseSettings):
 
     agent_sandbox_root: str = paths.default_sandbox_path()
 
-    @field_validator("gemini_api_keys", "groq_api_keys", "compression_gemini_api_keys", mode="before")
+    @field_validator(
+        "gemini_api_keys", "groq_api_keys", "compression_gemini_api_keys",
+        "gemini_flash_models", "gemini_pro_models", "compression_models",
+        mode="before",
+    )
     @classmethod
     def _normalize_key_list(cls, value: str | None) -> str:
         return value or ""
 
     def _parse_keys(self, raw: str | None) -> list[str]:
         return [k.strip() for k in (raw or "").split(",") if k.strip()]
+
+    @staticmethod
+    def _model_chain(chain_raw: str | None, single: str) -> list[str]:
+        """Цепочка моделей без дублей, порядок сохраняется; пустой список в .env = одна модель (прежнее поведение)."""
+        out: list[str] = []
+        for name in (chain_raw or "").split(","):
+            name = name.strip()
+            if name and name not in out:
+                out.append(name)
+        return out or ([single.strip()] if single and single.strip() else [])
+
+    @property
+    def gemini_flash_chain(self) -> list[str]:
+        return self._model_chain(self.gemini_flash_models, self.gemini_flash_model)
+
+    @property
+    def gemini_pro_chain(self) -> list[str]:
+        return self._model_chain(self.gemini_pro_models, self.gemini_pro_model)
+
+    @property
+    def compression_chain(self) -> list[str]:
+        return self._model_chain(self.compression_models, self.compression_model)
 
     @property
     def gemini_api_keys_list(self) -> list[str]:
