@@ -733,8 +733,16 @@ async def _delegate_task(
         summary = sub_task.objective[:200]
         error = sub_task.error_message if sub_task.status in (TaskStatus.failed, TaskStatus.cancelled) else None
 
-    return {
+    out = {
         "status": "done" if status in ("done", "done_unaudited") else status,
         "summary": summary,
         "error": error,
+        "task_id": str(sub_task_id),
     }
+    if status == "awaiting_attention":
+        # A23: без этой подсказки настоящая модель снова и снова вызывала delegate_task и плодила карточки Approve.
+        out["note"] = (
+            "The sub-task is waiting for the owner's Approve in ARIA. Do not delegate this work again: "
+            "the result will be delivered to you after the owner decides."
+        )
+    return out

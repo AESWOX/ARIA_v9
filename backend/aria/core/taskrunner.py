@@ -370,6 +370,12 @@ class TaskRunner:
         from aria.core.loop import resume_after_approval
 
         await resume_after_approval(job.task_id, self._router, self._sandbox_root, item)
+        # A23: если это дочерняя задача делегата и родитель ждал её — вернуть результат и продолжить родителя.
+        from aria.core.loop import deliver_child_result, execute_agent_loop
+
+        parent_id = deliver_child_result(job.task_id)
+        if parent_id is not None:
+            await execute_agent_loop(parent_id, self._router, self._sandbox_root)
         return {"status": "ok", "resumed": True}
 
     async def _run(self, job: Job) -> dict[str, Any]:
