@@ -148,6 +148,9 @@ class Settings(BaseSettings):
     # Пример: GEMINI_FLASH_MODELS=gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite
     gemini_flash_models: str = ""
     gemini_pro_models: str = ""
+    # 0027: автоподбор цепочек по доступным моделям (aria/llm/gemini_discovery.py, scripts/gemini_autoconfig.py).
+    # Работает, только когда цепочка не задана явно; явные GEMINI_*_MODELS всегда главнее. 0 = выключить.
+    gemini_models_auto: bool = True
 
     groq_api_key: str = ""
     # GROQ_API_KEYS=key1,key2,...,key10
@@ -196,17 +199,25 @@ class Settings(BaseSettings):
                 out.append(name)
         return out or ([single.strip()] if single and single.strip() else [])
 
+    def _auto_chain(self, kind: str) -> str:
+        """0027: цепочка из кэша автоподбора (строкой через запятую) или пусто."""
+        if not self.gemini_models_auto:
+            return ""
+        from aria.llm import gemini_discovery
+
+        return ",".join(gemini_discovery.cached_chain(kind))
+
     @property
     def gemini_flash_chain(self) -> list[str]:
-        return self._model_chain(self.gemini_flash_models, self.gemini_flash_model)
+        return self._model_chain(self.gemini_flash_models or self._auto_chain("flash"), self.gemini_flash_model)
 
     @property
     def gemini_pro_chain(self) -> list[str]:
-        return self._model_chain(self.gemini_pro_models, self.gemini_pro_model)
+        return self._model_chain(self.gemini_pro_models or self._auto_chain("pro"), self.gemini_pro_model)
 
     @property
     def compression_chain(self) -> list[str]:
-        return self._model_chain(self.compression_models, self.compression_model)
+        return self._model_chain(self.compression_models or self._auto_chain("compression"), self.compression_model)
 
     @property
     def gemini_api_keys_list(self) -> list[str]:

@@ -84,6 +84,7 @@ _REGISTRY: dict[str, dict[str, Any]] = {
     "GEMINI_PRO_MODEL": _entry("GEMINI_PRO_MODEL", "Gemini model for the 'pro' class; keep a Flash model on the free tier", "provider", advanced=True),
     "GEMINI_FLASH_MODELS": _entry("GEMINI_FLASH_MODELS", "Chain of Gemini models for fast/free answers, comma-separated, tried in order (own quota per model)", "provider", advanced=True),
     "GEMINI_PRO_MODELS": _entry("GEMINI_PRO_MODELS", "Chain of Gemini models for the 'pro' class (agent), comma-separated, tried in order", "provider", advanced=True),
+    "GEMINI_MODELS_AUTO": _entry("GEMINI_MODELS_AUTO", "Auto-pick Gemini model chains from the models your key can use (1/0). Explicit *_MODELS chains win", "provider", advanced=True),
     "COMPRESSION_MODELS": _entry("COMPRESSION_MODELS", "Chain of Gemini models for context compression, comma-separated", "provider", advanced=True),
     "GROQ_API_KEY": _entry("GROQ_API_KEY", "Groq API key", "provider", url="https://console.groq.com/keys"),
     "GROQ_API_KEYS": _entry("GROQ_API_KEYS", "Groq key rotation pool (comma-separated)", "provider", url="https://console.groq.com/keys"),

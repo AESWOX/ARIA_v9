@@ -390,6 +390,11 @@ def build_default_router() -> ProviderRouter:
                 else:
                     router.providers_by_class.setdefault(provider_class, []).append(provider)
 
+        # 0027: цепочки не заданы в .env -> подобрать по списку моделей ключа (кэш на 12 ч; сеть недоступна = как раньше).
+        if settings.gemini_models_auto and not (settings.gemini_flash_models and settings.gemini_pro_models):
+            from aria.llm import gemini_discovery
+
+            gemini_discovery.refresh_if_stale(gemini_keys, settings.gemini_base_url)
         flash_chain = settings.gemini_flash_chain
         pro_chain = settings.gemini_pro_chain
         _register_chain("gemini-flash", "free_tier_reasoning", flash_chain, direct=True)

@@ -28,6 +28,7 @@ for _name in (
     os.environ.pop(_name, None)
 
 os.environ["ARIA_DATA_DIR"] = str(_TEST_ROOT)
+os.environ["GEMINI_MODELS_AUTO"] = "0"  # тесты не ходят в сеть за списком моделей (0027); нужные тесты включают сами
 os.environ["POSTGRES_DSN"] = "sqlite:///" + (_TEST_ROOT / "local_agent.db").as_posix()
 
 FIXTURE_SKILLS = {
