@@ -376,10 +376,24 @@ def _finish(ctx: Ctx, sid: str, item: dict, until=None) -> dict:
     """Approve и дождаться результата. until() — признак готовности (по умолчанию: корневая задача терминальна)."""
     res = ctx.api.ok("POST", f"/attention-items/{item['id']}/approve", {}, timeout=60)
     assert res.get("resumed") is True, f"approve did not resume the task (A22): {res}"
-    if until is None:
-        return wait_for(lambda: (lambda r: r if r["terminal"] else None)(_pending(ctx, sid)), LLM_TIMEOUT, "the task to finish after approve")
-    wait_for(until, LLM_TIMEOUT, "the approved action to finish")
+    try:
+        if until is None:
+            return wait_for(lambda: (lambda r: r if r["terminal"] else None)(_pending(ctx, sid)), LLM_TIMEOUT, "the task to finish after approve")
+        wait_for(until, LLM_TIMEOUT, "the approved action to finish")
+    except AssertionError as exc:
+        raise AssertionError(f"{exc}; {_snapshot(ctx, sid)}") from None
     return _pending(ctx, sid)
+
+
+def _snapshot(ctx: Ctx, sid: str) -> str:
+    """Что было в сессии в момент таймаута: статус, ошибка, ждёт ли ещё карточка, хвост переписки."""
+    try:
+        run = _pending(ctx, sid)
+        tail = [f"{m.get('role')}: {str(m.get('content') or '')[:120]}" for m in messages(ctx, sid)[-4:]]
+        return (f"task status={run['status']!r} error_code={run.get('error_code')!r} "
+                f"error_message={str(run.get('error_message'))[:200]!r} pending_cards={len(run['attention'])} tail={tail}")
+    except Exception as exc:  # noqa: BLE001
+        return f"(snapshot failed: {exc})"
 
 
 @stage("agent_shell", needs_llm=True)
@@ -395,7 +409,9 @@ def s_agent_shell(ctx: Ctx):
     )
     assert "git version" not in json.dumps(messages(ctx, sid)), "command output appeared BEFORE approval"
     # boss: корневая задача завершается, пока дочерняя ждёт Approve, поэтому ждём САМ результат команды
-    done = lambda: any(str(m.get("content") or "").startswith("shell_execute") for m in messages(ctx, sid))  # noqa: E731
+    # Сообщение «shell_execute (approved) -> ok» появляется раньше, чем модель перескажет вывод команды,
+    # поэтому ждём сам вывод (0024: раньше проверка срабатывала по первому и падала гонкой).
+    done = lambda: "git version" in json.dumps(messages(ctx, sid), ensure_ascii=False)  # noqa: E731
     _finish(ctx, sid, item, until=done)
     dump = json.dumps(messages(ctx, sid), ensure_ascii=False)
     assert "git version" in dump, f"approved command did not run / result missing: {dump[-300:]}"
@@ -412,6 +428,7 @@ def s_agent_mcp(ctx: Ctx):
         ctx, "e2e mcp approval",
         f"Call the tool {tool} with the argument text=\"{note}\". Call it first, then report the result.",
         "mcp_tool_approval",
+        profile={"style": "solo", "audit": "off", "thinking": "off"},  # проверяем Approve, а не аудит: короче и без лишних вызовов модели
     )
     assert not ctx.mcp.calls, "MCP server was called BEFORE owner approval (default-deny broken)"
     final = _finish(ctx, sid, item)
