@@ -195,3 +195,82 @@ def test_compression_walks_the_model_chain_and_uses_retry_delay(monkeypatch):
     finally:
         config.get_settings.cache_clear()
         gemini_pools.reset()
+
+
+# ── 0022: любая ошибка ведёт дальше по цепочке, пока не погаснет всё ──
+
+def _chain_router(*providers):
+    class R(ProviderRouter):
+        def _record_provider_status(self, *a, **k):
+            pass
+
+        def budget_gate(self, cls):
+            return True, False
+
+    r = R()
+    for p in providers:
+        r.register(p)
+    return r
+
+
+@pytest.fixture
+def _fast_settings(monkeypatch):
+    class S:
+        providers_connectivity_timeout_sec = 1
+
+    monkeypatch.setattr("aria.llm.router.get_settings", lambda: S())
+
+
+def test_every_kind_of_failure_goes_on_to_the_next_model(_fast_settings):
+    steps = [
+        lambda p: (_ for _ in ()).throw(_http(429)),
+        lambda p: (_ for _ in ()).throw(_http(400)),
+        lambda p: (_ for _ in ()).throw(_http(401)),
+        lambda p: (_ for _ in ()).throw(httpx.ReadTimeout("slow")),
+        lambda p: (_ for _ in ()).throw(KeyError("choices")),  # пустой/битый ответ
+        lambda p: "alive",
+    ]
+    provs = [_Stub(f"m{i}", "free_tier_reasoning", KeyPool(["k"], name=f"p{i}"), fn) for i, fn in enumerate(steps)]
+    res = asyncio.run(_chain_router(*provs).route_chat("free_tier_reasoning", [], [], resilient=True))
+    assert res.response == "alive" and res.provider_id == "m5" and res.fallback
+    assert [p.calls for p in provs] == [1] * 6
+
+
+def test_when_everything_is_down_error_lists_all_and_a_bad_response_becomes_unavailable(_fast_settings):
+    from aria.llm.router import ProviderUnavailable, tried_suffix
+
+    a = _Stub("m0", "free_tier_reasoning", KeyPool(["k"], name="a"), lambda p: (_ for _ in ()).throw(_http(429)))
+    b = _Stub("m1", "free_tier_reasoning", KeyPool(["k"], name="b"), lambda p: (_ for _ in ()).throw(KeyError("choices")))
+    with pytest.raises(ProviderUnavailable) as ei:
+        asyncio.run(_chain_router(a, b).route_chat("free_tier_reasoning", [], [], resilient=True))
+    text = str(ei.value)
+    assert "m0 HTTP 429" in text and "m1 bad response (KeyError)" in text
+    assert tried_suffix(ei.value).startswith(" (tried:")
+
+
+def test_pool_exhausted_providers_are_named_with_wait_time_in_the_final_error(_fast_settings):
+    from aria.llm.router import ProviderUnavailable
+
+    pool = KeyPool(["k1", "k2"], name="x")
+    pool.mark_rate_limited("k1", 64600)
+    pool.mark_rate_limited("k2", 64600)
+    dead = _Stub("gemini-flash", "free_tier_reasoning", pool, lambda p: "never")
+    with pytest.raises(ProviderUnavailable, match=r"gemini-flash no usable key \(first frees up in ~646\d\ds\)"):
+        asyncio.run(_chain_router(dead).route_chat("free_tier_reasoning", [], [], resilient=True))
+    assert dead.calls == 0
+
+
+def test_a_provider_that_failed_with_400_goes_to_the_back_of_the_queue(_fast_settings):
+    from aria.llm.router import OTHER_ERROR_COOLDOWN_SEC
+
+    bad = _Stub("m0", "free_tier_reasoning", KeyPool(["k"], name="a"), lambda p: (_ for _ in ()).throw(_http(400)))
+    good = _Stub("m1", "free_tier_reasoning", KeyPool(["k"], name="b"), lambda p: "ok")
+    r = _chain_router(bad, good)
+    now = [100.0]
+    r.clock = lambda: now[0]
+    asyncio.run(r.route_chat("free_tier_reasoning", [], [], resilient=True))
+    asyncio.run(r.route_chat("free_tier_reasoning", [], [], resilient=True))
+    assert bad.calls == 1 and good.calls == 2
+    now[0] += OTHER_ERROR_COOLDOWN_SEC + 1
+    asyncio.run(r.route_chat("free_tier_reasoning", [], [], resilient=True))
+    assert bad.calls == 2

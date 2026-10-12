@@ -46,6 +46,9 @@ RETRYABLE_STATUS = frozenset({408, 425, 500, 502, 503, 504})
 # провайдера на время откладываем в конец очереди (404 лечится правкой .env и перезапуском).
 ACCOUNT_STATUS = frozenset({402, 403, 404})
 ACCOUNT_COOLDOWN_SEC = 600.0
+# Любой другой отказ провайдера (400/401/413/422..., битый ответ): идём дальше по цепочке, а провайдера на
+# две минуты уводим в конец очереди: если он не тянет эту модель/схему тулов, не тратим на него первый запрос.
+OTHER_ERROR_COOLDOWN_SEC = 120.0
 RETRY_ATTEMPTS_PER_PROVIDER = 2      # same provider, on 5xx only
 RETRY_BACKOFF_SEC = 1.0              # 1s, then 2s
 
@@ -220,6 +223,17 @@ class ProviderRouter:
         self._record_provider_status(provider, ProviderStatus.active if ok else ProviderStatus.offline, db=db)
         return ok
 
+    @staticmethod
+    def _unavailable_reason(provider: LlmProvider) -> str:
+        """Почему провайдер пропущен без запроса: нет живых ключей (и когда освободится первый) или нет связи."""
+        pool = getattr(provider, "key_pool", None)
+        if pool is not None:
+            st = pool.status()
+            if st["dead"] + st["cooling_down"] >= st["total"]:
+                wait = st.get("retry_in_sec")
+                return f"no usable key (first frees up in ~{wait:.0f}s)" if wait is not None else "no usable key (all dead)"
+        return "unreachable"
+
     async def _route_resilient(
         self,
         provider_class: str,
@@ -235,8 +249,9 @@ class ProviderRouter:
         - 5xx from a provider: retry it (backoff 1s, 2s), then move on.
         - 429 / exhausted keys / timeout / network error: move on at once
           (the provider already rotated its own keys; retrying only burns time).
-        - Anything else (400, 401 with no keys left handled inside the provider,
-          parse errors): raised as is, another provider would fail the same way.
+        - Anything else (400, 401 with no keys left, битый ответ): тоже идём дальше (0022): провайдер мог не
+          потянуть именно эту модель или схему тулов. Остановка только когда погасла вся цепочка; тогда
+          поднимается последняя ошибка со списком всех попыток (`tried: ...`).
         Budget gate applies to every class tried.
         """
         classes = [provider_class, *[c for c in fallback_classes if c != provider_class]]
@@ -254,6 +269,7 @@ class ProviderRouter:
                     continue
             for provider in self._ordered(self.providers_by_class.get(cls, [])):
                 if not await self._connectivity_ok(provider, db):
+                    attempts.append(f"{provider.provider_id} {self._unavailable_reason(provider)}")
                     continue
                 for attempt in range(RETRY_ATTEMPTS_PER_PROVIDER):
                     tried += 1
@@ -275,11 +291,21 @@ class ProviderRouter:
                         if status == 429 or status in RETRYABLE_STATUS:
                             logger.warning("%s: HTTP %s, switching provider", provider.provider_id, status)
                             break
-                        raise
+                        # 400/401/413/422...: этот провайдер не обслужил запрос (схема тулов, параметры, все ключи
+                        # мертвы). Не останавливаемся на первой же ошибке: идём к следующему, пока цепочка не кончится.
+                        self.cooldown_until[provider.provider_id] = self.clock() + OTHER_ERROR_COOLDOWN_SEC
+                        logger.warning("%s: HTTP %s, trying the next provider", provider.provider_id, status)
+                        break
                     except (NoAvailableKeys, httpx.TimeoutException, httpx.TransportError) as exc:
                         logger.warning("%s: %s, switching provider", provider.provider_id, type(exc).__name__)
                         last_exc = exc
                         attempts.append(f"{provider.provider_id} {type(exc).__name__}")
+                        break
+                    except (KeyError, IndexError, TypeError, ValueError) as exc:  # пустой/битый ответ (нет choices, не JSON)
+                        logger.warning("%s: unusable response (%s), switching provider", provider.provider_id, type(exc).__name__)
+                        last_exc = exc
+                        attempts.append(f"{provider.provider_id} bad response ({type(exc).__name__})")
+                        self.cooldown_until[provider.provider_id] = self.clock() + OTHER_ERROR_COOLDOWN_SEC
                         break
                     else:
                         return RoutingResult(
@@ -288,11 +314,17 @@ class ProviderRouter:
                             degraded_to_free=degraded or (cls != provider_class and cls == "free_tier_reasoning"),
                             fallback=tried > 1,
                         )
-        if last_exc is not None:
+        if last_exc is not None and isinstance(last_exc, (httpx.HTTPError, NoAvailableKeys, ProviderUnavailable)):
             # keep the original error so callers map it as before (429 -> 429, timeout -> 504, ...)
             last_exc.attempts = attempts
             raise last_exc
-        raise ProviderUnavailable(f"no available provider for class={provider_class} (§12.3)")
+        unavailable = ProviderUnavailable(
+            f"no available provider for class={provider_class} (§12.3)"
+            + (f" (last error: {type(last_exc).__name__}: {last_exc})" if last_exc is not None else "")
+            + (f" (tried: {'; '.join(attempts)})" if attempts else "")
+        )
+        unavailable.attempts = attempts
+        raise unavailable from last_exc
 
 
 def build_default_router() -> ProviderRouter:
