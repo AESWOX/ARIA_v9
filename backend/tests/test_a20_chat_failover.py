@@ -75,12 +75,22 @@ async def test_429_and_no_keys_switch_without_retry():
     assert res.provider_id == "deepseek-chat" and g.calls == 1 and k.calls == 1
 
 
-async def test_non_transient_error_is_raised_not_masked():
+async def test_non_transient_error_moves_on_instead_of_stopping_the_chain():
+    """0022: 400 у одного провайдера (схема тулов, параметры) не останавливает перебор: пробуем следующего."""
     g = Fake("gemini", "free_tier_reasoning", [_status_error(400)])
-    d = Fake("deepseek-chat", "standard_reasoning", ["never"])
-    with pytest.raises(httpx.HTTPStatusError):
+    d = Fake("deepseek-chat", "standard_reasoning", ["from deepseek"])
+    res = await _route(_router(g, d))
+    assert res.provider_id == "deepseek-chat" and res.fallback is True and g.calls == 1
+
+
+async def test_when_every_provider_fails_the_last_error_is_raised_with_all_attempts():
+    from aria.llm.router import tried_suffix
+
+    g = Fake("gemini", "free_tier_reasoning", [_status_error(400)])
+    d = Fake("deepseek-chat", "standard_reasoning", [_status_error(401)])
+    with pytest.raises(httpx.HTTPStatusError) as ei:
         await _route(_router(g, d))
-    assert d.calls == 0
+    assert "gemini HTTP 400" in tried_suffix(ei.value) and "deepseek-chat HTTP 401" in tried_suffix(ei.value)
 
 
 async def test_everything_down_raises_last_error():

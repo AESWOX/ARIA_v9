@@ -425,6 +425,7 @@ async def _stage2_plan(
                 result = await router.route_chat(
                     "premium_reasoning", messages, tools=[],
                     allow_degrade=True, db=session,
+                    resilient=True, fallback_classes=("standard_reasoning", "free_tier_reasoning"),
                 )
                 raw = result.response.text.strip()
                 # Парсим JSON из ответа
@@ -538,6 +539,7 @@ async def _stage3_execute(
                 result = await router.route_chat(
                     "subagent_execution", messages, tools=[],
                     allow_degrade=True, db=session,
+                    resilient=True, fallback_classes=("free_tier_reasoning", "standard_reasoning"),
                 )
                 spec = type("Spec", (), {"tool_name": "llm_task", "risk_level": type("R", (), {"value": "medium"})()})()
                 handler_input = {"objective": objective, "role": role}
@@ -676,6 +678,7 @@ async def _llm_generate_content(
     result = await router.route_chat(
         "subagent_execution", messages, tools=[],
         allow_degrade=True, db=session,
+        resilient=True, fallback_classes=("free_tier_reasoning", "standard_reasoning"),
     )
     return result.response.text or ""
 
@@ -698,6 +701,7 @@ async def _llm_generate_command(
     result = await router.route_chat(
         "subagent_execution", messages, tools=[],
         allow_degrade=True, db=session,
+        resilient=True, fallback_classes=("free_tier_reasoning", "standard_reasoning"),
     )
     return result.response.text.strip().strip("`").strip() or "echo 'no command generated'"
 
