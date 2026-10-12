@@ -46,7 +46,8 @@ def test_chains_go_down_in_quality():
     chains = gd.build_chains(MODELS)
     assert chains["pro"][:3] == ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-3.8-flash"]
     assert chains["flash"] == ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
-                               "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+                               "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview",
+                               "gemini-2.5-flash-lite"]
     assert chains["compression"][0] == "gemini-3.5-flash-lite"
     assert all(len(v) <= gd.MAX_CHAIN for v in chains.values())
 
@@ -56,8 +57,25 @@ def test_dead_models_are_dropped_but_busy_ones_stay():
               "gemini-3.7-flash": "rate_limited"}
     chains = gd.build_chains(MODELS, status)
     assert "gemini-3.1-pro-preview" not in chains["pro"] and "gemini-2.5-pro" not in chains["pro"]
-    assert chains["pro"][0] == "gemini-3.8-flash", "перегруженная модель остаётся первой: она живая, цепочка уйдёт ниже сама"
-    assert "gemini-3.7-flash" in chains["pro"]
+    assert chains["pro"][0] == "gemini-3.6-flash", "занятые модели уходят в конец, первой стоит рабочая"
+    assert chains["pro"][-2:] == ["gemini-3.8-flash", "gemini-3.7-flash"], "но не выбрасываются: они живые"
+
+
+def test_busy_models_do_not_push_working_ones_out_of_the_chain():
+    # Реальный прогон 12.10.2026: pro без квоты/не найден, 3.8 и 3.7 перегружены, 3.1-lite таймаут.
+    status = {"gemini-3.1-pro-preview": "quota_zero", "gemini-2.5-pro": "not_found", "gemini-3.8-flash": "overloaded",
+              "gemini-3.7-flash": "overloaded", "gemini-3.1-flash-lite": "overloaded"}
+    chains = gd.build_chains(MODELS, status)
+    working = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite-preview",
+               "gemini-2.5-flash-lite"]
+    for kind in ("pro", "flash"):
+        assert chains[kind][:5] == working
+        assert set(chains[kind][5:]) == {"gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"}
+    assert chains["compression"][:3] == ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite"]
+
+
+def test_unprobed_models_keep_quality_order():
+    assert gd.build_chains(MODELS)["flash"][0] == "gemini-3.8-flash", "без проверки порядок качества не меняется"
 
 
 @pytest.mark.parametrize("code,body,expected", [

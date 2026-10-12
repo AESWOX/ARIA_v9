@@ -12,6 +12,7 @@
   5. результат лежит в ``<data_dir>/gemini_models.json``; ``config.Settings`` берёт цепочки оттуда, если
      в .env они не заданы явно (явная переменная всегда главнее).
 
+0028: модель, не ответившая на проверку (перегрузка / 429 с квотой), не выбрасывается, а уходит в конец цепочки.
 Переключение при отказе во время работы остаётся прежним (0020-0022): исчерпанная модель уходит в cooldown
 по retryDelay Google, запрос идёт на следующую в цепочке. Цепочка идёт «вниз» по качеству:
   pro         = pro -> flash -> lite
@@ -38,7 +39,7 @@ logger = logging.getLogger("local_agent.gemini_discovery")
 CACHE_NAME = "gemini_models.json"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 STALE_AFTER_SEC = 12 * 3600
-MAX_CHAIN = 6
+MAX_CHAIN = 8
 MAX_PER_TIER = 4
 
 # Не чат-модели и алиасы «latest» (их цель меняется, а квота и поведение непредсказуемы).
@@ -50,6 +51,9 @@ _VERSION = re.compile(r"^gemini-(\d+(?:\.\d+)?)-")
 
 # Статусы проверки. Эти модели в цепочку не попадают.
 DROP_STATUSES = frozenset({"not_found", "forbidden", "quota_zero"})
+# 0028: живые, но сейчас занятые. Остаются в цепочке, но в самом конце: иначе каждый запрос сначала
+# ждёт таймаут перегруженной модели и только потом уходит на рабочую (так упал смоук 12.10.2026).
+BUSY_STATUSES = frozenset({"overloaded", "rate_limited", "unknown"})
 
 
 @dataclass(frozen=True)
@@ -116,6 +120,9 @@ def build_chains(
             for model in part:
                 if model not in out:
                     out.append(model)
+        # 0028: рабочие вперёд (порядок качества внутри группы сохраняется), занятые в хвост, и только потом обрезка:
+        # занятые модели не вытесняют рабочие из-за лимита длины.
+        out.sort(key=lambda m: status.get(m, "unprobed") in BUSY_STATUSES)
         return out[:max_chain]
 
     chains = {
