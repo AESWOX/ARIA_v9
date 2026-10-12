@@ -2203,6 +2203,12 @@ export interface ChatSessionRow {
   title: string;
   message_count: number;
   updated_at: string | null;
+  /** attention items waiting for Approve/Reject */
+  pending_approvals?: number;
+  /** a task is running in this chat */
+  busy?: boolean;
+  /** time of the last assistant message (for "unread reply") */
+  last_reply_at?: string | null;
 }
 
 export interface ChatMsg {
