@@ -54,7 +54,9 @@ from aria.routers.providers import router as providers_router
 from aria.routers.sessions import router as sessions_router
 from aria.routers.skills import router as skills_router
 from aria.routers.storage import router as storage_router
+from aria.routers.ops import router as ops_router
 from aria.routers.stubs import router as stubs_router
+from aria.routers.webhooks import router as webhooks_router
 from aria.routers.system import router as system_router
 from aria.routers.tasks import router as tasks_router
 from aria.routers.tools import router as tools_router
@@ -196,6 +198,8 @@ for _r in (
     skills_router,
     storage_router,
     stubs_router,
+    ops_router,
+    webhooks_router,
     system_router,
     tasks_router,
     tools_router,

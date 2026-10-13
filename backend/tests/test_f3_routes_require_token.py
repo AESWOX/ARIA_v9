@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from aria.main import app
 
 METHODS = ("get", "post", "put", "delete", "patch")
-PUBLIC = {("GET", "/health"), ("GET", "/status"), ("GET", "/mcp/oauth/callback")}  # callback: браузер без токена, защита — одноразовый state
+PUBLIC = {("GET", "/health"), ("GET", "/status"), ("GET", "/mcp/oauth/callback"), ("POST", "/webhooks/in/{name}")}  # callback: браузер без токена, защита — одноразовый state
 MULTIPART = {("POST", "/storage/b2/upload"), ("POST", "/storage/vault/upload")}
 
 
