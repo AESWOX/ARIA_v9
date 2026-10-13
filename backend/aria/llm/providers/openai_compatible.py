@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 import httpx
 
@@ -70,6 +71,16 @@ def _cooldown_for_429(resp: httpx.Response, body_lower: str, default: float) -> 
     return default
 
 
+# Проверка связи делается перед КАЖДЫМ вызовом модели и для КАЖДОГО провайдера цепочки (до 8 Gemini-моделей на одном хосте).
+# Раньше это давало ~18 000 лишних GET /models за два дня. Успех кэшируется на хост; неуспех не кэшируется.
+_CONNECTIVITY_TTL_SEC = 60.0
+_connectivity_ok_until: dict[str, float] = {}
+
+
+def reset_connectivity_cache() -> None:
+    _connectivity_ok_until.clear()
+
+
 class OpenAICompatibleProvider(LlmProvider):
     """Общий клиент для любого /v1/chat/completions-совместимого backend'а:
     DeepSeek, Gemini (openai-compat endpoint), Groq и т.д. —
@@ -115,6 +126,8 @@ class OpenAICompatibleProvider(LlmProvider):
         """§12.3: DNS/HTTP check timeout 2 сек (default), без бесконечного перебора.
         С пулом ключей: пробуем текущий ключ пула, не гоняем весь пул на health-check
         (это делает route_chat -> chat() при реальном вызове)."""
+        if _connectivity_ok_until.get(self.base_url, 0.0) > time.monotonic():
+            return True
         try:
             key = self.api_key
             if self.key_pool:
@@ -124,7 +137,10 @@ class OpenAICompatibleProvider(LlmProvider):
                     return False
             async with httpx.AsyncClient(timeout=timeout_sec) as client:
                 resp = await client.get(f"{self.base_url}/models", headers=self._headers(key))
-                return resp.status_code < 500
+                ok = resp.status_code < 500
+                if ok:
+                    _connectivity_ok_until[self.base_url] = time.monotonic() + _CONNECTIVITY_TTL_SEC
+                return ok
         except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPError):
             return False
 

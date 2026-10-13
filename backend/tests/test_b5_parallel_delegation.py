@@ -181,7 +181,9 @@ def test_three_delegations_from_one_response_run_concurrently(world):
     elapsed = time.monotonic() - t0
 
     assert sub.max_live == 3, "три саб-агента должны работать одновременно"
-    assert elapsed < 0.6 * 2.5, f"последовательно было бы >= 1.8 с, получилось {elapsed:.2f}"
+    # Каждый ребёнок делает 2 вызова модели (прочитать файл -> итог) = 2 * 0.6 с.
+    # Параллельно: ~1.2 с + накладные (на Windows до ~0.4 с). Последовательно: >= 3 * 1.2 = 3.6 с. Порог посередине.
+    assert elapsed < 2.4, f"последовательно было бы >= 3.6 с, получилось {elapsed:.2f}"
     kids = _children(parent_id)
     assert len(kids) == 3 and all(st in (TaskStatus.done, TaskStatus.done_unaudited) for _i, st in kids)
     assert _parent_status(parent_id) in (TaskStatus.done, TaskStatus.done_unaudited)
