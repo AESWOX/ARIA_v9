@@ -1,0 +1,63 @@
+# backend-tests.yml — DoD B2/B7: pytest с branch-coverage и порогом, тесты не зависят от порядка запуска.
+#
+# Порог --cov-fail-under задаётся в одном месте (COV_MIN) и растёт по плану DoD B3: 55 -> 60 -> 70 -> 80 -> 90.
+# Тесты гоняются в СЛУЧАЙНОМ порядке (pytest-randomly): падение «только в некоторых порядках» — это баг теста (B7).
+# Сеть и реальные ключи не нужны: conftest.py создаёт временную БД/vault и вычищает ключи провайдеров из окружения.
+
+name: backend-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  COV_MIN: "55"
+
+jobs:
+  pytest:
+    name: pytest (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  python: "3.11" }
+          - { os: ubuntu-latest,  python: "3.12" }
+          - { os: windows-latest, python: "3.11" }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install backend deps
+        working-directory: backend
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: pytest (random order, branch coverage, threshold)
+        working-directory: backend
+        shell: bash
+        run: |
+          python -m pytest tests -q --cov=aria --cov-branch --cov-report=term --cov-report=xml \
+            --cov-fail-under="${COV_MIN}"
+
+      - name: pytest (fixed order must give the same result)
+        working-directory: backend
+        shell: bash
+        run: python -m pytest tests -q -p no:randomly
+
+      - name: Upload coverage report
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: backend/coverage.xml

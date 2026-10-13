@@ -18,6 +18,7 @@ session_scope() — сетевой HTTP-запрос внутри открыто
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -278,6 +279,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
 
         approval_ctx = None
         _parent_paused = False
+        delegate_batch: list[dict] = []  # B5-D1: delegate_task из одного ответа исполняются пачкой, параллельно
         for call in response.tool_calls:
             with session_scope() as db:
                 task = repo.get_task(db, task_id)
@@ -382,42 +384,8 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                         )
                         repo.append_message(db, session, role="tool", content=f"delegate_task -> guardrail_blocked: {msg}")
                     continue
-                delegate_result = await _pending_delegate["do_delegate"](
-                    call.arguments,
-                    timeout_sec=120,
-                    sandbox_root=sandbox_root,
-                    router=router,
-                    session_id=_pending_delegate["session_id"],
-                    parent_task_id=task_id,
-                    delegation_depth=_pending_delegate["delegation_depth"],
-                )
-                with session_scope() as db:
-                    task = repo.get_task(db, task_id)
-                    session = repo.get_session(db, task.session_id)
-                    repo.append_message(
-                        db, session, role="tool",
-                        content=f"delegate_task -> {delegate_result.get('status', 'unknown')}",
-                        content_json={"tool_name": "delegate_task", "output": delegate_result, "status": delegate_result.get("status", "unknown")},
-                    )
-                    repo.finish_tool_call(db, _pending_delegate["tool_call_row"], ToolStatus.ok, output_json=delegate_result)
-                    event_bus.emit(
-                        "tool_call.updated",
-                        {"id": str(_pending_delegate["tool_call_row"].id), "tool_name": "delegate_task", "status": delegate_result.get("status", "unknown")},
-                        session_id=session.id,
-                        task_id=task.id,
-                        db=db,
-                    )
-                    _dstatus = str(delegate_result.get("status", "unknown"))
-                    if _dstatus in ("failed", "timeout", "cancelled"):
-                        delegate_failures[_dkey] = delegate_failures.get(_dkey, 0) + 1
-                    if _dstatus == "awaiting_attention":
-                        # A23: дочерняя задача ждёт Approve. Родитель тоже встаёт на паузу (а не «додумывает»
-                        # и не делегирует заново); результат ему вернёт deliver_child_result после решения.
-                        repo.set_task_status(db, task, TaskStatus.awaiting_attention)
-                        event_bus.emit("task.status_changed", {"status": TaskStatus.awaiting_attention.value}, session_id=session.id, task_id=task.id, db=db)
-                        _parent_paused = True
-                if _parent_paused:
-                    break  # остальные tool calls ответа отбрасываются
+                # B5-D1: не ждём ребёнка здесь — копим вызов, исполним пачкой после разбора всех tool calls ответа.
+                delegate_batch.append({"call": call, "pending": _pending_delegate, "dkey": _dkey})
                 continue
 
             # Стандартный tool call — guardrails + _execute_tool
@@ -492,7 +460,13 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                     tool=spec.tool_name, code=error_code, message=error_message,
                 )
 
-        if _parent_paused:
+        if delegate_batch:
+            if await _run_delegate_batch(
+                delegate_batch, task_id=task_id, router=router, sandbox_root=sandbox_root, delegate_failures=delegate_failures,
+            ):
+                _parent_paused = True
+
+        if _parent_paused and approval_ctx is None:
             logger.info("task %s paused: its sub-task awaits owner approval", task_id)
             return  # продолжит deliver_child_result + execute_agent_loop (Approve) или отказ (Reject)
 
@@ -508,6 +482,61 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
             break
 
     await finalize_task(task_id, router)
+
+
+async def _run_delegate_batch(
+    batch: list[dict], *, task_id: uuid.UUID, router: ProviderRouter, sandbox_root: str,
+    delegate_failures: dict[tuple[str, str], int],
+) -> bool:
+    """B5-D1: исполнить все delegate_task одного ответа модели ОДНОВРЕМЕННО (потолок delegate_max_parallel).
+
+    У каждого ребёнка своя задача и свои короткие сессии БД (``session_scope`` на каждый шаг), поэтому общего
+    писателя нет. Результаты записываются в историю родителя в порядке вызовов.
+    Возвращает True, если хотя бы один ребёнок ждёт Approve: родитель тогда встаёт на паузу и продолжится,
+    когда решения получены по ВСЕМ ожидающим детям (см. ``deliver_child_result``).
+    """
+    from aria.core.delegate import run_bounded
+
+    def _factory(item: dict):
+        pend, call = item["pending"], item["call"]
+        return lambda: pend["do_delegate"](
+            call.arguments, timeout_sec=120, sandbox_root=sandbox_root, router=router,
+            session_id=pend["session_id"], parent_task_id=task_id, delegation_depth=pend["delegation_depth"],
+        )
+
+    results = await run_bounded([_factory(i) for i in batch])
+    parent_paused = False
+    for item, res in zip(batch, results):
+        if isinstance(res, asyncio.CancelledError):
+            raise res
+        if isinstance(res, BaseException):
+            res = {"status": "failed", "summary": "", "error": f"sub-task crashed: {res}"}
+        pend = item["pending"]
+        dstatus = str(res.get("status", "unknown"))
+        with session_scope() as db:
+            task = repo.get_task(db, task_id)
+            session = repo.get_session(db, task.session_id)
+            repo.append_message(
+                db, session, role="tool",
+                content=f"delegate_task -> {dstatus}",
+                content_json={"tool_name": "delegate_task", "output": res, "status": dstatus},
+            )
+            repo.finish_tool_call(db, pend["tool_call_row"], ToolStatus.ok, output_json=res)
+            event_bus.emit(
+                "tool_call.updated",
+                {"id": str(pend["tool_call_row"].id), "tool_name": "delegate_task", "status": dstatus},
+                session_id=session.id, task_id=task.id, db=db,
+            )
+            if dstatus in ("failed", "timeout", "cancelled"):
+                delegate_failures[item["dkey"]] = delegate_failures.get(item["dkey"], 0) + 1
+            if dstatus == "awaiting_attention":
+                # A23: ребёнок ждёт Approve. Родитель тоже встаёт на паузу (а не «додумывает» и не делегирует заново);
+                # результат ему вернёт deliver_child_result после решения.
+                if task.status != TaskStatus.awaiting_attention:
+                    repo.set_task_status(db, task, TaskStatus.awaiting_attention)
+                    event_bus.emit("task.status_changed", {"status": TaskStatus.awaiting_attention.value}, session_id=session.id, task_id=task.id, db=db)
+                parent_paused = True
+    return parent_paused
 
 
 async def _execute_tool(spec, arguments: dict, sandbox_root: str, *, approved: bool = False):
@@ -692,7 +721,10 @@ def deliver_child_result(child_task_id: uuid.UUID) -> uuid.UUID | None:
     """A23: дочерняя задача завершилась (после Approve или Reject) — вернуть результат родителю.
 
     Добавляет в историю результат ``delegate_task`` и переводит ждавшего родителя в ``in_progress``.
-    Возвращает id родителя, которого нужно продолжить, или None (нет родителя, он не ждёт, ребёнок ещё не закончил).
+    B5-D1: детей может быть несколько (параллельное делегирование). Результат каждого ребёнка записывается сразу,
+    а родитель просыпается только когда НИ ОДИН его ребёнок больше не ждёт решения (``awaiting_attention``).
+    Возвращает id родителя, которого нужно продолжить, или None (нет родителя, он не ждёт, ребёнок ещё не
+    закончил, остались другие ждущие дети, результат этого ребёнка уже был доставлен).
     """
     terminal = (TaskStatus.done, TaskStatus.done_unaudited, TaskStatus.failed, TaskStatus.cancelled)
     with session_scope() as db:
@@ -704,23 +736,40 @@ def deliver_child_result(child_task_id: uuid.UUID) -> uuid.UUID | None:
             return None
         session = repo.get_session(db, parent.session_id)
         status = "done" if child.status in (TaskStatus.done, TaskStatus.done_unaudited) else child.status.value
-        summary = (child.objective or "")[:200]
-        if status == "done":
-            last = db.execute(
-                select(m.Message).where(m.Message.session_id == session.id, m.Message.role == "assistant")
-                .order_by(m.Message.seq_no.desc()).limit(1)
-            ).scalars().first()
-            if last is not None and last.content:
-                summary = last.content[:1500]
-        output = {
-            "status": status, "task_id": str(child.id), "summary": summary,
-            "error": child.error_message if status != "done" else None,
-        }
-        repo.append_message(
-            db, session, role="tool",
-            content=f"delegate_task (resumed) -> {status}",
-            content_json={"tool_name": "delegate_task", "output": output, "status": status},
+        already = any(
+            isinstance(msg.content_json, dict)
+            and msg.content_json.get("tool_name") == "delegate_task"
+            and isinstance(msg.content_json.get("output"), dict)
+            and msg.content_json["output"].get("task_id") == str(child.id)
+            and str(msg.content or "").startswith("delegate_task (resumed)")
+            for msg in db.execute(
+                select(m.Message).where(m.Message.session_id == session.id, m.Message.role == "tool")
+            ).scalars().all()
         )
+        if not already:
+            summary = (child.objective or "")[:200]
+            if status == "done":
+                last = db.execute(
+                    select(m.Message).where(m.Message.session_id == session.id, m.Message.role == "assistant")
+                    .order_by(m.Message.seq_no.desc()).limit(1)
+                ).scalars().first()
+                if last is not None and last.content:
+                    summary = last.content[:1500]
+            output = {
+                "status": status, "task_id": str(child.id), "summary": summary,
+                "error": child.error_message if status != "done" else None,
+            }
+            repo.append_message(
+                db, session, role="tool",
+                content=f"delegate_task (resumed) -> {status}",
+                content_json={"tool_name": "delegate_task", "output": output, "status": status},
+            )
+        still_waiting = [
+            k for k in repo.list_child_tasks(db, parent.id)
+            if k.id != child.id and k.status == TaskStatus.awaiting_attention
+        ]
+        if still_waiting:
+            return None  # родитель ждёт остальных детей — продолжится, когда решено по всем
         repo.set_task_status(db, parent, TaskStatus.in_progress)
         parent_id = parent.id
     event_bus.emit("task.status_changed", {"status": TaskStatus.in_progress.value}, session_id=session.id, task_id=parent_id)

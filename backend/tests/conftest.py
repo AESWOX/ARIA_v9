@@ -56,14 +56,96 @@ for _rel, _text in FIXTURE_VAULT.items():
 import pytest
 
 
+_BASELINE: dict = {}
+
+
 def pytest_configure(config):
-    """Build the schema from scratch and seed the fixture skills."""
+    """Build the schema from scratch, seed the fixture skills and take a reference snapshot of the DB (B7)."""
+    from aria.db import base as db_base
     from aria.db.base import init_db, run_migrations
     from aria.db.skills_seed import seed_skills
 
     init_db()
     run_migrations()
     seed_skills()
+    _take_baseline(db_base)
+
+
+def _sqlite_path() -> Path:
+    return _TEST_ROOT / "local_agent.db"
+
+
+def _take_baseline(db_base) -> None:
+    """Эталонный снимок БД сразу после схемы+сида. Каждый тест стартует с него (см. _fresh_database)."""
+    import sqlite3
+
+    # Лениво создаваемые схемы (CREATE TABLE IF NOT EXISTS, кэш по id(engine)) должны попасть в снимок, иначе откат
+    # удалит таблицы, а кэш будет считать их существующими.
+    from aria.memory import store as memory_store
+
+    memory_store._ensure()
+    snap = _TEST_ROOT / "baseline.db"
+    src = sqlite3.connect(_sqlite_path().as_posix())
+    try:
+        dst = sqlite3.connect(snap.as_posix())
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    _BASELINE["snapshot"] = snap
+    _BASELINE["engine"] = db_base._engine
+    _BASELINE["session_local"] = db_base._SessionLocal
+
+
+def _restore_baseline_data() -> None:
+    import sqlite3
+
+    src = sqlite3.connect(_BASELINE["snapshot"].as_posix())
+    try:
+        dst = sqlite3.connect(_sqlite_path().as_posix(), timeout=30)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_global_engine():
+    """B7: тесты, подменяющие глобальный engine (init_db на свою БД), не должны влиять на соседние модули.
+
+    После модуля возвращаем эталонный engine и закрываем те, что создал модуль.
+    """
+    from aria.db import base as db_base
+
+    yield
+    current = db_base._engine
+    db_base._engine = _BASELINE["engine"]
+    db_base._SessionLocal = _BASELINE["session_local"]
+    if current is not None and current is not _BASELINE["engine"]:
+        try:
+            current.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@pytest.fixture(autouse=True)
+def _fresh_database():
+    """B7: каждый тест начинает с одинакового состояния БД (схема + сид скиллов), в любом порядке запуска.
+
+    Если модуль подменил engine на собственный файл БД, его содержимое не трогаем — он изолирован этим модулем.
+    """
+    from aria.db import base as db_base
+
+    engine = db_base._engine
+    db_file = getattr(getattr(engine, "url", None), "database", None)
+    # Тот же файл БД (даже если тест пересоздал engine через init_db()) -> возвращаем эталонные данные.
+    if db_file and Path(db_file).resolve() == _sqlite_path().resolve():
+        _restore_baseline_data()
+    yield
 
 
 def pytest_collection_modifyitems(items):

@@ -359,25 +359,6 @@ def test_delegate_module_retries_after_exception():
     assert asyncio.run(delegate_mod.delegate_task(_req(), flaky)).status == "ok"
 
 
-def test_run_parallel_runs_5_concurrently_and_rejects_6():
-    live = {"now": 0, "max": 0}
-
-    async def fn(role, obj, tools, paid):
-        live["now"] += 1
-        live["max"] = max(live["max"], live["now"])
-        await asyncio.sleep(0.15)
-        live["now"] -= 1
-        return _ok(role)
-
-    t0 = time.monotonic()
-    res = asyncio.run(delegate_mod.run_parallel([_req() for _ in range(5)], fn))
-    assert [r.status for r in res] == ["ok"] * 5
-    assert live["max"] == 5 and time.monotonic() - t0 < 0.6
-
-    with pytest.raises(ValueError):
-        asyncio.run(delegate_mod.run_parallel([_req() for _ in range(6)], fn))
-
-
 # --------------------------------------------------------------------------- F. known defects (strict xfail; D8 уже исправлен)
 
 _PROD = [p for p in (BACKEND / "aria").rglob("*.py")]
@@ -387,11 +368,7 @@ def _src(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-@pytest.mark.xfail(strict=True, reason="D1: core/delegate.py:run_parallel нигде не вызывается — «5 параллельных» не работает в бою, "
-                                       "loop.py исполняет delegate_task по очереди")
-def test_run_parallel_is_wired_into_production_path():
-    users = [p for p in _PROD if p.name != "delegate.py" and re.search(r"\brun_parallel\b", _src(p))]
-    assert users, "run_parallel не используется ни одним модулем aria/"
+# D1 исправлен: delegate_task из одного ответа исполняются параллельно через delegate.run_bounded (tests/test_b5_parallel_delegation.py)
 
 
 # D2 исправлен (см. WORK_NOTES.md)
