@@ -578,6 +578,11 @@ async def _stage3_execute(
                         "query": step.get("query", objective),
                         "max_results": step.get("max_results", 5),
                     }
+                elif tool_ref == "web_fetch":
+                    handler_input = {
+                        "url": step.get("url", ""),
+                        "max_chars": step.get("max_chars", 8000),
+                    }
                 else:
                     # Остальные registry-инструменты — input прямо из шага
                     handler_input = step.get("input") or step.get("input_json") or {}

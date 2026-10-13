@@ -28,7 +28,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         role_id="general",
         description="Базовая роль общего назначения, диспетчеризация простых задач.",
         system_prompt_asset="prompts/general.md",
-        tool_whitelist=("read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "file_read", "file_search", "memory_search", "notebook_query", "skill_lookup"),
+        tool_whitelist=("read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "file_read", "file_search", "memory_search", "notebook_query", "skill_lookup", "web_search", "web_fetch"),
         default_model_policy="standard_reasoning",
     ),
     "oracle": RoleDefinition(
@@ -44,7 +44,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         role_id="orchestrator",
         description="Строит план, выбирает роль/модель/tool-стратегию, может делегировать.",
         system_prompt_asset="prompts/orchestrator.md",
-        tool_whitelist=("delegate_task", "file_read", "file_search", "read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "web_search"),
+        tool_whitelist=("delegate_task", "file_read", "file_search", "read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "web_search", "web_fetch"),
         default_model_policy="premium_reasoning",
         can_delegate=True,
         max_subagents=5,
@@ -102,7 +102,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
     "research": RoleDefinition(
         role_id="research", description="Веб-исследования — поиск в интернете через DuckDuckGo.",
         system_prompt_asset="prompts/research.md",
-        tool_whitelist=("web_search", "file_read", "file_search"),
+        tool_whitelist=("web_search", "web_fetch", "file_read", "file_search"),
         default_model_policy="subagent_execution",
     ),
     "social_monitor": RoleDefinition(

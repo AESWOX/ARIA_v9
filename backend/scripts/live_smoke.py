@@ -57,15 +57,34 @@ def test(name: str, fn):
 # ── smoke tests ────────────────────────────────────────────────────────────
 
 def smoke_duckduckgo():
-    """Real HTTP GET to DuckDuckGo Lite HTML, parse result links."""
-    url = "https://lite.duckduckgo.com/lite/?q=test+aria+agent"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    })
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        body = resp.read().decode("utf-8", errors="replace")
-    assert "aria" in body.lower() or len(body) > 100, "expected HTML with result links"
-    print(f"    duckduckgo returned {len(body)} bytes")
+    """Боевой обработчик web_search (а не просто GET): парсер обязан вернуть >= 3 результатов.
+
+    Раньше смоук проверял только размер страницы, поэтому «results: []» (сломанный парсер) был зелёным.
+    """
+    import asyncio
+
+    from aria.tools.handlers.web import web_search
+
+    out = asyncio.run(web_search({"query": "python asyncio semaphore", "max_results": 5}))
+    assert not out.get("error"), f"web_search error: {out['error']}"
+    n = len(out["results"])
+    assert n >= 3, f"parser returned {n} results (source={out.get('source')}) — markup change?"
+    print(f"    web_search: {n} results via {out.get('source')}; first: {out['results'][0]['url']}")
+
+
+def smoke_web_fetch():
+    """web_fetch читает обычную страницу и отказывается ходить на 127.0.0.1."""
+    import asyncio
+
+    from aria.tools.handlers.web import web_fetch
+
+    out = asyncio.run(web_fetch({"url": "https://example.com/"}))
+    assert not out.get("error"), f"web_fetch error: {out['error']}"
+    assert "Example Domain" in (out.get("title") or "") + out["content"], f"unexpected content: {out['content'][:80]!r}"
+    print(f"    web_fetch: {out['chars']} chars, title={out['title']!r}")
+    refused = asyncio.run(web_fetch({"url": "http://127.0.0.1:1/"}))
+    assert "not a public address" in refused.get("error", ""), f"SSRF not refused: {refused}"
+    print("    web_fetch: http://127.0.0.1 refused")
 
 
 def smoke_groq_chat():
@@ -180,6 +199,7 @@ def main():
     # 1. DuckDuckGo web search
     print("\n[1] Web Search (DuckDuckGo)")
     test("web_search", smoke_duckduckgo)
+    test("web_fetch", smoke_web_fetch)
 
     # 2. Groq chat completion
     print("\n[2] Groq Chat (qwen/qwen3.6-27b)")
