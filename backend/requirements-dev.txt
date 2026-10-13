@@ -4,4 +4,5 @@
 pytest==8.3.5
 pytest-cov==6.0.0
 pytest-asyncio==0.25.3
+pytest-randomly==3.15.0   # B7: случайный порядок тестов; зависимость от порядка = баг теста
 anyio==4.11.0

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Sequence
 
 from aria.config import get_settings
 from aria.core.roles import get_role
@@ -80,8 +81,19 @@ async def delegate_task(request: DelegateRequest, run_subtask_fn) -> DelegateRes
     return DelegateResult(status=status, role=request.role, summary="", artifacts=[], tool_calls_count=0, error=last_error)
 
 
-async def run_parallel(requests: list[DelegateRequest], run_subtask_fn) -> list[DelegateResult]:
-    limit = max_parallel()
-    if len(requests) > limit:
-        raise ValueError(f"§7.2: max {limit} parallel sub-agents per orchestration cycle")
-    return await asyncio.gather(*(delegate_task(r, run_subtask_fn) for r in requests))
+async def run_bounded(factories: Sequence[Callable[[], Awaitable[Any]]], limit: int | None = None) -> list[Any]:
+    """B5-D1: исполнить несколько делегирований ОДНОВРЕМЕННО, но не больше ``limit`` за раз.
+
+    ``factories`` — вызываемые без аргументов, каждый возвращает корутину (корутина создаётся только когда
+    освободился слот). Порядок результатов совпадает с порядком ``factories``. Лимит по умолчанию —
+    ``delegate_max_parallel`` из Settings (§7.2); избыточные вызовы не отбрасываются, а ждут своей очереди.
+    Исключение одной корутины не обрывает остальные: оно возвращается на её месте как объект исключения.
+    """
+    cap = max(1, int(limit if limit is not None else max_parallel()))
+    gate = asyncio.Semaphore(cap)
+
+    async def _one(factory: Callable[[], Awaitable[Any]]) -> Any:
+        async with gate:
+            return await factory()
+
+    return list(await asyncio.gather(*(_one(f) for f in factories), return_exceptions=True))

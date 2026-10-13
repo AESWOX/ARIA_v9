@@ -83,7 +83,7 @@
 
 | ID | Суть | Статус |
 |---|---|---|
-| B5-D1 | `core/delegate.py:run_parallel` нигде не вызывается — loop исполняет `delegate_task` по очереди | **OPEN** (strict xfail). Нужно решение: параллельный запуск требует отдельных сессий БД и очереди Approve |
+| B5-D1 | `core/delegate.py:run_parallel` нигде не вызывался — loop исполнял `delegate_task` по очереди | исправлено 13.10: `loop._run_delegate_batch` запускает все `delegate_task` одного ответа через `delegate.run_bounded` (потолок `delegate_max_parallel`, лишние ждут очереди). Родитель встаёт на паузу, если ребёнок ждёт Approve, и продолжается, когда решено по ВСЕМ ждущим детям (`deliver_child_result`); результат ребёнка доставляется один раз; мёртвый `run_parallel` удалён |
 | B5-D2 | `delegate_max_parallel`/`delegate_max_depth` из `.env` не читались | исправлено: `delegate.max_depth()`/`max_parallel()` читают Settings |
 | B5-D3 | `_delegate_task` не применял `timeout_sec` | исправлено: `asyncio.wait_for`, статус `timeout`, задача переводится в `failed` |
 | B5-D4 | неизвестная роль в `delegate.delegate_task` бросала исключение | исправлено: `DelegateResult(status="failed")` |
