@@ -15,16 +15,19 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-# Tools that never mutate state — repeating them is wasteful
+# Имена — строго из aria.tools.registry.TOOL_REGISTRY (тест D5/D6 в test_b5_tool_inventory.py).
+# Read-only тулы (idempotency_class=safe_read): повтор с тем же результатом = нет прогресса.
 IDEMPOTENT_TOOL_NAMES = frozenset({
-    "read_file", "search_files", "read_note", "search_vault",
-    "list_vault", "search_vault_tags", "list_decisions", "web_search", "web_extract",
+    "read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions",
+    "file_read", "file_search", "web_search", "vision_analyze", "notebook_query",
+    "skill_lookup", "task_status", "memory_search", "friend_memory_read",
 })
 
-# Tools that DO mutate state — repeating them is dangerous
+# Тулы, меняющие состояние: успешный вызов сбрасывает счётчики no-progress у read-only тулов
+# (состояние изменилось — повторное чтение законно), а их повтор не считается «чтением».
 MUTATING_TOOL_NAMES = frozenset({
-    "terminal", "write_file", "patch", "file_write", "shell_execute",
-    "write_note", "create_vault_branch", "log_decision", "memory", "skill_manage", "cronjob", "delegate_task",
+    "file_write", "shell_execute", "write_note", "create_vault_branch", "log_decision",
+    "memory_save", "delegate_task",
 })
 
 
@@ -196,6 +199,10 @@ class ToolCallGuardrailController:
         else:
             # Reset same-tool counter on success
             self._same_tool_failure_counts.pop(tool_name, None)
+
+            # Успешная мутация меняет мир: накопленные «тот же результат» у read-only тулов больше не актуальны
+            if tool_name in self.config.mutating_tools:
+                self._no_progress.clear()
 
             # Track no-progress for idempotent tools
             if tool_name in self.config.idempotent_tools:

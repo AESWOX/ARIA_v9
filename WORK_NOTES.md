@@ -76,7 +76,29 @@
 - `api/ws.py`, `api/http.py` — не читаны (Фаза 1 закрыта на объём; при необходимости дочитать).
 
 ## 3. Известные пред-существующие баги (НЕ задача роутеров, но зафиксировать)
-- `tools/registry.py` `_task_status`: обращается к `row.summary/row.error/row.completed_at`, которых нет в Task (реальные: `objective`, `error_message`, `closed_at`).
+- ~~`tools/registry.py` `_task_status`: обращается к `row.summary/row.error/row.completed_at`~~ — **исправлено**, тул читает `objective`/`error_message` (проверено `test_task_status_reads_a_real_task_and_survives_garbage_id`).
+
+### Дефекты инвентаризации B5 (`backend/tests/test_b5_tool_inventory.py`, обновлено 2026-10-13)
+Префикс `B5-` — чтобы не путать с пунктами D1–D6 в `DOD.md` (фронтенд).
+
+| ID | Суть | Статус |
+|---|---|---|
+| B5-D1 | `core/delegate.py:run_parallel` нигде не вызывается — loop исполняет `delegate_task` по очереди | **OPEN** (strict xfail). Нужно решение: параллельный запуск требует отдельных сессий БД и очереди Approve |
+| B5-D2 | `delegate_max_parallel`/`delegate_max_depth` из `.env` не читались | исправлено: `delegate.max_depth()`/`max_parallel()` читают Settings |
+| B5-D3 | `_delegate_task` не применял `timeout_sec` | исправлено: `asyncio.wait_for`, статус `timeout`, задача переводится в `failed` |
+| B5-D4 | неизвестная роль в `delegate.delegate_task` бросала исключение | исправлено: `DelegateResult(status="failed")` |
+| B5-D5 | в guardrails имена тулов из Hermes (`read_file`, `terminal`, …), которых нет в реестре | исправлено: только имена из `TOOL_REGISTRY` |
+| B5-D6 | read-only тулы не входили в `IDEMPOTENT_TOOL_NAMES` — no-progress детектор на них молчал | исправлено: все `safe_read` тулы включены |
+| B5-D7 | `GuardrailConfig.mutating_tools` не читался | исправлено: успешная мутация сбрасывает счётчики no-progress |
+| B5-D8 | побег из песочницы через соседний каталог с общим префиксом | исправлено 2026-10-12 (`Path.is_relative_to`) |
+
+Открытое наблюдение того же прогона: тулы `file_search`, `friend_memory_read`, `list_decisions`, `list_vault`, `memory_search`, `skill_lookup`, `task_status` молча принимают пустые/мусорные аргументы (ошибки нет, возвращается пустой результат) — это осознанное поведение для необязательных аргументов, но для `file_search` стоит требовать `pattern`.
+
+### Область тулов по ролям (важно для агента и для оператора)
+Доступность тула = пересечение `RoleDefinition.tool_whitelist` и `ToolSpec.allowed_roles`. В реестре 21 тул; роль видит только свой срез. Роль `general` раньше имела ровно 7 тулов (vault read-only, `file_read`, `file_search`), из-за чего агент в чате называл «7 инструментов» как общее число и не мог проверить число навыков live. Теперь `general` дополнительно получила `memory_search`, `notebook_query`, `skill_lookup` (read-only). Запись (`write_note`, `log_decision`, `create_vault_branch`), `shell_execute`, `file_write` и `delegate_task` остаются у `obsidian_keeper`/`coder`/`orchestrator`. Промпт роли теперь явно говорит модели, что список — это срез её роли.
+
+### Хуки (H4) — как устроены на самом деле
+События `pre_tool`, `post_tool`, `task_start`, `task_close`, `on_approval`, `on_error`; хук — shell-команда из `data/hooks.json` (создаётся через `/ops/hooks`), выполняется только при `allowed=true`; JSON-контекст на stdin и в `ARIA_HOOK_PAYLOAD`; таймаут 10 с (макс. 60 с); секреты вычищаются из окружения; блокировать можно только в `pre_tool` (код 2 или `{"block": true}`). Порядок вокруг тула: `pre_tool` → чекпоинт (`file_write`) → тул → `post_tool`. `dod_verify.py` хуком не является — это отдельный скрипт проверки релиза.
 
 ## 4. План реализации
 - Фаза 0: WORK_NOTES.md (этот файл).

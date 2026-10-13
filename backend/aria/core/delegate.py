@@ -9,13 +9,25 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
+from aria.config import get_settings
 from aria.core.roles import get_role
 from aria.llm.router import ProviderRouter
 
+# Значения по умолчанию (§7.2). Реальные лимиты читаются из Settings (.env) через max_depth()/max_parallel().
 MAX_DEPTH = 1
 MAX_PARALLEL = 5
 DEFAULT_TIMEOUT_SEC = 60
 RETRY_COUNT = 1
+
+
+def max_depth() -> int:
+    """Максимальная глубина делегирования: settings.delegate_max_depth (D2)."""
+    return int(get_settings().delegate_max_depth)
+
+
+def max_parallel() -> int:
+    """Максимум параллельных саб-агентов: settings.delegate_max_parallel (D2)."""
+    return int(get_settings().delegate_max_parallel)
 
 
 @dataclass
@@ -44,12 +56,14 @@ async def delegate_task(request: DelegateRequest, run_subtask_fn) -> DelegateRes
     """run_subtask_fn — callable(role, objective, allowed_tools, allow_paid) -> DelegateResult,
     внедряется вызывающим кодом (core/loop.py), чтобы избежать циклического импорта
     и явно провести depth/budget инварианты."""
-    if request.depth >= MAX_DEPTH:
-        return DelegateResult(status="failed", role=request.role, summary="", artifacts=[], tool_calls_count=0, error="max delegation depth (1) exceeded, §7.2")
+    limit = max_depth()
+    if request.depth >= limit:
+        return DelegateResult(status="failed", role=request.role, summary="", artifacts=[], tool_calls_count=0, error=f"max delegation depth ({limit}) exceeded, §7.2")
 
-    role_def = get_role(request.role)
-    if not role_def:
-        return DelegateResult(status="failed", role=request.role, summary="", artifacts=[], tool_calls_count=0, error="unknown role")
+    try:
+        get_role(request.role)
+    except (KeyError, PermissionError) as exc:  # D4: get_role бросает, а не возвращает None
+        return DelegateResult(status="failed", role=request.role, summary="", artifacts=[], tool_calls_count=0, error=f"unknown or disabled role: {request.role} ({exc})")
 
     last_error: str | None = None
     for attempt in range(RETRY_COUNT + 1):
@@ -67,6 +81,7 @@ async def delegate_task(request: DelegateRequest, run_subtask_fn) -> DelegateRes
 
 
 async def run_parallel(requests: list[DelegateRequest], run_subtask_fn) -> list[DelegateResult]:
-    if len(requests) > MAX_PARALLEL:
-        raise ValueError(f"§7.2: max {MAX_PARALLEL} parallel sub-agents per orchestration cycle")
+    limit = max_parallel()
+    if len(requests) > limit:
+        raise ValueError(f"§7.2: max {limit} parallel sub-agents per orchestration cycle")
     return await asyncio.gather(*(delegate_task(r, run_subtask_fn) for r in requests))

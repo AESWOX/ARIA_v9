@@ -394,15 +394,13 @@ def test_run_parallel_is_wired_into_production_path():
     assert users, "run_parallel не используется ни одним модулем aria/"
 
 
-@pytest.mark.xfail(strict=True, reason="D2: delegate_max_parallel / delegate_max_depth лежат в config.py, но нигде не читаются; "
-                                       "delegate.py использует константы MAX_PARALLEL/MAX_DEPTH, .env ничего не меняет")
+# D2 исправлен (см. WORK_NOTES.md)
 def test_delegate_limits_are_read_from_settings():
     users = [p for p in _PROD if p.name != "config.py" and re.search(r"delegate_max_(parallel|depth)", _src(p))]
     assert users
 
 
-@pytest.mark.xfail(strict=True, reason="D3: _delegate_task принимает timeout_sec=120 от loop.py, но не применяет — "
-                                       "зависший саб-агент блокирует родителя")
+# D3 исправлен (см. WORK_NOTES.md)
 def test_delegate_task_enforces_timeout(monkeypatch):
     import aria.core.loop as loop_mod
 
@@ -429,8 +427,7 @@ async def _delegate_async(args, *, timeout):
                                 session_id=sid, parent_task_id=tid, delegation_depth=0)
 
 
-@pytest.mark.xfail(strict=True, reason="D4: core/delegate.py:delegate_task проверяет `if not role_def`, но get_role() бросает "
-                                       "KeyError/PermissionError — неизвестная роль даёт исключение вместо DelegateResult(failed)")
+# D4 исправлен (см. WORK_NOTES.md)
 def test_delegate_module_unknown_role_returns_failed_result():
     async def fn(*a):
         return _ok()
@@ -439,23 +436,19 @@ def test_delegate_module_unknown_role_returns_failed_result():
     assert res.status == "failed"
 
 
-@pytest.mark.xfail(strict=True, reason="D5: guardrails.IDEMPOTENT_TOOL_NAMES/MUTATING_TOOL_NAMES содержат имена из Hermes "
-                                       "(read_file, search_files, terminal, write_file, patch, web_extract, memory, skill_manage, "
-                                       "cronjob), которых нет в реестре ARIA")
+# D5 исправлен (см. WORK_NOTES.md)
 def test_guardrail_tool_names_exist_in_registry():
     named = set(guardrails.IDEMPOTENT_TOOL_NAMES) | set(guardrails.MUTATING_TOOL_NAMES)
     assert not (named - set(TOOL_REGISTRY)), f"нет в реестре: {sorted(named - set(TOOL_REGISTRY))}"
 
 
-@pytest.mark.xfail(strict=True, reason="D6: настоящие read-only тулы (file_read, file_search, memory_search, task_status, ...) не в "
-                                       "IDEMPOTENT_TOOL_NAMES — детектор «тот же результат» (no-progress) на них не работает")
+# D6 исправлен (см. WORK_NOTES.md)
 def test_guardrail_idempotent_set_covers_all_safe_read_tools():
     safe_read = {n for n, s in TOOL_REGISTRY.items() if s.idempotency_class.value == "safe_read"}
     assert safe_read <= set(guardrails.IDEMPOTENT_TOOL_NAMES), sorted(safe_read - set(guardrails.IDEMPOTENT_TOOL_NAMES))
 
 
-@pytest.mark.xfail(strict=True, reason="D7: GuardrailConfig.mutating_tools нигде не читается — список MUTATING_TOOL_NAMES "
-                                       "ни на что не влияет (мёртвая защита)")
+# D7 исправлен (см. WORK_NOTES.md)
 def test_guardrail_mutating_tools_config_is_used():
     src = _src(BACKEND / "aria" / "core" / "guardrails.py")
     uses = re.findall(r"\.mutating_tools\b", src)

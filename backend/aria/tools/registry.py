@@ -6,6 +6,7 @@ null_output_allowed, requires_approval, allowed_roles, idempotency_class.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -546,7 +547,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         risk_level=RiskLevel.low,
         null_output_allowed=False,
         requires_approval=False,
-        allowed_roles=("orchestrator", "research", "obsidian_keeper", "coder"),
+        allowed_roles=("general", "orchestrator", "research", "obsidian_keeper", "coder"),
         idempotency_class=IdempotencyClass.safe_read,
         handler=_skill_lookup,
     ),
@@ -665,7 +666,7 @@ async def _delegate_task(
     Вызывается loop.py как special case для tool_name='delegate_task'.
     Также импортируется напрямую тестами (test_delegate_task.py).
     """
-    from aria.core.delegate import MAX_DEPTH
+    from aria.core.delegate import max_depth as _max_depth
     from aria.core.loop import execute_agent_loop as _run_task
     from aria.core.roles import get_role as _get_role
     from aria.db import repository as _repo
@@ -686,8 +687,9 @@ async def _delegate_task(
         return {"status": "failed", "summary": "", "error": f"unknown or disabled role: {role_name}"}
 
     # Проверка: глубина делегирования
-    if delegation_depth >= MAX_DEPTH:
-        return {"status": "failed", "summary": "", "error": f"max delegation depth ({MAX_DEPTH}) exceeded, §7.2"}
+    depth_limit = _max_depth()
+    if delegation_depth >= depth_limit:
+        return {"status": "failed", "summary": "", "error": f"max delegation depth ({depth_limit}) exceeded, §7.2"}
 
     # Если router не передан — не можем выполнить суб-задачу
     if router is None:
@@ -719,8 +721,18 @@ async def _delegate_task(
         sub_task_id = sub_task.id
 
     # Запускаем суб-задачу в том же event loop
+    # D3: жёсткий таймаут — зависший саб-агент не должен блокировать родителя
     try:
-        await _run_task(sub_task_id, router, sandbox_root)
+        await asyncio.wait_for(_run_task(sub_task_id, router, sandbox_root), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        try:
+            with _session_scope() as db:
+                st = _repo.get_task(db, sub_task_id)
+                if st is not None and st.status not in (TaskStatus.done, TaskStatus.done_unaudited, TaskStatus.failed, TaskStatus.cancelled):
+                    _repo.set_task_status(db, st, TaskStatus.failed, "delegate_timeout", f"exceeded {timeout_sec}s")
+        except Exception:  # noqa: BLE001 — переход состояния не должен маскировать таймаут
+            pass
+        return {"status": "timeout", "summary": "", "error": f"sub-task exceeded {timeout_sec}s", "task_id": str(sub_task_id)}
     except Exception as exc:
         return {"status": "failed", "summary": "", "error": f"sub-task crashed: {exc}"}
 

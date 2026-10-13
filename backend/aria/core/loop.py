@@ -207,6 +207,11 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
         profile = runprofile.get_profile(db, _t.session_id)
         delegation_depth = _t.delegation_depth or 0
     role_prompt = f"Ты в роли {role.role_id}. {role.description}\nДоступные инструменты: {', '.join(tool_whitelist) or 'нет'}."
+    role_prompt += (
+        "\nЭто список инструментов ТВОЕЙ РОЛИ, а не всей системы: в реестре ARIA их больше, часть доступна только другим ролям "
+        "(write/shell/delegate — у obsidian_keeper, coder, orchestrator). Не называй этот список «всеми инструментами системы». "
+        "Число навыков, заметок, задач и т.п. называй только после реального вызова инструмента (skill_lookup возвращает total)."
+    )
     role_prompt += _load_persona()
     _hint = runprofile.thinking_hint(profile)
     if _hint:
