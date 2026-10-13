@@ -172,7 +172,7 @@ def test_run_bounded_default_limit_comes_from_settings(monkeypatch):
 def test_three_delegations_from_one_response_run_concurrently(world):
     router, stubs, sandbox, parent_id = world
     prem, sub = stubs["premium_reasoning"], stubs["subagent_execution"]
-    sub.delay = 0.25
+    sub.delay = 0.6  # большой шаг: накладные расходы Windows (БД, event loop) не должны маскировать параллелизм
     prem.push(_calls(*[_deleg(i) for i in range(3)]))
     prem.push(final_answer("all three finished"))
 
@@ -181,7 +181,7 @@ def test_three_delegations_from_one_response_run_concurrently(world):
     elapsed = time.monotonic() - t0
 
     assert sub.max_live == 3, "три саб-агента должны работать одновременно"
-    assert elapsed < 0.25 * 3, f"последовательно было бы >= 0.75 с, получилось {elapsed:.2f}"
+    assert elapsed < 0.6 * 2.5, f"последовательно было бы >= 1.8 с, получилось {elapsed:.2f}"
     kids = _children(parent_id)
     assert len(kids) == 3 and all(st in (TaskStatus.done, TaskStatus.done_unaudited) for _i, st in kids)
     assert _parent_status(parent_id) in (TaskStatus.done, TaskStatus.done_unaudited)

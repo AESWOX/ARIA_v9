@@ -59,7 +59,7 @@ def test_get_route_answers_2xx_with_json(client, path):
     r = client.get(path, headers=_headers())
     if path in INTENTIONAL:
         expected, why = INTENTIONAL[path]
-        assert r.status_code == expected, f"{path}: ожидали {expected} ({why}), получили {r.status_code}"
+        assert r.status_code in _accepted(expected, why), f"{path}: ожидали {expected} ({why}), получили {r.status_code}"
         return
     assert 200 <= r.status_code < 300, f"{path}: {r.status_code} {r.text[:200]}"
     if r.headers.get("content-type", "").startswith("application/json"):
@@ -74,6 +74,11 @@ def test_guard_the_walk_is_not_empty():
 MISSING_ID = "00000000-0000-0000-0000-000000000000"
 
 # маршрут -> (ожидаемый статус, причина). Всё остальное обязано быть 404.
+def _accepted(expected: int, why: str) -> set[int]:
+    """B2 не настроен -> 503; если в .env владельца ключи B2 есть, а сеть в тестах закрыта -> 502. Оба ответа осознанные."""
+    return {expected, 502} if "B2" in why else {expected}
+
+
 NOT_404: dict[str, tuple[int, str]] = {
     "/actions/{name}/status": (200, "опрос состояния: действие, которое не запускали, = running:false"),
     "/providers/oauth/{provider_id}/poll/{session_id}": (200, "опрос: неизвестная сессия = status:expired"),
@@ -93,4 +98,4 @@ def test_get_with_unknown_id_is_404_not_500(client, path):
 
     r = client.get(re.sub(r"\{[^}]+\}", MISSING_ID, path), headers=_headers())
     expected, why = NOT_404.get(path, (404, "несуществующий ресурс"))
-    assert r.status_code == expected, f"{path}: ожидали {expected} ({why}), получили {r.status_code}: {r.text[:150]}"
+    assert r.status_code in _accepted(expected, why), f"{path}: ожидали {expected} ({why}), получили {r.status_code}: {r.text[:150]}"
