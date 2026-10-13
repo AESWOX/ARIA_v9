@@ -95,7 +95,7 @@
 Открытое наблюдение того же прогона: тулы `file_search`, `friend_memory_read`, `list_decisions`, `list_vault`, `memory_search`, `skill_lookup`, `task_status` молча принимают пустые/мусорные аргументы (ошибки нет, возвращается пустой результат) — это осознанное поведение для необязательных аргументов, но для `file_search` стоит требовать `pattern`.
 
 ### Область тулов по ролям (важно для агента и для оператора)
-Доступность тула = пересечение `RoleDefinition.tool_whitelist` и `ToolSpec.allowed_roles`. В реестре 21 тул; роль видит только свой срез. Роль `general` раньше имела ровно 7 тулов (vault read-only, `file_read`, `file_search`), из-за чего агент в чате называл «7 инструментов» как общее число и не мог проверить число навыков live. Теперь `general` дополнительно получила `memory_search`, `notebook_query`, `skill_lookup` (read-only). Запись (`write_note`, `log_decision`, `create_vault_branch`), `shell_execute`, `file_write` и `delegate_task` остаются у `obsidian_keeper`/`coder`/`orchestrator`. Промпт роли теперь явно говорит модели, что список — это срез её роли.
+Доступность тула = пересечение `RoleDefinition.tool_whitelist` и `ToolSpec.allowed_roles`. В реестре 22 тула; роль видит только свой срез. Роль `general` раньше имела ровно 7 тулов (vault read-only, `file_read`, `file_search`), из-за чего агент в чате называл «7 инструментов» как общее число и не мог проверить число навыков live. Теперь `general` дополнительно получила `memory_search`, `notebook_query`, `skill_lookup` и (P0) `web_search`, `web_fetch` (все read-only). Запись (`write_note`, `log_decision`, `create_vault_branch`), `shell_execute`, `file_write` и `delegate_task` остаются у `obsidian_keeper`/`coder`/`orchestrator`. Промпт роли теперь явно говорит модели, что список — это срез её роли.
 
 ### Хуки (H4) — как устроены на самом деле
 События `pre_tool`, `post_tool`, `task_start`, `task_close`, `on_approval`, `on_error`; хук — shell-команда из `data/hooks.json` (создаётся через `/ops/hooks`), выполняется только при `allowed=true`; JSON-контекст на stdin и в `ARIA_HOOK_PAYLOAD`; таймаут 10 с (макс. 60 с); секреты вычищаются из окружения; блокировать можно только в `pre_tool` (код 2 или `{"block": true}`). Порядок вокруг тула: `pre_tool` → чекпоинт (`file_write`) → тул → `post_tool`. `dod_verify.py` хуком не является — это отдельный скрипт проверки релиза.
@@ -123,3 +123,20 @@
 - **stubs.py ops**: `/ops/backup` — реальный sqlite `.backup()` (создан `data/backups/backup_*.db`, 430080 B, 18 таблиц); `/ops/dump` — реальный JSON-дамп с `db_rows_*` счётчиками в `data/diagnostics/`; `/ops/doctor` — реальные проверки (db/data_dir/runtime_token/platform); `/ops/security-audit` — честный `ok: false` (не реализован, вместо ложного `true`).
 - **system.py stats**: `psutil.boot_time/virtual_memory/disk_usage/Process` обёрнуты в try/except (на платформах без psutil stats больше не падают).
 - ⚠️ Найден в ходе verify, НЕ из аудита: **ws-ticket отсутствовал** (см. чеклист). Реализован по решению владельца (2026-08-23): `WsTicketStore` в `api/auth.py`, роутер `routers/auth.py`, приём `?ticket=`/`?token=` в `routers/system.py` WS-endpoint, плюс фикс ASGI-мидлвари для WS-скоупов.
+
+---
+
+## P0 — веб: `web_search` и `web_fetch` (2026-10-13)
+
+**Что было сломано.** `web_search` возвращал `results: []` при HTTP 200 и 25 КБ страницы. Старый регекс требовал `<a href="https://…" … class="result-link">` — `href` строго до `class`, двойные кавычки, абсолютная ссылка. Разметка DuckDuckGo Lite (по реконструкции, см. ниже) другая: `rel` первым, `class='result-link'` в одинарных кавычках, `href` — протокол-относительный редирект `//duckduckgo.com/l/?uddg=<url>`. Живой смоук «ALL GREEN» этого не видел: он проверял только размер скачанной страницы, парсер не вызывал. Теперь смоук вызывает боевой обработчик и требует ≥ 3 результатов.
+
+**Что сделано.** Парсер на `html.parser` (любой порядок атрибутов и тип кавычек, раскрытие `uddg=`, сниппеты, отсев рекламы `/y.js`, дубли по url); запасной эндпоинт `html.duckduckgo.com/html` при пустой выдаче или HTTP-отказе; понятная ошибка при капче/блокировке; предупреждение в лог, если страница > 5 КБ, а ссылок ноль (признак смены разметки). `web_fetch(url, max_chars)`: только http/https, лимиты 2 МБ / 10 с на операцию / 15 с на весь запрос, типы только текстовые (html, plain, json, xml, csv, markdown), без сжатия, извлечение читаемого текста (скрипты/стили вырезаны, невидимые символы убраны). Оба тула помечают ответ `source_trust: "untrusted"` и `notice`; промпт роли `general` велит не исполнять инструкции со страниц. Тулы добавлены ролям `general`, `orchestrator`, `research`.
+
+**SSRF.** Запрещены: схемы кроме http/https, логин:пароль в URL, `localhost` и `.local/.internal/.lan`, любой адрес, не являющийся публичным (`ipaddress.is_global`, мультикаст, IPv4-mapped, 6to4, NAT64). Резолвятся и проверяются ВСЕ адреса имени. Проверка повторяется на каждом шаге редиректа (максимум 5) и на итоговом URL.
+
+**Остаточные риски (осознанно не закрыты в P0).**
+- DNS rebinding (TOCTOU): адрес проверяется до запроса, а urllib резолвит имя ещё раз при соединении. Закрывается подключением по проверенному IP (свой `HTTPConnection`), но это ломает работу через системный прокси, поэтому вынесено из малого патча.
+- Скрытый на странице текст (CSS `display:none`, белое на белом) попадает в извлечённый текст как обычный: защита — пометка `untrusted` и правило в промпте, не фильтр.
+- Режим `image` у `web_fetch` (§7.1 п.1) не делался: относится к P4.
+
+**Не проверено на живой странице.** Образцы выдачи в `tests/fixtures/ddg/` — синтетическая реконструкция: из песочницы разработки `lite.duckduckgo.com` недоступен. Настоящий образец положить как `backend/tests/fixtures/ddg/ddg_lite_real.html` (команда — ARIA_PLAN §6.2 п.1): `test_every_lite_sample_gives_at_least_three_results` подхватит его сам и упадёт, если парсер на настоящей разметке даёт < 3 результатов.

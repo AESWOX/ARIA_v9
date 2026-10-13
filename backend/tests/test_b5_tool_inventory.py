@@ -1,7 +1,7 @@
 """B5: инвентаризация инструментов и делегирования — по РЕАЛЬНОМУ коду ARIA.
 
 Что проверяется
-  A. Реестр: каждый из 21 тулов имеет проверочный случай (новый тул без случая -> красный тест).
+  A. Реестр: каждый из 22 тулов имеет проверочный случай (новый тул без случая -> красный тест).
   B. Каждый тул вызывается тем же путём, что и в бою (core.loop._execute_tool): корректные
      аргументы -> status ok и осмысленный результат. Сеть заблокирована (DNS), песочница временная.
   C. Плохие аргументы ({} и мусор): тул не зависает и не роняет цикл. Итоговая таблица печатается
@@ -97,8 +97,8 @@ def _uid() -> str:
 HANDLER_TOOLS = sorted(n for n, s in TOOL_REGISTRY.items() if s.handler is not None)
 
 
-def test_registry_has_21_tools_and_delegate_is_special_case():
-    assert len(TOOL_REGISTRY) == 21, f"в реестре {len(TOOL_REGISTRY)} тулов, DOD.md нужно обновить"
+def test_registry_has_22_tools_and_delegate_is_special_case():
+    assert len(TOOL_REGISTRY) == 22, f"в реестре {len(TOOL_REGISTRY)} тулов, DOD.md нужно обновить"
     assert [n for n, s in TOOL_REGISTRY.items() if s.handler is None] == ["delegate_task"]
 
 
@@ -123,6 +123,7 @@ CASES = {
     "file_search": (lambda sb: {"glob": "*.txt"}, lambda o: "hello.txt" in str(o)),
     # offline: тул обязан вернуть dict с понятной ошибкой, а не исключение
     "web_search": (lambda sb: {"query": "aria test"}, lambda o: isinstance(o, dict) and o.get("results") == [] and o.get("error")),
+    "web_fetch": (lambda sb: {"url": "https://example.com/"}, lambda o: isinstance(o, dict) and "dns resolution failed" in o.get("error", "")),
     "vision_analyze": (lambda sb: {"image_base64": _img_b64(), "prompt": "what is it"}, lambda o: isinstance(o, dict) and "error" in o),
     "notebook_query": (lambda sb: {"prompt": "hi"}, lambda o: isinstance(o, dict) and o.get("success") is False),
     "skill_lookup": (lambda sb: {"pattern": "web"}, lambda o: o.get("total", 0) >= 1),
@@ -151,6 +152,19 @@ def test_tool_good_args_via_production_path(tool, sandbox):
     assert check(out), f"{tool}: неожиданный результат {out!r}"
     has_err = isinstance(out, dict) and bool(out.get("error"))
     _REPORT.setdefault(tool, {})["good"] = "ok+error-поле (оффлайн)" if has_err else "ok"
+
+
+# web_search обязан давать НЕПУСТОЙ результат на сохранённом образце выдачи (иначе «ok+error-поле (оффлайн)» скрывает сломанный парсер)
+def test_web_search_returns_results_for_saved_sample_via_production_path(sandbox):
+    from unittest.mock import MagicMock, patch
+
+    sample = (Path(__file__).parent / "fixtures" / "ddg" / "ddg_lite_sample.html").read_text(encoding="utf-8")
+    with patch("urllib.request.urlopen", new_callable=MagicMock) as mock:
+        mock.return_value.__enter__.return_value.read.return_value = sample.encode("utf-8")
+        out, status, code, msg = run_tool("web_search", {"query": "python asyncio semaphore"}, sandbox)
+    assert status == ToolStatus.ok, (status, code, msg)
+    assert len(out["results"]) >= 3 and out["source_trust"] == "untrusted"
+    assert all(r["url"].startswith("http") and r["title"] for r in out["results"])
 
 
 # --------------------------------------------------------------------------- C. bad args report
@@ -458,7 +472,7 @@ def test_zz_print_inventory_table(capsys):
             rows.append((n, r.get("good", "не запускался"), r.get("empty", "—"), r.get("junk", "—")))
     w = [max(len(str(row[i])) for row in rows) for i in range(4)]
     with capsys.disabled():
-        print("\n=== B5 TOOL INVENTORY (21 tools) ===")
+        print("\n=== B5 TOOL INVENTORY (22 tools) ===")
         for i, row in enumerate(rows):
             print("  ".join(str(c).ljust(w[j]) for j, c in enumerate(row)))
             if i == 0:

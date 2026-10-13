@@ -4,7 +4,7 @@
 1. step_id — уникальный идентификатор шага (uuid-формат, строка)
 2. objective — что делает этот шаг (коротко, 1-2 предложения)
 3. role — роль, которая будет выполнять шаг (одна из: coder, research, devops_infra, vision, image_gen, obsidian_keeper, housekeeping, qa_auditor, general)
-4. tool_ref — имя инструмента для выполнения шага (например: file_write, file_read, shell_execute, web_search, delegate_task)
+4. tool_ref — имя инструмента для выполнения шага (например: file_write, file_read, shell_execute, web_search, web_fetch, delegate_task)
 5. или skill_ref — имя навыка (если шаг выполняется через скилл, а не через tool)
 6. path — (опционально, только для file_write/file_read) относительный путь файла в sandbox, например "generated/proxy_hello.txt". Если path не указан — file_write создаст новый файл generated/{step_id}.txt (такая запись считается НАЕБАЛ, т.к. нет hash_before).
 
