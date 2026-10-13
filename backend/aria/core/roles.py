@@ -28,7 +28,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         role_id="general",
         description="Базовая роль общего назначения, диспетчеризация простых задач.",
         system_prompt_asset="prompts/general.md",
-        tool_whitelist=("read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "file_read", "file_search"),
+        tool_whitelist=("read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "file_read", "file_search", "memory_search", "notebook_query", "skill_lookup"),
         default_model_policy="standard_reasoning",
     ),
     "oracle": RoleDefinition(

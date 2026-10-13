@@ -69,7 +69,7 @@
 | B2 | В CI включён `--cov-branch` и порог `--cov-fail-under` | `pytest --cov=aria --cov-branch --cov-fail-under=55` | OPEN |
 | B3 | Порог растёт: 55 → 60 → 70 → 80 → **90 % на `aria/`**; список исключений (Windows/sidecar-код, `codex_exec_bridge` при решении «оставить») задан явно в `.coveragerc` | `--cov-fail-under=90` | OPEN |
 | B4 | Каждая пара «маршрут + метод» из `/openapi.json` (193) вызывается тестом с корректным телом: успех, валидация, 404 | скрипт сверки openapi ↔ тесты, 193/193 | OPEN |
-| B5 | Все 19 тулов из `TOOL_REGISTRY` вызываются тестом | `set(TOOL_REGISTRY) == set(CASES)` | OPEN |
+| B5 | Все 21 тул из `TOOL_REGISTRY` вызываются тестом | `set(TOOL_REGISTRY) == set(CASES)` | DONE 13.10: `tests/test_b5_tool_inventory.py` (инвентарь 21 тула + делегирование); весь `pytest tests` — 688 passed, 1 xfailed (B5-D1: `run_parallel` не подключён, см. WORK_NOTES.md) |
 | B6 | **0 заглушек.** В `aria/routers/` нет файла `stubs.py`; ни один ответ не содержит «not implemented / disabled / not supported / not available in the local build»; каждый из 66 прежних роутов либо реализован и покрыт тестом по блоку H, либо удалён вместе с UI-страницей | `test_no_stubs_left` (сканирует исходники и вызывает каждый роут) | OPEN — реализация в блоке H |
 | B7 | Тесты не зависят от порядка запуска (`test_scheduler_jobs` изолирован от `lifespan`) | `pytest -p no:randomly` и `pytest --random-order` дают одно и то же | OPEN |
 
@@ -85,7 +85,7 @@
 | C2 | `agents/codex_exec_bridge.py` (0 %): покрыт тестами или удалён | `git grep codex_exec_bridge` | ASK |
 | C3 | Сквозные сценарии 1.0.0 проходят на живых провайдерах: задача → план → тулы → аудит → закрытие; делегирование; чат | отдельный прогон, лог приложен | ASK — нужен список сценариев |
 | C4 | Ветка `feat/multi-profile-l4` — 0 коммитов впереди `main`, 19 позади: уже влита, удалить. Веток `feat/scheduler-l2` и `fix/task-status-l1` в origin нет; функциональность расписаний — пункт A12 | `git rev-list --left-right --count main...origin/feat/multi-profile-l4` | DONE (решение) |
-| C5 | `shell_execute`: подтверждение для high-risk команд срабатывает на всех вариантах из SEC-2 | тест executor-а с `requires_approval` | OPEN |
+| C5 | `shell_execute`: подтверждение для high-risk команд срабатывает на всех вариантах из SEC-2 | тест executor-а с `requires_approval` | OPEN — частично: B5 проверяет approval на `whoami` и игнор `approved` от модели; полный перебор вариантов SEC-2 не написан |
 
 ---
 
