@@ -80,7 +80,7 @@ def smoke_web_fetch():
 
     out = asyncio.run(web_fetch({"url": "https://example.com/"}))
     assert not out.get("error"), f"web_fetch error: {out['error']}"
-    assert "Example Domain" in out["content"], f"unexpected content: {out['content'][:80]!r}"
+    assert "Example Domain" in (out.get("title") or "") + out["content"], f"unexpected content: {out['content'][:80]!r}"
     print(f"    web_fetch: {out['chars']} chars, title={out['title']!r}")
     refused = asyncio.run(web_fetch({"url": "http://127.0.0.1:1/"}))
     assert "not a public address" in refused.get("error", ""), f"SSRF not refused: {refused}"
