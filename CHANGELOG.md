@@ -5,7 +5,8 @@
 - fix(llm): `allam-2-7b` (арабская модель) исключена из цепочек — по размеру она вставала первой в `fast`; запасная `GROQ_MODEL` по умолчанию = `openai/gpt-oss-20b` (проверена `--probe` на пуле владельца; `llama-3.3-70b-versatile` в списке пула нет)
 - fix(llm): Groq больше не зашит на `qwen/qwen3.6-27b` (404 на живом API, 4 места в `router.py`) — цепочки моделей подбираются по `GET /models` пула ключей (`aria/llm/groq_discovery.py`, та же схема, что у Gemini): только чат-модели (без whisper/guard/tts/compound), `main` сильные→слабые, `fast` слабые→сильные, проба `python -m aria.llm.groq_discovery --probe` исключает 404/403/«снята с обслуживания»/квота 0, занятые уходят в конец; кэш `groq_models.json` на 12 ч
 - feat(config): `GROQ_MODELS` (явная цепочка, главнее автоподбора), `GROQ_MODEL` (запасная одна модель без сети/кэша), `GROQ_MODELS_AUTO=0` (выключить); первые звенья сохраняют прежние `provider_id`, одна модель = один пул ключей на все классы
-- test: `tests/test_groq_discovery.py` (20), `live_smoke.py` берёт модель из цепочки; 1020 → 1040 passed
+- test: `tests/test_groq_discovery.py` (21), `tests/test_a27_gemini_autochain.py` (+4, ожидания обновлены под якорь), `live_smoke.py` берёт модель Groq из цепочки и даёт `max_tokens=512` (модели с рассуждением при 20 токенах отвечают пусто); `e2e_smoke.py`: текст ошибки не режется на 300 символах (список `tried:` виден целиком, лимит 1500); 1020 → 1045 passed
+- docs: DOD A36–A38, WORK_NOTES (P0 подтверждён на живой выдаче; Groq; якорь Gemini), OPERATOR_GUIDE (раздел про Groq, обновлён раздел Gemini), `backend/.env.example`
 
 ## 2026-10-13 (3)
 - fix(web): `web_search` возвращал `results: []` — парсер переписан на `html.parser` (любой порядок атрибутов и кавычек, раскрытие редиректов `uddg=`, сниппеты, отсев рекламы), добавлен запасной эндпоинт `html.duckduckgo.com/html`, понятная ошибка при капче, предупреждение в лог при нуле ссылок на нормальной странице
