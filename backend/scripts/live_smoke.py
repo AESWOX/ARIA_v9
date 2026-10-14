@@ -121,7 +121,8 @@ def smoke_groq_chat():
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": "Say exactly: hello from aria smoke test"}],
-                "max_tokens": 20,
+                # 512: модели с рассуждением (gpt-oss, qwen3) тратят токены на «мысли», при 20 content пустой
+                "max_tokens": 512,
             },
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         )
@@ -136,7 +137,9 @@ def smoke_groq_chat():
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
-        assert len(content) > 0, "empty response from Groq"
+        assert content and content.strip(), (
+            f"empty response from Groq model {model!r}, finish_reason="
+            f"{data['choices'][0].get('finish_reason')!r}")
         print(f"    Groq responded: {content[:60]}...")
 
 

@@ -227,6 +227,12 @@ def refresh_if_stale(
 
 def main(argv: list[str] | None = None) -> int:
     """python -m aria.llm.groq_discovery [--probe]: показать список и обновить кэш."""
+    try:  # как scripts/live_smoke.py: ключи из backend/.env, если они не в окружении
+        from dotenv import load_dotenv
+
+        load_dotenv(paths._BACKEND_ROOT / ".env")
+    except ImportError:
+        pass
     from aria.config import get_settings
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
