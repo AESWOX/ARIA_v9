@@ -16,7 +16,7 @@ MODELS = [
     "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-120b", "openai/gpt-oss-20b",
     "qwen/qwen3-32b", "moonshotai/kimi-k2-instruct", "meta-llama/llama-4-scout-17b-16e-instruct",
     "whisper-large-v3", "whisper-large-v3-turbo", "meta-llama/llama-guard-4-12b", "playai-tts",
-    "canopylabs/orpheus-v1-english", "groq/compound", "groq/compound-mini", "openai/gpt-oss-safeguard-20b",
+    "canopylabs/orpheus-v1-english", "groq/compound", "groq/compound-mini", "openai/gpt-oss-safeguard-20b", "allam-2-7b",
 ]
 
 
@@ -52,7 +52,7 @@ class FakeHttp:
 def test_only_text_chat_models_are_kept():
     kept = {c.model for c in map(gq.classify, MODELS) if c}
     assert {"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-120b", "qwen/qwen3-32b"} <= kept
-    for bad in ("whisper", "guard", "tts", "orpheus", "compound", "safeguard"):
+    for bad in ("whisper", "guard", "tts", "orpheus", "compound", "safeguard", "allam"):
         assert not any(bad in m for m in kept), f"{bad} не должно попасть в цепочки"
 
 
@@ -187,3 +187,8 @@ def test_router_one_pool_per_model_shared_between_classes(monkeypatch):
 def test_router_without_chain_uses_single_fallback_model(monkeypatch):
     prov = _groq(_router(monkeypatch, GROQ_MODEL="only-one"))
     assert {p.model for p in prov.values()} == {"only-one"}
+
+
+def test_arabic_specialist_never_leads_the_fast_chain():
+    assert gq.build_chains(MODELS)["fast"][0] != "allam-2-7b"
+    assert gq.classify("allam-2-7b") is None

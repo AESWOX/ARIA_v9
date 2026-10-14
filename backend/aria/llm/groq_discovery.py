@@ -43,7 +43,8 @@ MAX_KEYS_TRIED = 3
 UNKNOWN_SIZE = 50.0  # модель без размера в имени (kimi, ...) считается средней
 
 # Не чат-модели: речь, модерация, эмбеддинги, агентные «compound» (сами вызывают тулы).
-_EXCLUDE = re.compile(r"whisper|guard|safeguard|moderation|tts|playai|orpheus|embed|compound|transcri|speech")
+# allam — узкоспециализированная арабская модель: по размеру (7b) она встаёт первой в fast, но для общего чата не годится.
+_EXCLUDE = re.compile(r"whisper|guard|safeguard|moderation|tts|playai|orpheus|embed|compound|transcri|speech|allam")
 _SIZE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)b(?![a-z])")
 
 

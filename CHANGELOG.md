@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-14 (1)
+- fix(llm): `allam-2-7b` (арабская модель) исключена из цепочек — по размеру она вставала первой в `fast`; запасная `GROQ_MODEL` по умолчанию = `openai/gpt-oss-20b` (проверена `--probe` на пуле владельца; `llama-3.3-70b-versatile` в списке пула нет)
 - fix(llm): Groq больше не зашит на `qwen/qwen3.6-27b` (404 на живом API, 4 места в `router.py`) — цепочки моделей подбираются по `GET /models` пула ключей (`aria/llm/groq_discovery.py`, та же схема, что у Gemini): только чат-модели (без whisper/guard/tts/compound), `main` сильные→слабые, `fast` слабые→сильные, проба `python -m aria.llm.groq_discovery --probe` исключает 404/403/«снята с обслуживания»/квота 0, занятые уходят в конец; кэш `groq_models.json` на 12 ч
 - feat(config): `GROQ_MODELS` (явная цепочка, главнее автоподбора), `GROQ_MODEL` (запасная одна модель без сети/кэша), `GROQ_MODELS_AUTO=0` (выключить); первые звенья сохраняют прежние `provider_id`, одна модель = один пул ключей на все классы
 - test: `tests/test_groq_discovery.py` (20), `live_smoke.py` берёт модель из цепочки; 1020 → 1040 passed

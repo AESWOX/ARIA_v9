@@ -158,7 +158,7 @@ class Settings(BaseSettings):
     groq_base_url: str = "https://api.groq.com/openai/v1"
     # Одна запасная модель, если нет ни GROQ_MODELS, ни кэша автоподбора (первый старт без сети).
     # Не гарантия: список моделей Groq меняется, автоподбор (aria/llm/groq_discovery.py) его заменяет.
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-20b"  # жива на пуле владельца 14.10.2026 (--probe)
     # Явная цепочка (через запятую, порядок = порядок попыток) для всех классов Groq; главнее автоподбора.
     groq_models: str = ""
     # Автоподбор цепочек из GET /models по вашему пулу ключей. 0 = выключить.
