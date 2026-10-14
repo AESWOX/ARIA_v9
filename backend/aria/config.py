@@ -156,6 +156,13 @@ class Settings(BaseSettings):
     # GROQ_API_KEYS=key1,key2,...,key10
     groq_api_keys: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"
+    # Одна запасная модель, если нет ни GROQ_MODELS, ни кэша автоподбора (первый старт без сети).
+    # Не гарантия: список моделей Groq меняется, автоподбор (aria/llm/groq_discovery.py) его заменяет.
+    groq_model: str = "llama-3.3-70b-versatile"
+    # Явная цепочка (через запятую, порядок = порядок попыток) для всех классов Groq; главнее автоподбора.
+    groq_models: str = ""
+    # Автоподбор цепочек из GET /models по вашему пулу ключей. 0 = выключить.
+    groq_models_auto: bool = True
 
     # --- Compression: separate key pool, separate rotation cursor from the
     # main answer pool above. Does NOT share state with gemini_api_keys. ---
@@ -179,7 +186,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "gemini_api_keys", "groq_api_keys", "compression_gemini_api_keys",
-        "gemini_flash_models", "gemini_pro_models", "compression_models",
+        "gemini_flash_models", "gemini_pro_models", "compression_models", "groq_models",
         mode="before",
     )
     @classmethod
@@ -206,6 +213,23 @@ class Settings(BaseSettings):
         from aria.llm import gemini_discovery
 
         return ",".join(gemini_discovery.cached_chain(kind))
+
+    def _groq_chain(self, kind: str) -> list[str]:
+        """GROQ_MODELS (явно) -> кэш автоподбора (main | fast) -> GROQ_MODEL."""
+        auto = ""
+        if not self.groq_models and self.groq_models_auto:
+            from aria.llm import groq_discovery
+
+            auto = ",".join(groq_discovery.cached_chain(kind))
+        return self._model_chain(self.groq_models or auto, self.groq_model)
+
+    @property
+    def groq_main_chain(self) -> list[str]:
+        return self._groq_chain("main")
+
+    @property
+    def groq_fast_chain(self) -> list[str]:
+        return self._groq_chain("fast")
 
     @property
     def gemini_flash_chain(self) -> list[str]:

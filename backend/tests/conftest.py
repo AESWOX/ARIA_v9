@@ -23,11 +23,12 @@ atexit.register(shutil.rmtree, _TEST_ROOT, ignore_errors=True)
 for _name in (
     "ARIA_SKILLS_DIR", "OBSIDIAN_VAULT_PATH", "GEMINI_API_KEY", "GEMINI_API_KEYS", "GROQ_API_KEY",
     "GROQ_API_KEYS", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
-    "GEMINI_FLASH_MODEL", "GEMINI_PRO_MODEL", "VISION_GEMINI_API_KEYS", "COMPRESSION_GEMINI_API_KEYS",
+    "GEMINI_FLASH_MODEL", "GEMINI_PRO_MODEL", "GROQ_MODELS", "GROQ_MODEL", "VISION_GEMINI_API_KEYS", "COMPRESSION_GEMINI_API_KEYS",
 ):
     os.environ.pop(_name, None)
 
 os.environ["ARIA_DATA_DIR"] = str(_TEST_ROOT)
+os.environ["GROQ_MODELS_AUTO"] = "0"  # то же для Groq (aria/llm/groq_discovery.py)
 os.environ["GEMINI_MODELS_AUTO"] = "0"  # тесты не ходят в сеть за списком моделей (0027); нужные тесты включают сами
 os.environ["POSTGRES_DSN"] = "sqlite:///" + (_TEST_ROOT / "local_agent.db").as_posix()
 
