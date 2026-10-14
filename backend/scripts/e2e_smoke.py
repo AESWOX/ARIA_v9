@@ -74,7 +74,7 @@ class Api:
     def ok(self, method: str, path: str, body=None, *, expect=(200,), **kw):
         status, data = self.call(method, path, body, **kw)
         if status not in expect:
-            raise AssertionError(f"{method} {path} -> {status}: {str(data)[:300]}")
+            raise AssertionError(f"{method} {path} -> {status}: {str(data)[:1500]}")
         return data
 
 
