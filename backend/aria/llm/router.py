@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -404,38 +405,45 @@ def build_default_router() -> ProviderRouter:
         _register_chain("gemini-pro-premium-fallback", "premium_reasoning", pro_chain, direct=False)
 
     groq_keys = settings.groq_api_keys_list
+    groq_main: list[str] = []
+    groq_fast: list[str] = []
+    groq_pools: dict[str, KeyPool] = {}
     if groq_keys:
         has_any_real_provider = True
-        groq_pool_free = KeyPool(groq_keys, name="groq-answers")
-        groq_pool_standard = KeyPool(groq_keys, name="groq-answers")
-        router.register(
-            OpenAICompatibleProvider(
-                provider_id="groq-llama-fast",
-                provider_class="free_tier_reasoning",
+        # Цепочки не заданы в .env -> подобрать по списку моделей пула (кэш на 12 ч; сеть недоступна = GROQ_MODEL).
+        if settings.groq_models_auto and not settings.groq_models:
+            from aria.llm import groq_discovery
+
+            groq_discovery.refresh_if_stale(groq_keys, settings.groq_base_url)
+        groq_main = settings.groq_main_chain
+        groq_fast = settings.groq_fast_chain
+
+    def _groq_pool(model: str) -> KeyPool:
+        # одна квота Groq на ключ и модель: одна модель = один пул на все классы
+        if model not in groq_pools:
+            groq_pools[model] = KeyPool(groq_keys, name=f"groq-{model}")
+        return groq_pools[model]
+
+    def _register_groq_chain(base_id: str, provider_class: str, models: list[str], *, direct: bool) -> None:
+        for i, model in enumerate(models):
+            provider = OpenAICompatibleProvider(
+                # первое звено сохраняет прежний id (профили запуска и выбор модели в UI ссылаются на него)
+                provider_id=base_id if i == 0 else f"{base_id}-{re.sub(r'[^a-z0-9.]+', '-', model.lower()).strip('-')}",
+                provider_class=provider_class,
                 base_url=settings.groq_base_url,
-                model="qwen/qwen3.6-27b",
-                key_pool=groq_pool_free,
+                model=model,
+                key_pool=_groq_pool(model),
             )
-        )
-        router.register(
-            OpenAICompatibleProvider(
-                provider_id="groq-llama-versatile",
-                provider_class="standard_reasoning",
-                base_url=settings.groq_base_url,
-                model="qwen/qwen3.6-27b",
-                key_pool=groq_pool_standard,
-            )
-        )
+            if direct:
+                router.register(provider)
+            else:
+                router.providers_by_class.setdefault(provider_class, []).append(provider)
+
+    if groq_keys:
+        _register_groq_chain("groq-llama-fast", "free_tier_reasoning", groq_fast, direct=True)
+        _register_groq_chain("groq-llama-versatile", "standard_reasoning", groq_main, direct=True)
         # Последнее звено цепи "DeepSeek -> Gemini -> Groq" для premium_reasoning.
-        router.providers_by_class.setdefault("premium_reasoning", []).append(
-            OpenAICompatibleProvider(
-                provider_id="groq-llama-versatile-premium-fallback",
-                provider_class="premium_reasoning",
-                base_url=settings.groq_base_url,
-                model="qwen/qwen3.6-27b",
-                key_pool=KeyPool(groq_keys, name="groq-answers"),
-            )
-        )
+        _register_groq_chain("groq-llama-versatile-premium-fallback", "premium_reasoning", groq_main, direct=False)
 
     # --- Vision (multimodal): отдельный пул, не разделяет состояние с main pool ---
     vision_keys = settings.vision_gemini_api_keys_list
@@ -456,16 +464,7 @@ def build_default_router() -> ProviderRouter:
 
     # --- Sub-agent execution (Groq): дешёвый быстрый провайдер для delegate_task ---
     if groq_keys:
-        subagent_pool = KeyPool(groq_keys, name="groq-subagent")
-        router.register(
-            OpenAICompatibleProvider(
-                provider_id="groq-subagent-fast",
-                provider_class="subagent_execution",
-                base_url=settings.groq_base_url,
-                model="qwen/qwen3.6-27b",
-                key_pool=subagent_pool,
-            )
-        )
+        _register_groq_chain("groq-subagent-fast", "subagent_execution", groq_fast, direct=True)
 
     if not router.providers_by_class:
         # Волна 1 (A9): раньше здесь молча регистрировались 4 заглушки

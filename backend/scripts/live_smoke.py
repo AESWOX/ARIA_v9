@@ -93,12 +93,18 @@ def smoke_groq_chat():
     keys = settings.groq_api_keys_list
     if not keys:
         raise RuntimeError("GROQ_API_KEYS not set, skipping Groq smoke test")
+    from aria.llm import groq_discovery
+
+    if settings.groq_models_auto and not settings.groq_models:
+        groq_discovery.refresh_if_stale(keys, settings.groq_base_url)
+    model = settings.groq_main_chain[0]
+    print(f"    Groq model from chain: {model}")
     pool = KeyPool(keys, name="smoke-groq")
     provider = OpenAICompatibleProvider(
         provider_id="smoke-groq",
         provider_class="test",
         base_url=settings.groq_base_url,
-        model="qwen/qwen3.6-27b",
+        model=model,
         key_pool=pool,
     )
     chat = provider.provider_id
@@ -113,9 +119,10 @@ def smoke_groq_chat():
         resp = client.post(
             f"{base}/chat/completions",
             json={
-                "model": "qwen/qwen3.6-27b",
+                "model": model,
                 "messages": [{"role": "user", "content": "Say exactly: hello from aria smoke test"}],
-                "max_tokens": 20,
+                # 512: модели с рассуждением (gpt-oss, qwen3) тратят токены на «мысли», при 20 content пустой
+                "max_tokens": 512,
             },
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         )
@@ -123,10 +130,16 @@ def smoke_groq_chat():
             # Auth error means the code path works, keys need refresh — partial pass
             print(f"    Groq endpoint reachable (401: keys need refresh)")
             return
+        if resp.status_code in (400, 404):
+            raise AssertionError(
+                f"Groq {resp.status_code} for model {model!r}: {resp.text[:200]} — "
+                "run: python -m aria.llm.groq_discovery --probe")
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
-        assert len(content) > 0, "empty response from Groq"
+        assert content and content.strip(), (
+            f"empty response from Groq model {model!r}, finish_reason="
+            f"{data['choices'][0].get('finish_reason')!r}")
         print(f"    Groq responded: {content[:60]}...")
 
 
@@ -202,7 +215,7 @@ def main():
     test("web_fetch", smoke_web_fetch)
 
     # 2. Groq chat completion
-    print("\n[2] Groq Chat (qwen/qwen3.6-27b)")
+    print("\n[2] Groq Chat (model from discovery chain)")
     if settings.groq_api_keys_list:
         test("groq_chat", smoke_groq_chat)
     else:
