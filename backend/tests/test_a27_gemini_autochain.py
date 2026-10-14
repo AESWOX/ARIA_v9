@@ -36,7 +36,9 @@ def test_only_text_chat_models_are_classified():
 def test_tiers_and_order_newest_first():
     tiers = gd.select_candidates(MODELS, max_per_tier=4)
     assert [c.model for c in tiers["pro"]] == ["gemini-3.1-pro-preview", "gemini-2.5-pro"]
-    assert [c.model for c in tiers["flash"]] == ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+    # 4 новейших + якорь яруса (самая старая стабильная): без него 2.5-flash отрезалась ещё до проверки
+    assert [c.model for c in tiers["flash"]] == ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
+                                                 "gemini-2.5-flash"]
     # при равной версии (3.1) стабильная модель раньше preview
     assert [c.model for c in tiers["lite"]] == [
         "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite"]
@@ -46,7 +48,7 @@ def test_chains_go_down_in_quality():
     chains = gd.build_chains(MODELS)
     assert chains["pro"][:3] == ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-3.8-flash"]
     assert chains["flash"] == ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
-                               "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview",
+                               "gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview",
                                "gemini-2.5-flash-lite"]
     assert chains["compression"][0] == "gemini-3.5-flash-lite"
     assert all(len(v) <= gd.MAX_CHAIN for v in chains.values())
@@ -66,11 +68,11 @@ def test_busy_models_do_not_push_working_ones_out_of_the_chain():
     status = {"gemini-3.1-pro-preview": "quota_zero", "gemini-2.5-pro": "not_found", "gemini-3.8-flash": "overloaded",
               "gemini-3.7-flash": "overloaded", "gemini-3.1-flash-lite": "overloaded"}
     chains = gd.build_chains(MODELS, status)
-    working = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite-preview",
-               "gemini-2.5-flash-lite"]
+    working = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite",
+               "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite"]
     for kind in ("pro", "flash"):
-        assert chains[kind][:5] == working
-        assert set(chains[kind][5:]) == {"gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"}
+        assert chains[kind][:6] == working
+        assert set(chains[kind][6:]) == {"gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.1-flash-lite"}
     assert chains["compression"][:3] == ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite"]
 
 
@@ -197,3 +199,39 @@ def test_autoconfig_script_writes_env_without_touching_other_lines(tmp_path, mon
     pro_line = next(l for l in text.splitlines() if l.startswith("GEMINI_PRO_MODELS="))
     assert "gemini-3.1-pro-preview" not in pro_line, "модель без квоты (429, limit: 0) не должна попасть в цепочку"
     assert (tmp_path / ".env.bak").exists() and json.loads((tmp_path / "gemini_models.json").read_text())["chains"]
+
+
+# ── P1-фикс 14.10.2026: проверенная 2.5-flash не должна выпадать из цепочки ──
+
+def test_stable_2_5_flash_is_always_in_the_flash_and_pro_chains():
+    for kind in ("pro", "flash"):
+        chain = gd.build_chains(MODELS)[kind]
+        assert "gemini-2.5-flash" in chain
+        assert chain.index("gemini-2.5-flash") > chain.index("gemini-3.5-flash"), "новые версии идут раньше"
+
+
+def test_anchor_survives_a_tight_chain_limit():
+    chain = gd.build_chains(MODELS, max_chain=5)["flash"]
+    assert len(chain) <= 5 + len(gd.anchors(MODELS)) and "gemini-2.5-flash" in chain
+
+
+def test_versions_below_the_floor_never_enter_chains():
+    old = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite", *MODELS]
+    chains = gd.build_chains(old)
+    assert not any(m.startswith(("gemini-1.5", "gemini-2.0")) for kind in chains for m in chains[kind])
+
+
+def test_cache_from_the_old_algorithm_is_rebuilt_immediately(tmp_path):
+    class Http:
+        def get(self, url, headers=None, timeout=None):
+            class R:
+                status_code = 200
+                def raise_for_status(self): pass
+                def json(self): return {"data": [{"id": m} for m in MODELS]}
+            return R()
+
+    keys = ["k1"]
+    gd.save_cache({"fetched_at": time.time(), "key_id": gd.key_fingerprint(keys), "chains": {"flash": ["x"]}}, tmp_path)
+    assert gd.refresh_if_stale(keys, data_dir=tmp_path, http=Http()) is True, "свежий, но без algo = пересобрать"
+    assert "gemini-2.5-flash" in gd.cached_chain("flash", tmp_path)
+    assert gd.refresh_if_stale(keys, data_dir=tmp_path, http=Http()) is False

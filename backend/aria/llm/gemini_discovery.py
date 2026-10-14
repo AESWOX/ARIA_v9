@@ -39,8 +39,12 @@ logger = logging.getLogger("local_agent.gemini_discovery")
 CACHE_NAME = "gemini_models.json"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 STALE_AFTER_SEC = 12 * 3600
-MAX_CHAIN = 8
+MAX_CHAIN = 12
 MAX_PER_TIER = 4
+# Нижняя граница версии: старее в цепочки не попадают (1.5, 2.0 и т.п.).
+MIN_VERSION = 2.5
+# Версия алгоритма сборки цепочек. Кэш без неё/старой пересобирается сразу, а не через 12 часов.
+ALGO = 2
 
 # Не чат-модели и алиасы «latest» (их цель меняется, а квота и поведение непредсказуемы).
 _EXCLUDE = re.compile(
@@ -91,16 +95,41 @@ def classify(model_id: str) -> Candidate | None:
     return Candidate(model=name, tier=tier, version=float(match.group(1)), preview="preview" in name)
 
 
-def select_candidates(models: list[str], max_per_tier: int = MAX_PER_TIER) -> dict[str, list[Candidate]]:
-    """Лучшие ``max_per_tier`` моделей каждого яруса (новые версии первыми, без дублей)."""
+def select_candidates(
+    models: list[str], max_per_tier: int = MAX_PER_TIER, min_version: float = MIN_VERSION
+) -> dict[str, list[Candidate]]:
+    """Лучшие ``max_per_tier`` моделей каждого яруса (новые версии первыми, без дублей, не старее ``min_version``)
+    плюс «якорь» яруса: самая старая стабильная (не preview) модель не старее ``min_version``.
+
+    Якорь нужен потому, что новые версии на бесплатном уровне чаще упираются в квоту, а проверенная старая
+    (например, 2.5-flash) почти не даёт ошибок: без якоря срез «4 новейших» отрезал её ещё до проверки.
+    """
     seen: set[str] = set()
     by_tier: dict[str, list[Candidate]] = {"pro": [], "flash": [], "lite": []}
     for cand in sorted(filter(None, (classify(m) for m in models)), key=lambda c: c.rank):
-        if cand.model in seen:
+        if cand.model in seen or cand.version < min_version:
             continue
         seen.add(cand.model)
         by_tier[cand.tier].append(cand)
-    return {tier: items[:max_per_tier] for tier, items in by_tier.items()}
+    out: dict[str, list[Candidate]] = {}
+    for tier, items in by_tier.items():
+        top = items[:max_per_tier]
+        stable = [c for c in items if not c.preview]
+        anchor = stable[-1] if stable else None  # самая старая стабильная (список идёт от новых к старым)
+        if anchor is not None and anchor not in top:
+            top = [*top, anchor]
+        out[tier] = top
+    return out
+
+
+def anchors(models: list[str], min_version: float = MIN_VERSION) -> set[str]:
+    """Якорные модели всех ярусов (их цепочка не обрезает)."""
+    result: set[str] = set()
+    for items in select_candidates(models, min_version=min_version).values():
+        stable = [c for c in items if not c.preview]
+        if stable:
+            result.add(sorted(stable, key=lambda c: c.rank)[-1].model)
+    return result
 
 
 def build_chains(
@@ -109,6 +138,7 @@ def build_chains(
     """Цепочки по ярусам: pro -> flash -> lite; flash -> lite; compression -> lite -> flash."""
     status = status or {}
     tiers = select_candidates(models, max_per_tier)
+    keep = anchors(models)
     alive = {
         tier: [c.model for c in items if status.get(c.model, "unprobed") not in DROP_STATUSES]
         for tier, items in tiers.items()
@@ -123,6 +153,12 @@ def build_chains(
         # 0028: рабочие вперёд (порядок качества внутри группы сохраняется), занятые в хвост, и только потом обрезка:
         # занятые модели не вытесняют рабочие из-за лимита длины.
         out.sort(key=lambda m: status.get(m, "unprobed") in BUSY_STATUSES)
+        # при обрезке сначала выпадают обычные модели с хвоста, якоря остаются (иначе проверенная 2.5 отрезается)
+        for model in reversed(list(out)):
+            if len(out) <= max_chain:
+                break
+            if model not in keep:
+                out.remove(model)
         return out[:max_chain]
 
     chains = {
@@ -213,6 +249,7 @@ def discover(
                     progress(tier, cand.model, st, info)
     return {
         "fetched_at": time.time(),
+        "algo": ALGO,
         "probed": probe,
         "key_id": key_fingerprint(keys),
         "status": status,
@@ -265,6 +302,7 @@ def refresh_if_stale(
     cache = load_cache(data_dir)
     fresh = (
         cache is not None
+        and cache.get("algo") == ALGO
         and cache.get("key_id") == key_fingerprint(keys)
         and time.time() - float(cache.get("fetched_at", 0)) < max_age_sec
     )
