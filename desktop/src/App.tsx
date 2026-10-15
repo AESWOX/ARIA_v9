@@ -445,6 +445,19 @@ export default function App() {
     });
   }, []);
 
+  // Chat focus mode (NativeChatPage) asks the app menu to collapse / expand.
+  useEffect(() => {
+    const onSidebar = (e: Event) => {
+      const want = (e as CustomEvent<boolean>).detail === true;
+      setCollapsed(want);
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(want));
+      } catch { /* storage unavailable: state still applies for this session */ }
+    };
+    window.addEventListener("aria:set-sidebar-collapsed", onSidebar);
+    return () => window.removeEventListener("aria:set-sidebar-collapsed", onSidebar);
+  }, []);
+
   // First-run onboarding. The backend is the source of truth: it embeds
   // <meta name="first-run"> only when no onboarded marker file existed at
   // startup (i.e. this profile was never launched before). Gating on the

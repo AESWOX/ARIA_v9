@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@vendor/ui/ui/components/button";
 import { Markdown } from "@/components/Markdown";
 import { TeamPanel } from "@/components/TeamPanel";
+import { ChatTopBar } from "@/components/ChatTopBar";
 
 /* ------------------------------------------------------------------ */
 /*  NativeChatPage - /chat. Message -> model -> reply, saved per       */
@@ -32,6 +33,17 @@ const MODES: { id: Mode; label: string; hint: string }[] = [
 const POLL_MS = 2000;
 const LIST_POLL_MS = 3000;
 const SEEN_KEY = "aria.chat.seen";
+const FOCUS_KEY = "aria.chat.focus";
+/** Same event App.tsx listens to: collapses / expands the left app menu. */
+export const SIDEBAR_EVENT = "aria:set-sidebar-collapsed";
+
+function loadFocus(): boolean {
+  try {
+    return localStorage.getItem(FOCUS_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
 
 type SeenMap = Record<string, string>;
 
@@ -79,6 +91,8 @@ export default function NativeChatPage() {
   const [models, setModels] = useState<ChatModels | null>(null);
   const [profileNotes, setProfileNotes] = useState<string[]>([]);
   const [seen, setSeen] = useState<SeenMap>(() => loadSeen());
+  const [focus, setFocus] = useState<boolean>(() => loadFocus());
+  const [costToday, setCostToday] = useState<number | null>(null);
   const profileDirty = useRef(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -98,6 +112,52 @@ export default function NativeChatPage() {
     if (!activeId || profileDirty.current) return;
     api.chatSessionProfile(activeId).then((r) => setProfile(r.profile)).catch(() => undefined);
   }, [activeId]);
+
+  const applyFocus = useCallback((next: boolean) => {
+    setFocus(next);
+    try {
+      localStorage.setItem(FOCUS_KEY, String(next));
+    } catch {
+      /* storage can be blocked; focus just is not remembered */
+    }
+    window.dispatchEvent(new CustomEvent(SIDEBAR_EVENT, { detail: next }));
+  }, []);
+
+  // Restore the app menu state that matches a remembered focus mode on first mount.
+  useEffect(() => {
+    if (loadFocus()) window.dispatchEvent(new CustomEvent(SIDEBAR_EVENT, { detail: true }));
+  }, []);
+
+  // Ctrl+\ toggles focus mode.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "\\") {
+        e.preventDefault();
+        applyFocus(!focus);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus, applyFocus]);
+
+  // Spend today (estimate) for the top bar; refreshed once a minute, failures are silent.
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      api
+        .getAnalytics(1)
+        .then((r) => {
+          if (!cancelled) setCostToday(r.totals.total_estimated_cost);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const id = window.setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   const changeProfile = (next: RunProfile) => {
     profileDirty.current = true;
@@ -316,9 +376,14 @@ export default function NativeChatPage() {
   const notConfigured = status !== null && !status.configured;
 
   return (
-    <div className="grid h-[calc(100vh-9rem)] min-h-[420px] gap-3 md:grid-cols-[240px_1fr]">
+    <div
+      className={cn(
+        "grid min-h-[420px] gap-3",
+        focus ? "h-[calc(100vh-6rem)] grid-cols-1" : "h-[calc(100vh-9rem)] md:grid-cols-[240px_1fr]",
+      )}
+    >
       {/* ---------------- sessions ---------------- */}
-      <div className="flex min-h-0 flex-col gap-2 border border-border bg-background/40 p-2">
+      <div className={cn("min-h-0 flex-col gap-2 border border-border bg-background/40 p-2", focus ? "hidden" : "flex")}>
         <Button size="sm" onClick={newChat} disabled={sending}>
           <Plus className="mr-1 h-3 w-3" /> New chat
         </Button>
@@ -371,6 +436,17 @@ export default function NativeChatPage() {
 
       {/* ---------------- conversation ---------------- */}
       <div className="flex min-h-0 flex-col border border-border bg-background/40">
+        <ChatTopBar
+          title={sessions.find((x) => x.id === activeId)?.title ?? ""}
+          mode={MODES.find((md) => md.id === mode)?.label ?? mode}
+          profile={profile}
+          models={models}
+          busy={runBusy(run) || sending}
+          waiting={(run?.attention.length ?? 0) > 0}
+          costToday={costToday}
+          focus={focus}
+          onToggleFocus={() => applyFocus(!focus)}
+        />
         {notConfigured && (
           <div className="flex items-start gap-2 border-b border-border bg-amber-500/10 p-3 text-xs">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
@@ -397,7 +473,7 @@ export default function NativeChatPage() {
             <div key={m.id} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
               <div
                 className={cn(
-                  "max-w-[85%] border border-border px-3 py-2",
+                  focus ? "max-w-[92%] border border-border px-3 py-2" : "max-w-[85%] border border-border px-3 py-2",
                   m.role === "user" ? "bg-foreground/10" : "bg-background/60",
                 )}
               >
