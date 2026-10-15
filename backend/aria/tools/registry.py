@@ -212,7 +212,7 @@ async def _memory_save(input_json: dict, **_ctx) -> dict:
 TOOL_REGISTRY: dict[str, ToolSpec] = {
     "read_note": ToolSpec(
         tool_name="read_note",
-        description="Читает заметку из Obsidian vault по имени.",
+        description="Читает заметку из Obsidian vault по имени файла без папки; расширение .md можно указывать или опускать (например, INDEX или INDEX.md).",
         input_schema={"type": "object", "properties": {"note_name": {"type": "string"}}, "required": ["note_name"]},
         output_schema={"type": "object", "properties": {"found": {"type": "boolean"}, "content": {"type": ["string", "null"]}}},
         timeout_sec=10,

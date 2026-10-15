@@ -66,6 +66,9 @@ def _extract_wiki_links(text: str) -> list[str]:
 def read_note(note_name: str) -> dict:
     root = vault_root()
     note_name = _safe_note_name(note_name)
+    # list_vault показывает файлы с расширением («INDEX.md»), модель передаёт имя как увидела; раньше искалось «INDEX.md.md»
+    if note_name.lower().endswith(".md") and len(note_name) > 3:
+        note_name = note_name[:-3]
     candidates = [
         c for c in root.rglob(f"{note_name}.md")
         if not any(part.startswith(".") for part in c.relative_to(root).parts)

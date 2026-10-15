@@ -58,3 +58,13 @@ def test_hidden_dirs_are_not_notes(vault):
     assert ov.read_note("secret")["found"] is False
     assert ov.search_vault("old")["total"] == 0
     assert ".trash" not in ov.list_vault_tree()["dirs"]
+
+
+def test_read_note_accepts_the_name_exactly_as_list_vault_shows_it(vault):
+    """Прод 14.10: list_vault показал INDEX.md, read_note("INDEX.md") вернул found=false (искался INDEX.md.md)."""
+    (vault / "INDEX.md").write_text("# index", encoding="utf-8")
+    for name in ("INDEX", "INDEX.md", "INDEX.MD"):
+        got = ov.read_note(name)
+        assert got["found"] and got["content"] == "# index" and got["path"] == "INDEX.md", name
+    assert ov.read_note("missing.md")["found"] is False
+    assert ov.read_note(".md")["found"] is False  # одно расширение — не имя заметки
