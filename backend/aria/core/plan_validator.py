@@ -38,6 +38,28 @@ class PlanStep(BaseModel):
 MAX_REPLAN_ATTEMPTS = 2
 
 
+_STEP_NS = uuid.UUID("6f1c2e3a-5b7d-4c8e-9a10-2b3c4d5e6f70")
+
+
+def _normalize_step_ids(steps: list[dict]) -> list[dict]:
+    """Модели пишут step_id как «step-1-clone-repo», а схема требует UUID; три такие попытки подряд ломали план.
+
+    Настоящие UUID остаются как есть, любая другая непустая строка превращается в детерминированный uuid5
+    (в пределах плана одинаковая строка + номер шага = разные, но стабильные идентификаторы).
+    """
+    out: list[dict] = []
+    for i, raw in enumerate(steps):
+        item = dict(raw) if isinstance(raw, dict) else raw
+        sid = item.get("step_id") if isinstance(item, dict) else None
+        if isinstance(sid, str) and sid.strip():
+            try:
+                uuid.UUID(sid.strip())
+            except ValueError:
+                item["step_id"] = str(uuid.uuid5(_STEP_NS, f"{i}:{sid.strip()}"))
+        out.append(item)
+    return out
+
+
 def validate_plan(steps: list[dict]) -> list[PlanStep]:
     """Валидирует список словарей как PlanStep[].
 
@@ -52,7 +74,7 @@ def validate_plan(steps: list[dict]) -> list[PlanStep]:
     """
     result: list[PlanStep] = []
     errors: list[str] = []
-    for i, raw in enumerate(steps):
+    for i, raw in enumerate(_normalize_step_ids(steps)):
         try:
             result.append(PlanStep(**raw))
         except ValueError as e:

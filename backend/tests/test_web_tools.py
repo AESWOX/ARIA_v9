@@ -167,12 +167,32 @@ class TestWebSearch:
         out = await web.web_search({"query": "x"})
         assert out["results"] == [] and out["error"].startswith("request failed") and len(calls) == 1
 
-    async def test_zero_results_on_a_big_page_is_logged_as_possible_markup_change(self, urlopen_pages, caplog):
+    async def test_unrecognized_page_is_an_error_not_no_results(self, urlopen_pages, caplog):
+        """Прод 14.10 15:02: страницы 8–9 КБ без ссылок и без маркеров блокировки возвращались как «no results found»,
+        и модель делала вывод, что в сети ничего нет."""
         urlopen_pages({"duckduckgo.com": "<html><body>" + "<p>filler</p>" * 600 + "</body></html>"})
         with caplog.at_level("WARNING", logger="aria.web"):
             out = await web.web_search({"query": "x"})
-        assert out["results"] == [] and not out.get("error")
-        assert "markup change" in caplog.text
+        assert out["results"] == [] and "not recognized" in out["error"] and "NOT evidence" in out["error"]
+        assert "note" not in out and "markup change" in caplog.text
+
+    async def test_small_unrecognized_page_is_also_an_error(self, urlopen_pages):
+        urlopen_pages({"duckduckgo.com": "<html><body><p>something odd</p></body></html>"})
+        out = await web.web_search({"query": "x"})
+        assert "not recognized" in out["error"]
+
+    async def test_duckduckgo_saying_no_results_is_an_honest_empty_answer(self, urlopen_pages):
+        urlopen_pages({"duckduckgo.com": "<html><body><div class='no-results'>No results.</div></body></html>"})
+        out = await web.web_search({"query": "zzzqqq"})
+        assert out["results"] == [] and out["note"] == "no results found" and not out.get("error")
+
+    async def test_unrecognized_page_is_saved_for_debugging_and_capped(self, urlopen_pages):
+        from aria import paths
+        urlopen_pages({"duckduckgo.com": "<html><body><p>odd page</p></body></html>"})
+        for _ in range(3):
+            await web.web_search({"query": "x"})
+        saved = list((paths.data_dir() / "debug").glob("ddg_unrecognized_*.html"))
+        assert 1 <= len(saved) <= 3 and "odd page" in saved[0].read_text(encoding="utf-8")
 
     async def test_junk_arguments(self, urlopen_pages):
         urlopen_pages({"lite.duckduckgo.com": LITE})

@@ -22,6 +22,8 @@ import urllib.request
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, quote_plus, urljoin, urlsplit
 
+from aria import paths
+
 logger = logging.getLogger("aria.web")
 
 USER_AGENT = (
@@ -165,6 +167,25 @@ def looks_blocked(html: str) -> bool:
     return any(marker in low for marker in _BLOCK_MARKERS)
 
 
+# DuckDuckGo сам пишет «No results.» на странице без выдачи. Только тогда пустой список — честный ответ «ничего нет».
+_NO_RESULTS = re.compile(r"no results", re.IGNORECASE)
+_DEBUG_KEEP = 3
+
+
+def _save_debug_page(name: str, html: str) -> str | None:
+    """Кладёт нераспознанную страницу выдачи в <data>/debug/, чтобы её можно было прислать и поправить парсер."""
+    try:
+        folder = paths.data_dir() / "debug"
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / f"ddg_unrecognized_{name}_{time.strftime('%Y%m%d_%H%M%S')}.html"
+        target.write_text(html, encoding="utf-8")
+        for old in sorted(folder.glob("ddg_unrecognized_*.html"))[:-_DEBUG_KEEP]:
+            old.unlink(missing_ok=True)
+        return str(target)
+    except OSError:
+        return None
+
+
 def _clamp_int(value, default: int, lo: int, hi: int) -> int:
     try:
         number = int(value)
@@ -186,6 +207,8 @@ def _ddg_get(url: str) -> str:
 def _search_blocking(query: str, max_results: int) -> dict:
     last_error = ""
     blocked = False
+    unrecognized = False
+    genuine_empty = False
     for name, template in DDG_ENDPOINTS:
         try:
             html = _ddg_get(template.format(q=quote_plus(query)))
@@ -204,9 +227,15 @@ def _search_blocking(query: str, max_results: int) -> dict:
         if looks_blocked(html):
             blocked = True
             last_error = f"{name}: blocked"
-        elif len(html) > 5000:
-            # страница нормального размера, а ссылок нет — вероятно, сменилась разметка
-            logger.warning("web_search: %s page %d bytes, 0 results parsed (markup change?)", name, len(html))
+        elif _NO_RESULTS.search(html):
+            genuine_empty = True  # DuckDuckGo сам сказал, что ничего нет
+        else:
+            # ни ссылок, ни «No results», ни известных маркеров блокировки: блокировка в новой форме или смена разметки.
+            # Раньше здесь возвращалось «no results found», и модель делала вывод, что информации в сети нет.
+            unrecognized = True
+            saved = _save_debug_page(name, html)
+            logger.warning("web_search: %s page %d bytes, 0 results parsed (markup change or block?) saved=%s",
+                           name, len(html), saved)
 
     if blocked:
         return {
@@ -215,6 +244,13 @@ def _search_blocking(query: str, max_results: int) -> dict:
         }
     if last_error:
         return {"results": [], "error": f"search failed ({last_error})"}
+    if unrecognized and not genuine_empty:
+        return {
+            "results": [],
+            "error": ("search page not recognized: no results could be parsed and DuckDuckGo did not say 'no results' "
+                      "(probably blocked or the markup changed). This is NOT evidence that nothing exists: "
+                      "retry later, rephrase, or tell the user that web search is unavailable"),
+        }
     return {"results": [], "query": query, "note": "no results found"}
 
 

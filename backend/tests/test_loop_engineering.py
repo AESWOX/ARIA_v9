@@ -665,3 +665,28 @@ class TestDeliveryContract:
 
         history = _append_plan_history(MockPlanSmall())
         assert len(history) == 1
+
+# ── Oracle: step_id в свободной форме (прод 13.10: «step-1-clone-repo» → 3 провала плана подряд) ──
+
+class TestStepIdNormalization:
+    BASE = {"objective": "o", "tool_ref": "file_read"}
+
+    def test_slug_ids_are_accepted_and_become_uuids(self):
+        import uuid
+        steps = validate_plan([{**self.BASE, "step_id": "step-1-clone-repo"}, {**self.BASE, "step_id": "step-2-read-docs"}])
+        assert all(isinstance(s.step_id, uuid.UUID) for s in steps)
+        assert steps[0].step_id != steps[1].step_id
+
+    def test_same_slug_twice_still_gives_unique_ids_and_is_stable(self):
+        raw = [{**self.BASE, "step_id": "step"}, {**self.BASE, "step_id": "step"}]
+        a, b = validate_plan(raw), validate_plan(raw)
+        assert a[0].step_id != a[1].step_id and [s.step_id for s in a] == [s.step_id for s in b]
+
+    def test_real_uuid_is_left_untouched(self):
+        sid = "123e4567-e89b-12d3-a456-426614174000"
+        assert str(validate_plan([{**self.BASE, "step_id": sid}])[0].step_id) == sid
+
+    def test_missing_id_still_gets_one_and_freeform_is_still_rejected(self):
+        assert validate_plan([dict(self.BASE)])[0].step_id
+        with pytest.raises(ValueError):
+            validate_plan([{"objective": "o", "step_id": "step-1"}])
