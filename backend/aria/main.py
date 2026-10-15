@@ -318,12 +318,15 @@ async def startup() -> None:
     # запускался (watchdog отсутствовал): stuck awaiting_attention задачи
     # висели бесконечно.
     from aria.scheduler.jobs import (
+        RefreshGate,
         expire_stale_attention_items_job,
         refresh_provider_models_job,
         run_due_jobs,
     )
 
     _SCHEDULER_INTERVAL_SEC = int(os.getenv("ARIA_SCHEDULER_INTERVAL_SEC", "30"))
+    # Каталог моделей — раз в 30 минут (как расписание refresh_provider_models), а не на каждом тике цикла.
+    _catalog_gate = RefreshGate(int(os.getenv("ARIA_CATALOG_REFRESH_SEC", "1800")))
 
     async def _scheduler_loop() -> None:
         _app_logger.info("background scheduler started (interval=%ss)", _SCHEDULER_INTERVAL_SEC)
@@ -332,8 +335,9 @@ async def startup() -> None:
                 expired = expire_stale_attention_items_job()
                 if expired:
                     _app_logger.info("expired %d stale attention item(s)", expired)
-                count = await refresh_provider_models_job(router)
-                _app_logger.debug("provider catalog refresh: %s models", count)
+                if _catalog_gate.due():
+                    count = await refresh_provider_models_job(router)
+                    _app_logger.debug("provider catalog refresh: %s models", count)
                 # Волна 1 (A12): cron реально исполняет расписания.
                 due = await run_due_jobs(router, getattr(app.state, "task_runner", None))
                 if due.get("submitted") or due.get("due"):

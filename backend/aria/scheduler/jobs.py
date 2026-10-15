@@ -6,6 +6,7 @@ jobs, чтобы релизная структура соответствова�
 """
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -101,6 +102,27 @@ def list_scheduler_jobs_payload() -> list[dict]:
         for row in rows
     ]
 
+class RefreshGate:
+    """Пропускает действие не чаще раза в ``interval_sec``.
+
+    Цикл планировщика просыпается каждые 30 с и раньше каждый раз запускал обновление каталога моделей, хотя
+    расписание задачи (`*/30 * * * *`) — раз в 30 минут: до 2 400 лишних GET /models в час и пачки записей в SQLite
+    (`database is locked`). Первый запуск делает старт приложения, поэтому гейт начинает «закрытым».
+    """
+
+    def __init__(self, interval_sec: float, clock=time.monotonic, start_due: bool = False):
+        self.interval_sec = float(interval_sec)
+        self._clock = clock
+        self._last: float | None = None if start_due else clock()
+
+    def due(self) -> bool:
+        now = self._clock()
+        if self._last is None or now - self._last >= self.interval_sec:
+            self._last = now
+            return True
+        return False
+
+
 async def refresh_provider_models_job(router) -> int:
     """Fetches /models from registered providers and upserts provider_models."""
     from datetime import datetime, timezone
@@ -108,6 +130,9 @@ async def refresh_provider_models_job(router) -> int:
     now = datetime.now(timezone.utc)
     refreshed = 0
     seen: set[str] = set()
+    # Звенья цепочки одного хоста (до ~30 «провайдеров» на Gemini) получают один и тот же список: спрашиваем хост один раз.
+    # Успех кэшируется на время прогона, неудача нет (следующий провайдер может иметь другой ключ).
+    fetched: dict[str, list] = {}
 
     for providers in router.providers_by_class.values():
         for provider in providers:
@@ -115,10 +140,16 @@ async def refresh_provider_models_job(router) -> int:
             if not provider_id or provider_id in seen:
                 continue
             seen.add(provider_id)
-            try:
-                models = await provider.list_models()
-            except Exception:
-                continue
+            host = getattr(provider, "base_url", None)
+            if host and host in fetched:
+                models = fetched[host]
+            else:
+                try:
+                    models = await provider.list_models()
+                except Exception:
+                    continue
+                if host:
+                    fetched[host] = models
             with session_scope() as db:
                 for item in models:
                     repo.upsert_provider_model(
