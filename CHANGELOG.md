@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-14 (2)
+- feat(tools): `backend/scripts/export_chats.py` — выгрузка переписок, вызовов тулов и задач из `local_agent.db` в один Markdown (только чтение, работает при закрытом и при запущенном приложении, без зависимостей); ключи и токены вырезаются по шаблонам; `--list`, `--last N`, `--session id`, `--full`; `tests/test_export_chats.py` (6)
 - fix(web): `web_search` больше не отвечает «no results found» на страницу, где нет ни ссылок, ни фразы «No results», ни известных маркеров блокировки (прод 14.10 15:02: страницы 8–9 КБ на обоих эндпоинтах, модель делала вывод, что в сети ничего нет). Теперь это ошибка `search page not recognized ... NOT evidence that nothing exists`, а пустой честный ответ возможен только если DuckDuckGo сам написал «No results». Нераспознанная страница сохраняется в `<data>/debug/ddg_unrecognized_*.html` (последние 3), чтобы её можно было прислать и поправить парсер
 - fix(planner): `validate_plan` приводит `step_id` в свободной форме («step-1-clone-repo») к детерминированному uuid5; раньше Oracle проваливал план 3 раза подряд (прод 13.10 10:11: `Input should be a valid UUID`) из-за промпта, который требовал UUID и содержал опечатку-пример `"uuid-сткрока"`. Промпт `oracle.md` исправлен
 - test: `test_web_tools.py` (+3), `test_loop_engineering.py` (+4); 1045 → 1052 passed

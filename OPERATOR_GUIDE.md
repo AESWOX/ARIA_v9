@@ -236,6 +236,14 @@ cd C:\Users\User\Desktop\ARIA_v9\backend
 
 **Веб-тулы `web_search` и `web_fetch`.** Есть у ролей `general`, `orchestrator`, `research`. Поиск — DuckDuckGo (Lite, затем HTML-эндпоинт); при капче или блокировке тул вернёт понятную ошибку, а не пустой список. `web_fetch` читает публичные страницы (до 2 МБ, текстовые типы), не ходит на `localhost` и частные адреса, проверяет каждый редирект. Всё, что пришло из веба, помечено `untrusted`: инструкции со страниц не исполняются. Известные ограничения: страницы с принудительным сжатием ответа (`Content-Encoding`) не откроются, страницы на JavaScript читаются без выполнения скриптов, из дата-центровых IP (RunPod) DuckDuckGo блокирует чаще. Проверка живой сети: `backend\scripts\live_smoke.py` (поиск, `web_fetch`, Groq, Gemini Vision).
 
+**Выгрузка переписок для разбора.** Скрипт читает базу `%APPDATA%\ARIA\local_agent.db` напрямую, приложение может быть закрыто:
+```powershell
+cd C:\Users\User\Desktop\ARIA_v9\backend
+.\.venv\Scripts\python.exe scripts\export_chats.py --list          # какие сессии есть
+.\.venv\Scripts\python.exe scripts\export_chats.py --last 5         # -> Desktop\ARIA_chats_export.md
+```
+Ключи и токены вырезаются по шаблонам, но шаблоны не ловят всё (пароли, приватный код, имена): файл нужно прочитать перед отправкой.
+
 ## Огоньки в списке чатов (0024)
 
 - Мигает янтарный «needs you»: в чате ждёт Approve/Reject. Откройте чат и решите в плашке над полем ввода.
