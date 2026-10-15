@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     budget_warn_threshold_pct: int = 80
     aria_dev_mode: bool = False
     budget_block_threshold_pct: int = 100
+    # Spend limits in USD (0 = limit disabled). Spend is estimated from message token counts
+    # at DeepSeek Flash peak rates, so it is an upper bound for Flash and a lower bound for Pro.
+    budget_daily_usd: float = 0.0
+    budget_weekly_usd: float = 0.0
 
     @field_validator("aria_dev_mode", mode="before")
     @classmethod
@@ -133,6 +137,10 @@ class Settings(BaseSettings):
     # (GET /v1/models on 15.10.2026 lists only deepseek-flash and deepseek-v4-pro).
     deepseek_chat_model: str = "deepseek-flash"  # standard_reasoning link
     deepseek_reasoner_model: str = "deepseek-v4-pro"  # premium_reasoning link
+    # DeepSeek V4 thinks by default (effort=high) and bills reasoning tokens as output.
+    # off = {"thinking": {"type": "disabled"}}; low|high|max = reasoning_effort.
+    deepseek_chat_thinking: str = "off"
+    deepseek_reasoner_thinking: str = "high"
 
     # Legacy single-key fallback (used only if GEMINI_API_KEYS is empty).
     gemini_api_key: str = ""

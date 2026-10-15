@@ -17,13 +17,30 @@ logger = logging.getLogger(__name__)
 _SECRET_RE = re.compile(r"(AIza[0-9A-Za-z_\-]{20,}|sk-[0-9A-Za-z_\-]{16,}|(?i:key|token)=[^&\s'\"]+)")
 
 
+_QUOTA_ID_RE = re.compile(r'"quotaid":\s*"([^"]+)"')
+
+
+def thinking_payload(mode: str | None) -> dict:
+    """DeepSeek V4: off -> thinking disabled; low/high/max -> reasoning_effort; empty -> provider default."""
+    mode = (mode or "").strip().lower()
+    if mode in ("off", "none", "disabled"):
+        return {"thinking": {"type": "disabled"}}
+    if mode in ("low", "high", "max"):
+        return {"reasoning_effort": mode}
+    return {}
+
+
 def _log_http_error(provider_id: str, model: str, resp: httpx.Response) -> None:
     try:
         body = resp.text
     except Exception:  # streaming/unread body
         body = ""
-    logger.warning("provider=%s model=%s HTTP %s body=%s", provider_id, model, resp.status_code,
-                   _SECRET_RE.sub("***", body)[:300].replace("\n", " "))
+    # 429 bodies carry the quota id and retry delay (minute vs day limit): keep them whole.
+    limit = 2000 if resp.status_code == 429 else 300
+    quota = ",".join(sorted(set(_QUOTA_ID_RE.findall(body.lower())))) if resp.status_code == 429 else ""
+    logger.warning("provider=%s model=%s HTTP %s%s body=%s", provider_id, model, resp.status_code,
+                   f" quota_ids={quota}" if quota else "",
+                   _SECRET_RE.sub("***", body)[:limit].replace("\n", " "))
 
 
 FORBIDDEN_COOLDOWN_SEC = 15 * 60
@@ -100,6 +117,7 @@ class OpenAICompatibleProvider(LlmProvider):
         model: str,
         api_key: str | None = None,
         key_pool: KeyPool | None = None,
+        extra_payload: dict | None = None,
     ):
         self.provider_id = provider_id
         self.provider_class = provider_class
@@ -107,6 +125,7 @@ class OpenAICompatibleProvider(LlmProvider):
         self.model = model
         self.api_key = api_key
         self.key_pool = key_pool
+        self.extra_payload = dict(extra_payload or {})
 
     def _headers(self, key: str | None) -> dict:
         headers = {"Content-Type": "application/json"}
@@ -187,6 +206,7 @@ class OpenAICompatibleProvider(LlmProvider):
         }
         if tools:
             payload["tools"] = tools
+        payload.update(self.extra_payload)
 
         last_error: Exception | None = None
         _404_attempts = 0

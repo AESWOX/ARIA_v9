@@ -96,6 +96,11 @@ class ProviderRouter:
     # ---------- budget policy (§12.4) ----------
 
     def _budget_status(self) -> dict:
+        from aria.llm.budget import compute_budget_status
+
+        settings = get_settings()
+        if settings.budget_daily_usd > 0 or settings.budget_weekly_usd > 0:
+            return compute_budget_status(settings.budget_daily_usd, settings.budget_weekly_usd)
         with session_scope() as db:
             state = repo.get_agent_state(db, "budget_status")
         return state or {"daily_pct": 0, "weekly_pct": 0}
@@ -363,7 +368,7 @@ def build_default_router() -> ProviderRouter:
     Gemini/Groq с ротацией ключей. Всегда есть deterministic stub для smoke/MVP."""
     from aria.llm import gemini_pools
     from aria.llm.key_pool import KeyPool
-    from aria.llm.providers.openai_compatible import OpenAICompatibleProvider
+    from aria.llm.providers.openai_compatible import OpenAICompatibleProvider, thinking_payload
     from aria.llm.providers.stub import StubProvider
 
     settings = get_settings()
@@ -381,6 +386,7 @@ def build_default_router() -> ProviderRouter:
                 base_url=settings.deepseek_base_url,
                 model=settings.deepseek_chat_model,
                 api_key=settings.deepseek_api_key_resolved,
+                extra_payload=thinking_payload(settings.deepseek_chat_thinking),
             )
         )
         router.register(
@@ -390,6 +396,7 @@ def build_default_router() -> ProviderRouter:
                 base_url=settings.deepseek_base_url,
                 model=settings.deepseek_reasoner_model,
                 api_key=settings.deepseek_api_key_resolved,
+                extra_payload=thinking_payload(settings.deepseek_reasoner_thinking),
             )
         )
 
