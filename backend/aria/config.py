@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     # --- LLM providers ---
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_api_key: str = ""
+    # Model ids are configurable: DeepSeek retired deepseek-chat / deepseek-reasoner
+    # (GET /v1/models on 15.10.2026 lists only deepseek-flash and deepseek-v4-pro).
+    deepseek_chat_model: str = "deepseek-flash"  # standard_reasoning link
+    deepseek_reasoner_model: str = "deepseek-v4-pro"  # premium_reasoning link
 
     # Legacy single-key fallback (used only if GEMINI_API_KEYS is empty).
     gemini_api_key: str = ""

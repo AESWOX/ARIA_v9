@@ -42,8 +42,20 @@ def _model_of(msg: m.Message) -> str:
     return "unknown"
 
 
-def _estimate_cost(input_tokens: int, output_tokens: int) -> float:
-    return round(input_tokens * _INPUT_RATE_PER_1M / 1_000_000 + output_tokens * _OUTPUT_RATE_PER_1M / 1_000_000, 6)
+# $ per 1M tokens (in, out). DeepSeek bills peak = 2x off-peak since 16.08.2026; peak is used here
+# so the estimate is an upper bound. Cache hits are not tracked, so cache-miss input is assumed.
+_MODEL_RATES_PER_1M: dict[str, tuple[float, float]] = {
+    "deepseek-flash": (0.30, 1.20),
+    "deepseek-v4-pro": (1.32, 3.96),
+    # retired ids still appear in old message history; priced like Flash
+    "deepseek-chat": (0.30, 1.20),
+    "deepseek-reasoner": (0.30, 1.20),
+}
+
+
+def _estimate_cost(input_tokens: int, output_tokens: int, model: str | None = None) -> float:
+    in_rate, out_rate = _MODEL_RATES_PER_1M.get(model or "", (_INPUT_RATE_PER_1M, _OUTPUT_RATE_PER_1M))
+    return round(input_tokens * in_rate / 1_000_000 + output_tokens * out_rate / 1_000_000, 6)
 
 
 @router.get("/analytics/usage")
@@ -142,7 +154,7 @@ async def analytics_usage(
     for bucket in daily.values():
         bucket["estimated_cost"] = _estimate_cost(bucket["input_tokens"], bucket["output_tokens"])
     for mb in by_model.values():
-        mb["estimated_cost"] = _estimate_cost(mb["input_tokens"], mb["output_tokens"])
+        mb["estimated_cost"] = _estimate_cost(mb["input_tokens"], mb["output_tokens"], model=mb.get("model"))
 
     totals = {
         "total_input": sum(b["input_tokens"] for b in daily.values()),
@@ -295,7 +307,7 @@ async def analytics_models(
         entry["tool_calls"] += 1
 
     for model, entry in agg.items():
-        entry["estimated_cost"] = _estimate_cost(entry["input_tokens"], entry["output_tokens"])
+        entry["estimated_cost"] = _estimate_cost(entry["input_tokens"], entry["output_tokens"], model=model)
         if entry["sessions"]:
             entry["avg_tokens_per_session"] = round(
                 (entry["input_tokens"] + entry["output_tokens"]) / entry["sessions"], 1

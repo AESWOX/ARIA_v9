@@ -379,7 +379,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="deepseek-chat",
                 provider_class="standard_reasoning",
                 base_url=settings.deepseek_base_url,
-                model="deepseek-chat",
+                model=settings.deepseek_chat_model,
                 api_key=settings.deepseek_api_key_resolved,
             )
         )
@@ -388,7 +388,7 @@ def build_default_router() -> ProviderRouter:
                 provider_id="deepseek-reasoner",
                 provider_class="premium_reasoning",
                 base_url=settings.deepseek_base_url,
-                model="deepseek-reasoner",
+                model=settings.deepseek_reasoner_model,
                 api_key=settings.deepseek_api_key_resolved,
             )
         )
