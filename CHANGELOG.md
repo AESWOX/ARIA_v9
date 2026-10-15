@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-15 (3)
+- fix(llm,chat): 200 OK без текста и без вызова тула больше не завершает цепочку: `route_chat(reject_empty=True)` (чат) считает это отказом звена, пишет `empty reply (finish_reason=…)` в `tried:` и идёт дальше (смоук `ctx` 15.10 падал 502 «empty answer», не дойдя до остальных звеньев; DOD A42). Агентский цикл без изменений.
+- merge: `feat/0032-ops-webhooks` (реальные `ops/security-audit`, `ops/import`, `ops/prompt-size`, подписанные webhooks → TaskRunner; заглушек `stubs.py` 51 → 40; удалены устаревшие `MANIFEST.md`, `dod_verify.json`). Конфликт был только в `DOD.md`, разрешён вручную: строки A29–A41, B4, B5 из `main`, строка B6 и перечень остатка заглушек из ветки.
+- test: `test_a20_chat_failover.py` (+5); в песочнице весь набор после 0007–0010, фикса и 0032: 1085 passed. Подтверждения на Windows для этого стека нет, см. `ANCHOR.md`.
+
 ## 2026-10-15 (2)
 - fix(vault): `read_note` принимает имя заметки так, как его показывает `list_vault` (`INDEX.md`, любой регистр расширения), раньше искал `INDEX.md.md` и отвечал `found: false` про существующий файл (найдено в переписке 14.10: агент решил, что файла «физически нет»); описание тула уточнено; `test_vault_safety.py` (+1); 1063 → 1064 passed
 
