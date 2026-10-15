@@ -109,10 +109,16 @@ def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> lis
 
 def _explain_llm_error(exc: Exception) -> HTTPException:
     if isinstance(exc, (ProviderUnavailable, NoAvailableKeys)):
+        tried = tried_suffix(exc)
+        if "empty reply" in tried:
+            return HTTPException(
+                status_code=502,
+                detail=f"The models answered but returned no text. Try again or pick another model.{tried}",
+            )
         return HTTPException(
             status_code=503,
             detail="All configured models are unavailable right now (rate limit or bad keys). "
-            "Wait a minute and retry, or add another key in Keys.",
+            f"Wait a minute and retry, or add another key in Keys.{tried}",
         )
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
@@ -336,6 +342,7 @@ async def chat_send(
             resilient=True,
             fallback_classes=chat_fallback,
             prefer_provider_id=chat_prefer,
+            reject_empty=True,
         )
     except Exception as exc:  # noqa: BLE001 - mapped to a clear HTTP error below
         logger.warning("chat: model call failed: %s", exc)

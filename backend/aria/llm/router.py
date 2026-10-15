@@ -33,6 +33,20 @@ class ProviderUnavailable(Exception):
     pass
 
 
+def _is_empty_reply(response) -> bool:
+    """Пустой ответ модели: нет текста и нет вызовов тулов."""
+    return not (getattr(response, "text", None) or "").strip() and not getattr(response, "tool_calls", None)
+
+
+def _finish_hint(response) -> str:
+    """' (finish_reason=length)' из сырого ответа, если он есть: по нему видно, почему content пустой."""
+    try:
+        reason = response.raw["choices"][0].get("finish_reason")
+    except Exception:  # noqa: BLE001 - сырой ответ может быть любым
+        return ""
+    return f" (finish_reason={reason})" if reason else ""
+
+
 def tried_suffix(exc: Exception) -> str:
     """' (tried: gemini-flash HTTP 429; deepseek-chat HTTP 402; ...)' — для сообщений об ошибках."""
     attempts = getattr(exc, "attempts", None)
@@ -152,8 +166,11 @@ class ProviderRouter:
         fallback_classes: tuple[str, ...] = (),
         retry_backoff_sec: float = RETRY_BACKOFF_SEC,
         prefer_provider_id: str | None = None,
+        reject_empty: bool = False,
     ) -> RoutingResult:
-        """``prefer_provider_id`` — конкретная модель, выбранная владельцем. Если она недоступна, упёрлась
+        """``reject_empty`` — пустой текст без вызова тулов считается отказом звена (идём к следующему),
+        а не успехом. Нужно чату: 200 OK с пустым content раньше обрывал всю цепочку (502).
+        ``prefer_provider_id`` — конкретная модель, выбранная владельцем. Если она недоступна, упёрлась
         в бюджет (§12.4) или ответила ошибкой, запрос идёт обычной цепочкой класса, а результат помечен
         ``fallback=True`` (UI может сказать, что ответила другая модель)."""
         preferred_failed = False
@@ -163,12 +180,16 @@ class ProviderRouter:
                 try:
                     if await self._connectivity_ok(preferred, db):
                         response = await preferred.chat(messages, tools, timeout_sec)
-                        return RoutingResult(response=response, provider_id=preferred.provider_id)
+                        if reject_empty and _is_empty_reply(response):
+                            logger.warning("preferred model %s returned an empty reply; using the class chain", prefer_provider_id)
+                        else:
+                            return RoutingResult(response=response, provider_id=preferred.provider_id)
                 except Exception as exc:  # noqa: BLE001 — выбранная модель не должна ронять задачу
                     logger.warning("preferred model %s failed (%s); using the class chain", prefer_provider_id, type(exc).__name__)
             preferred_failed = True
         result = await self._route_by_class(
-            provider_class, messages, tools, timeout_sec, allow_degrade, db, resilient, fallback_classes, retry_backoff_sec
+            provider_class, messages, tools, timeout_sec, allow_degrade, db, resilient, fallback_classes, retry_backoff_sec,
+            reject_empty,
         )
         if preferred_failed:
             result.fallback = True
@@ -185,10 +206,11 @@ class ProviderRouter:
         resilient: bool,
         fallback_classes: tuple[str, ...],
         retry_backoff_sec: float,
+        reject_empty: bool = False,
     ) -> RoutingResult:
         if resilient:
             return await self._route_resilient(
-                provider_class, messages, tools, timeout_sec, db, fallback_classes, retry_backoff_sec
+                provider_class, messages, tools, timeout_sec, db, fallback_classes, retry_backoff_sec, reject_empty
             )
         allowed, warn = self.budget_gate(provider_class)
         target_class = provider_class
@@ -244,6 +266,7 @@ class ProviderRouter:
         db: OrmSession | None,
         fallback_classes: tuple[str, ...],
         backoff_sec: float,
+        reject_empty: bool = False,
     ) -> RoutingResult:
         """Walk every provider of the class, then each fallback class.
 
@@ -309,6 +332,13 @@ class ProviderRouter:
                         self.cooldown_until[provider.provider_id] = self.clock() + OTHER_ERROR_COOLDOWN_SEC
                         break
                     else:
+                        if reject_empty and _is_empty_reply(response):
+                            # 200 OK, но ни текста, ни вызова тула (reasoning съел лимит, фильтр, сбой): это отказ звена.
+                            # Раньше такой ответ возвращался как успех, и чат падал 502, не дойдя до остальной цепочки.
+                            logger.warning("%s: empty reply (no text, no tool calls), switching provider", provider.provider_id)
+                            attempts.append(f"{provider.provider_id} empty reply{_finish_hint(response)}")
+                            last_exc = ProviderUnavailable(f"{provider.provider_id} returned an empty reply")
+                            break
                         return RoutingResult(
                             response=response,
                             provider_id=provider.provider_id,

@@ -125,3 +125,50 @@ def test_chat_endpoint_survives_gemini_503(monkeypatch):
     body = r.json()
     assert body["assistant"]["content"] == "answer from deepseek"
     assert body["provider_id"] == "deepseek-chat" and body["fallback"] is True
+
+
+# ---- пустой ответ (200 OK без текста и без тулов) = отказ звена, а не успех (15.10, ctx 502) ----
+
+async def test_empty_reply_fails_over_when_reject_empty():
+    g = Fake("gemini", "free_tier_reasoning", [""])
+    q = Fake("groq", "free_tier_reasoning", ["from groq"])
+    res = await _route(_router(g, q), reject_empty=True)
+    assert res.provider_id == "groq" and res.response.text == "from groq" and res.fallback is True and g.calls == 1
+
+
+async def test_whitespace_reply_counts_as_empty():
+    g = Fake("gemini", "free_tier_reasoning", ["  \n "])
+    d = Fake("deepseek-chat", "standard_reasoning", ["from deepseek"])
+    res = await _route(_router(g, d), reject_empty=True)
+    assert res.provider_id == "deepseek-chat"
+
+
+async def test_all_empty_raises_with_tried_list():
+    g = Fake("gemini", "free_tier_reasoning", [""])
+    q = Fake("groq", "free_tier_reasoning", [""])
+    with pytest.raises(ProviderUnavailable) as ei:
+        await _route(_router(g, q), reject_empty=True)
+    from aria.llm.router import tried_suffix
+
+    shown = tried_suffix(ei.value)
+    assert "gemini empty reply" in shown and "groq empty reply" in shown
+
+
+async def test_empty_reply_still_returned_by_default():
+    # агент/цикл тулов зовёт без reject_empty: там пустой текст бывает законным концом хода
+    g = Fake("gemini", "free_tier_reasoning", [""])
+    res = await _route(_router(g))
+    assert res.provider_id == "gemini" and res.response.text == ""
+
+
+async def test_tool_call_without_text_is_not_empty():
+    from aria.llm.providers.base import ToolCallRequest
+
+    class ToolOnly(Fake):
+        async def chat(self, messages, tools, timeout_sec):
+            self.calls += 1
+            return LlmResponse(text=None, tool_calls=[ToolCallRequest(tool_name="x", arguments={})])
+
+    g = ToolOnly("gemini", "free_tier_reasoning", [])
+    res = await _route(_router(g), reject_empty=True)
+    assert res.provider_id == "gemini" and res.response.tool_calls
