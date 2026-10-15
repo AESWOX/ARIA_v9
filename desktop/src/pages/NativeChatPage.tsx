@@ -513,6 +513,30 @@ export default function NativeChatPage() {
                 </Button>
               )}
             </div>
+            {run.status === "failed" && (
+              <div className="space-y-1 border border-destructive/40 bg-destructive/10 p-2">
+                <div className="font-medium text-destructive">
+                  Task failed{run.error_code ? `: ${run.error_code}` : ""}
+                </div>
+                <pre className="max-h-40 select-text overflow-auto whitespace-pre-wrap text-muted-foreground">
+                  {run.error_message || "No reason was recorded. Open Logs and look for this task id: " + (run.task_id ?? "?")}
+                </pre>
+                <div className="flex gap-2">
+                  <Button
+                    ghost
+                    size="sm"
+                    onClick={() =>
+                      void navigator.clipboard
+                        ?.writeText(`${run.error_code ?? ""} ${run.error_message ?? ""} task=${run.task_id ?? ""}`.trim())
+                        .catch(() => undefined)
+                    }
+                  >
+                    Copy
+                  </Button>
+                  <Link className="self-center text-xs underline" to="/logs">Open Logs</Link>
+                </div>
+              </div>
+            )}
             {run.attention.map((item) => (
               <div key={item.id} className="space-y-1 border border-amber-500/40 bg-amber-500/10 p-2">
                 <div className="font-medium">{item.title}</div>
