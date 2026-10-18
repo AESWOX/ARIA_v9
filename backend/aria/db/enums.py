@@ -27,7 +27,15 @@ TASK_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.approved,
         TaskStatus.cancelled,
     },
-    TaskStatus.awaiting_clarification: {TaskStatus.draft, TaskStatus.cancelled},
+    # PR-2/PR-3: ответ владельца на уточняющий вопрос — путь в approved (или в
+    # awaiting_approval для высокорисковых задач). Без этой ветки честно выставить
+    # awaiting_clarification было нельзя: выйти из него разрешалось только в draft.
+    TaskStatus.awaiting_clarification: {
+        TaskStatus.draft,
+        TaskStatus.approved,
+        TaskStatus.awaiting_approval,
+        TaskStatus.cancelled,
+    },
     TaskStatus.awaiting_approval: {TaskStatus.approved, TaskStatus.cancelled},
     TaskStatus.approved: {TaskStatus.in_progress, TaskStatus.cancelled},
     TaskStatus.in_progress: {

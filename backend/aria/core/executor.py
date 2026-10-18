@@ -48,6 +48,43 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════
+# PR-2: единственная дверь смены статуса — repo.set_task_status (§8.1)
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _transition(
+    session: OrmSession,
+    task: Task,
+    status: TaskStatus,
+    *,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> bool:
+    """Переводит задачу в ``status`` ТОЛЬКО если переход разрешён картой §8.1.
+
+    До PR-2 executor писал ``task.status = ...`` напрямую, минуя TASK_TRANSITIONS:
+    переход approved -> done был разрешён кодом, хотя карта его запрещает, и
+    защита из §8.1 в этом пути не работала.
+
+    Returns:
+        True — переход выполнен, False — запрещён или статус уже такой.
+    """
+    from aria.db import repository as repo
+    from aria.db.enums import TASK_TRANSITIONS
+
+    if task.status == status:
+        return False
+    if status not in TASK_TRANSITIONS.get(task.status, set()):
+        logger.warning(
+            "executor FSM: переход %s -> %s запрещён §8.1 — статус оставлен без изменений",
+            task.status, status,
+        )
+        return False
+    repo.set_task_status(session, task, status, error_code=error_code, error_message=error_message)
+    return True
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Plan History helpers (retention: max 20 entries)
 # ═══════════════════════════════════════════════════════════════════
 
@@ -230,6 +267,9 @@ async def _run_task_impl(
     task_id = str(task.id)
     logger.info("Executor: starting task %s — %s", task_id[:8], task.objective[:60])
 
+    # PR-2: вход в in_progress через FSM, а не присваиванием (approved -> in_progress).
+    _transition(session, task, TaskStatus.in_progress)
+
     # ── Stage 1: Vault-check ──────────────────────────────────────
     logger.info("Stage 1: Vault-check for task %s", task_id[:8])
     vault_context = search_vault(task.objective)
@@ -255,6 +295,7 @@ async def _run_task_impl(
 
     # ── Stage 4: Audit ────────────────────────────────────────────
     logger.info("Stage 4: Audit for task %s", task_id[:8])
+    _transition(session, task, TaskStatus.under_audit)
     integrity_flags = await _stage4_audit(session, task, task_plan, tool_calls_raw, router)
     await _log_integrity_events(session, task_id, integrity_flags, tool_calls_raw)
 
@@ -267,7 +308,11 @@ async def _run_task_impl(
     # прогон Stage 3-6. Исчерпаны MAX_ZABYL_RETRIES → escalation.
     while True:
         if hook_result.get("blocked"):
-            task.status = TaskStatus.failed
+            _transition(
+                session, task, TaskStatus.failed,
+                error_code="hook_blocked",
+                error_message=str(hook_result.get("error") or "pre-delivery hook blocked")[:500],
+            )
             session.flush()
             return {
                 "status": "blocked",
@@ -297,9 +342,12 @@ async def _run_task_impl(
 
         if task_plan.iteration_count >= MAX_ZABYL_RETRIES:
             # ЗАБЫЛ/ПРОЕБАЛ + исчерпаны retry → escalation
-            task.status = TaskStatus.failed
             task_plan.status = PlanStatus.escalated.value
             reason = "; ".join(f.reason for f in retryable_flags) or "bounded retry exhausted"
+            _transition(
+                session, task, TaskStatus.failed,
+                error_code="bounded_retry_exhausted", error_message=reason[:500],
+            )
             if notifier:
                 try:
                     await notifier.send_escalation(
@@ -342,6 +390,7 @@ async def _run_task_impl(
             }
 
         tool_calls_raw = await _stage3_execute(session, task, task_plan, router)
+        _transition(session, task, TaskStatus.under_audit)
         integrity_flags = await _stage4_audit(session, task, task_plan, tool_calls_raw, router)
         await _log_integrity_events(session, task_id, integrity_flags, tool_calls_raw)
         hook_result = _stage5_hooks(tool_calls_raw)
@@ -351,7 +400,10 @@ async def _run_task_impl(
     note_path = await _stage7_delivery(session, task, task_plan, integrity_flags)
 
     task_plan.status = PlanStatus.done.value
-    task.status = TaskStatus.done
+    # PR-2: under_audit -> done (карта §8.1); если стадия аудита была пропущена,
+    # сначала переводим в under_audit, чтобы не прыгать in_progress -> done.
+    _transition(session, task, TaskStatus.under_audit)
+    _transition(session, task, TaskStatus.done)
     session.flush()
 
     logger.info("Executor: task %s completed — status=done", task_id[:8])
@@ -864,9 +916,12 @@ async def _handle_naebal(
     task_id = str(task.id)
     task_plan.status = PlanStatus.escalated.value
     task_plan.integrity_verdict = IntegrityVerdict.naebal.value
-    task.status = TaskStatus.failed
 
     reason = "; ".join(f.reason for f in flags) if flags else "НАЕБАЛ (unknown)"
+    _transition(
+        session, task, TaskStatus.failed,
+        error_code="integrity_naebal", error_message=reason[:500],
+    )
 
     if notifier:
         try:

@@ -54,6 +54,13 @@ def _tool_calls_detail(tool_calls: list[m.ToolCall]) -> str:
     return "\n".join(lines)
 
 
+# PR-2: pass-маркер целиком как слово, чтобы "token"/"look" не считались успехом.
+_PASS_RE = re.compile(
+    r"(?<!\w)(?:ok|pass|passed|success|yes)(?!\w)|(?<!\w)соответств\w*",
+    re.IGNORECASE,
+)
+
+
 def _parse_audit_verdict(text: str) -> tuple[AuditVerdict, list[str]]:
     """Парсит ответ qa_auditor в (verdict, issues).
 
@@ -96,8 +103,9 @@ def _parse_audit_verdict(text: str) -> tuple[AuditVerdict, list[str]]:
         lines = [ln.strip(" -*\t") for ln in text.splitlines() if ln.strip(" -*\t")]
         return AuditVerdict.needs_rework, [ln for ln in lines if ln][:5]
 
-    pass_markers = ("ok", "pass", "yes", "success", "соответств")
-    if any(m in low for m in pass_markers):
+    # PR-2: pass-маркер ищется как отдельное слово. Раньше сравнение шло подстрокой,
+    # и "ok" внутри "token"/"look"/"book" засчитывался как успех аудита.
+    if _PASS_RE.search(text):
         return AuditVerdict.pass_, []
 
     return AuditVerdict.needs_rework, ["Неоднозначный ответ qa_auditor — требуется ручная проверка."]
