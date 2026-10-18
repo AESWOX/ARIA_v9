@@ -23,7 +23,8 @@ def _root() -> str:
     settings = get_settings()
     root = os.path.abspath(settings.agent_sandbox_root)
     os.makedirs(root, exist_ok=True)
-    return root
+    # realpath: ?????? ? ??????????? ???? ?????? ??????????????? ????????? (????????, 8.3-????? ?? Windows)
+    return os.path.realpath(root)
 
 
 def _resolve(rel_path: str) -> tuple[str, str]:
@@ -34,7 +35,8 @@ def _resolve(rel_path: str) -> tuple[str, str]:
         raise HTTPException(status_code=400, detail="path traversal is not allowed")
     root = _root()
     abs_path = os.path.realpath(os.path.join(root, *parts))
-    if not (abs_path == root or abs_path.startswith(root + os.sep)):
+    r, a = os.path.normcase(root), os.path.normcase(abs_path)
+    if not (a == r or a.startswith(r + os.sep)):
         raise HTTPException(status_code=400, detail="path escapes managed root")
     rel = "/".join(parts)
     return abs_path, rel
