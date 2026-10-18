@@ -135,3 +135,143 @@ async def cancel_task(task_id: uuid.UUID, request: Request, _: str = Depends(req
 async def get_audit_reports(task_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> list[dict[str, Any]]:
     with session_scope() as db:
         return [serialize_audit(row) for row in repo.list_audit_reports(db, task_id)]
+
+
+@router.post("/tasks/{task_id}/clarify")
+async def clarify_task(
+    task_id: uuid.UUID,
+    payload: dict[str, Any] | None = None,
+    _: str = Depends(require_runtime_token),
+) -> dict[str, Any]:
+    """П.3.2 ТЗ: ответы владельца на карточку уточнений -> TaskSpec -> повторная валидация гейта."""
+    from aria.core import taskspec
+
+    answers = (payload or {}).get("answers") or []
+    if not isinstance(answers, list):
+        raise HTTPException(status_code=400, detail="answers must be a list of {id|field, value}")
+
+    with session_scope() as db:
+        task = repo.get_task(db, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="task not found")
+        spec = clarifier.load_spec(db, task_id) or taskspec.derive_spec(task.objective or "")
+        for item in answers:
+            if not isinstance(item, dict):
+                continue
+            value = str(item.get("value") or "").strip()
+            if not value:
+                continue
+            field = str(item.get("field") or item.get("id") or "goal").strip()
+            if field in ("goal", "objective"):
+                spec.goal = value[:400]
+            elif field in ("acceptance_criteria", "criterion"):
+                try:
+                    spec.acceptance_criteria.append(
+                        taskspec.AcceptanceCriterion(
+                            id=f"ac-{len(spec.acceptance_criteria) + 1}", statement=value[:300]
+                        )
+                    )
+                except Exception:  # noqa: BLE001 — непроверяемая формулировка
+                    spec.constraints.append(f"Критерий (не проверяем): {value}")
+            else:
+                spec.constraints.append(f"{field}: {value}")
+        spec.open_questions = []
+        # П.4.4 ТЗ: исходная цель задачи остаётся; ответы живут в TaskSpec.
+        session = repo.get_session(db, task.session_id)
+        repo.upsert_task_spec(
+            db, task, spec.model_dump(mode="json"), valid=spec.is_valid, clarify_rounds=spec.clarify_rounds
+        )
+        if spec.is_valid:
+            repo.set_task_status(db, task, TaskStatus.approved)
+        if session is not None:
+            # Запасной путь П.3.2: ответы остаются текстом в чате.
+            repo.append_message(
+                db, session, role="user",
+                content="Уточнения: " + "; ".join(
+                    f"{a.get('field') or a.get('id')}: {a.get('value')}"
+                    for a in answers if isinstance(a, dict)
+                ),
+            )
+        status = task.status.value
+        return {
+            "ok": True, "task_id": str(task_id), "status": status,
+            "valid": bool(spec.is_valid), "questions": list(spec.open_questions),
+        }
+
+
+@router.get("/tasks/{task_id}/plan")
+async def get_task_plan(task_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
+    """П.3.3 ТЗ: предпросмотр плана — шаги, зависимости, роли, критерии, волны."""
+    from aria.core.plan_validator import topological_waves
+
+    with session_scope() as db:
+        task = repo.get_task(db, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="task not found")
+        plan = repo.get_latest_task_plan(db, task_id) if hasattr(repo, "get_latest_task_plan") else None
+        if plan is None:
+            from sqlalchemy import select as _select
+
+            from aria.db.models import TaskPlan as _TaskPlan
+
+            plan = db.execute(
+                _select(_TaskPlan).where(_TaskPlan.task_id == task_id).order_by(_TaskPlan.version.desc())
+            ).scalars().first()
+        steps = list((plan.plan_json if plan is not None else []) or [])
+        spec = clarifier.load_spec(db, task_id)
+        return {
+            "ok": True,
+            "task_id": str(task_id),
+            "phase": getattr(plan, "phase", None),
+            "status": getattr(plan, "status", None),
+            "waves": topological_waves(steps) if steps else [],
+            "criteria": [c.model_dump(mode="json") for c in spec.acceptance_criteria] if spec else [],
+            "steps": [
+                {
+                    "step_id": str(s.get("step_id")),
+                    "objective": s.get("objective"),
+                    "role": s.get("role"),
+                    "tool_ref": s.get("tool_ref") or s.get("skill_ref"),
+                    "depends_on": s.get("depends_on"),
+                    "covers": s.get("covers") or [],
+                    "write_scope": s.get("write_scope") or [],
+                    "status": s.get("status"),
+                }
+                for s in steps
+            ],
+        }
+
+
+@router.post("/tasks/{task_id}/plan/request-approval")
+async def request_plan_approval(
+    task_id: uuid.UUID,
+    _: str = Depends(require_runtime_token),
+) -> dict[str, Any]:
+    """П.3.3 ТЗ: подтверждение плана через существующий AttentionType.task_tz_approval."""
+    from aria.core import approvals
+    from aria.core import clarifier as _clarifier
+    from aria.http_utils import serialize_attention
+
+    with session_scope() as db:
+        task = repo.get_task(db, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="task not found")
+        session = repo.get_session(db, task.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        spec = _clarifier.load_spec(db, task_id)
+        body = spec.to_markdown() if spec is not None else (task.draft_tz_md or task.objective or "")
+        item = approvals.request_task_tz_approval(db, session, task, body)
+        return {"ok": True, "attention_item": serialize_attention(item)}
+
+
+@router.get("/tasks/{task_id}/audit-reports")
+async def list_task_audit_reports(
+    task_id: uuid.UUID, _: str = Depends(require_runtime_token)
+) -> list[dict[str, Any]]:
+    """П.3.5 ТЗ: статусы критериев приёмки из отчётов аудита."""
+    with session_scope() as db:
+        task = repo.get_task(db, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="task not found")
+        return [serialize_audit(r) for r in repo.list_audit_reports(db, task_id)]

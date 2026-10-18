@@ -1,6 +1,26 @@
 import type { Translations } from "./types";
 
 export const en: Translations = {
+  taskSpec: {
+    clarifyTitle: "A few answers are needed",
+    clarifyHint: "Blocks are only asked when the contract is incomplete; you can accept the assumptions instead.",
+    clarifyAnswer: "Your answer",
+    clarifySend: "Send answers",
+    clarifyAccept: "Accept assumptions",
+    planTitle: "Task contract and plan",
+    planRequest: "Request approval",
+    planApprove: "Approve",
+    planReject: "Reject",
+    planNoDeps: "not set (runs in plan order)",
+    planNoneDeps: "none (independent)",
+    planWaves: "waves",
+    waves: "wave",
+    subtasks: "Subtasks",
+    noSubtasks: "none yet",
+    auditTitle: "Audit report",
+    auditVerdict: "verdict",
+    auditCriteria: "acceptance criteria",
+  },
   common: {
     save: "Save",
     saving: "Saving...",

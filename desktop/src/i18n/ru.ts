@@ -1,6 +1,26 @@
 import type { Translations } from "./types";
 
 export const ru: Translations = {
+  taskSpec: {
+    clarifyTitle: "Нужны ответы",
+    clarifyHint: "Вопросы задаются только если контракт неполный; вместо ответов можно принять допущения.",
+    clarifyAnswer: "Ваш ответ",
+    clarifySend: "Отправить ответы",
+    clarifyAccept: "Принять допущения",
+    planTitle: "Контракт задачи и план",
+    planRequest: "Запросить подтверждение",
+    planApprove: "Подтвердить",
+    planReject: "Отклонить",
+    planNoDeps: "не указаны (идёт по порядку)",
+    planNoneDeps: "нет (независим)",
+    planWaves: "волн",
+    waves: "волна",
+    subtasks: "Подзадачи",
+    noSubtasks: "пока нет",
+    auditTitle: "Отчёт аудита",
+    auditVerdict: "вердикт",
+    auditCriteria: "критерии приёмки",
+  },
   common: {
     save: "Сохранить",
     saving: "Сохранение...",
