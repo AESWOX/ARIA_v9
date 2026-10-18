@@ -80,7 +80,7 @@ export function TaskSpecPanel({
     setBusy(true);
     try {
       const payload = accept
-        ? { answers: [{ field: "goal", value: "" }].filter(() => false), accept_assumptions: true }
+        ? { answers: [], accept_assumptions: true }
         : { answers: Object.entries(answers).filter(([, v]) => v.trim()).map(([k, v]) => ({ id: k, field: k, value: v })) };
       await api.taskClarify(taskId, payload);
       setAnswers({});
@@ -127,7 +127,9 @@ export function TaskSpecPanel({
               </div>
               {L.clarifyHint && <div className="text-muted-foreground">{L.clarifyHint}</div>}
               {(questions as ClarifyQuestion[]).map((q, i) => {
-                const key = q.id || q.field || `q${i}`;
+                // Раунд 2 (п.1.1.4): ключ ответа — только q.id (стабильный с бэкенда);
+                // запасной q{i} — на случай старых данных без id.
+                const key = q.id || `q${i}`;
                 return (
                   <div key={key} className="space-y-1">
                     <div>{q.text}</div>
