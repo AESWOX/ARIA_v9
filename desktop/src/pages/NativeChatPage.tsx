@@ -293,9 +293,14 @@ export default function NativeChatPage() {
     ]);
     setInput("");
     const res = await api.runPost(sid, { content: text, mode: runMode });
+    // Гейт уточнений (Agent/Plan): бэкенд отвечает queued:false + questions — показываем карточку,
+    // а не ошибку «already queued».
+    const qs = (res as unknown as { questions?: ClarifyQuestion[] })?.questions ?? null;
+    const hasQuestions = !!qs && qs.length > 0;
+    setTaskQuestions(hasQuestions ? qs : null);
     setMessages(await api.chatMessages(sid));
     setRun(await api.runState(sid));
-    if (res.queued === false) setError("This task is already queued or running.");
+    if (res.queued === false && !hasQuestions) setError("This task is already queued or running.");
   };
 
   const decide = async (itemId: string, approve: boolean) => {
