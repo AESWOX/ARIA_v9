@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, ListTree, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, ListTree, ShieldCheck } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@vendor/ui/ui/components/button";
@@ -42,7 +42,7 @@ function depsText(step: PlanStepView, L: Labels): string {
 }
 
 export function TaskSpecPanel({
-  taskId, sessionId, questions, labels, onAnswered, onError,
+  taskId, questions, labels, onAnswered, onError,
 }: {
   taskId: string | null;
   sessionId: string | null;
@@ -54,7 +54,6 @@ export function TaskSpecPanel({
   const { t } = useI18n();
   const L: Labels = labels ?? ((t as unknown as { taskSpec?: Labels }).taskSpec ?? {});
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [assumptions, setAssumptions] = useState(false);
   const [busy, setBusy] = useState(false);
   const [plan, setPlan] = useState<TaskPlanView | null>(null);
   const [children, setChildren] = useState<ChildTask[]>([]);
@@ -84,7 +83,6 @@ export function TaskSpecPanel({
         : { answers: Object.entries(answers).filter(([, v]) => v.trim()).map(([k, v]) => ({ id: k, field: k, value: v })) };
       await api.taskClarify(taskId, payload);
       setAnswers({});
-      setAssumptions(true);
       onAnswered?.();
       await load();
     } catch (e) {

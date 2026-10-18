@@ -8,7 +8,7 @@
     "build": "vite build",
     "tauri": "tauri",
     "preview": "vite preview",
-    "typecheck": "tsc -p . --noEmit"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit"
   },
   "dependencies": {
     "@nanostores/react": "^0.8.0",

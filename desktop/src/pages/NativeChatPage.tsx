@@ -578,7 +578,6 @@ export default function NativeChatPage() {
           taskId={run?.task_id ?? null}
           sessionId={activeId}
           questions={taskQuestions}
-          labels={t.taskSpec}
           onAnswered={async () => {
             setTaskQuestions(null);
             if (activeId) {
