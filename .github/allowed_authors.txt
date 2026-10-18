@@ -1,0 +1,6 @@
+# Единственный допустимый автор и коммиттер коммитов в этом репозитории.
+# Формат: author|<email> или committer|<email>
+author|164995783+AESWOX@users.noreply.github.com
+committer|164995783+AESWOX@users.noreply.github.com
+# веб-слияния PR на GitHub записывают коммиттером служебный адрес GitHub
+committer|noreply@github.com

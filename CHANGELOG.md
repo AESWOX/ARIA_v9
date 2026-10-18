@@ -11,6 +11,7 @@
 - **Тесты**: `test_crypto_box_no_silent_fallback_key` больше не зависит от пути `/proc` (на Windows создавал `C:\proc`).
 - **Typecheck**: `npm run typecheck` вызывал `tsc -p .` по solution-tsconfig (`files: []`) и ничего не проверял; теперь `tsc -p tsconfig.app.json --noEmit`.
 - **ErrorBoundary** вокруг маршрутов: при ошибке рендера показывается текст ошибки и кнопка перезагрузки вместо пустого экрана.
+- **Авторство**: хук `commit-msg` вырезает соавторов и пометки инструментов, CI-проверка `authorship` и `scripts/check_authorship.py` (разрешённые адреса в `.github/allowed_authors.txt`), порядок переписи истории в `docs/REPO_POLICY.md`; из `.gitignore` убрана строка `GENSPARK_*`.
 - **Документация**: `docs/PRE_RELEASE_AUDIT.md` — список недоделок, рисков и UI-бэклог до показа проекта.
 
 ## 2026-10-16 — PR1–7 follow-up (`fix/pr1-7-followup`)
