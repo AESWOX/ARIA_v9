@@ -8,8 +8,10 @@
 - **Тесты**: `tests/test_pr2_1_task_endpoints.py` (12 сценариев), 6 тестов crypto; регрессия п.1.1 падает на коде раунда 1 (проверено на стенде старого /clarify).
 - **UI, чёрный экран в чате**: `NativeChatPage` ссылался на необъявленную `t` (`labels={t.taskSpec}`) — ReferenceError при первом рендере. Строка убрана (панель берёт строки из своего `useI18n`), убраны неиспользуемые переменные в `TaskSpecPanel`.
 - **UI, режим Agent/Plan**: карточка уточнений была подключена только к пути обычного чата; ответ `queued:false + questions` агентского пути игнорировался и показывалась ошибка «already queued or running». Теперь вопросы из `runPost` открывают карточку, ошибка не показывается.
+- **Тесты**: `test_crypto_box_no_silent_fallback_key` больше не зависит от пути `/proc` (на Windows создавал `C:\proc`).
 - **Typecheck**: `npm run typecheck` вызывал `tsc -p .` по solution-tsconfig (`files: []`) и ничего не проверял; теперь `tsc -p tsconfig.app.json --noEmit`.
 - **ErrorBoundary** вокруг маршрутов: при ошибке рендера показывается текст ошибки и кнопка перезагрузки вместо пустого экрана.
+- **Документация**: `docs/PRE_RELEASE_AUDIT.md` — список недоделок, рисков и UI-бэклог до показа проекта.
 
 ## 2026-10-16 — PR1–7 follow-up (`fix/pr1-7-followup`)
 
