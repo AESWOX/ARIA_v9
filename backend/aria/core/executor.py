@@ -26,7 +26,7 @@ from aria.core.locking import file_lock
 from aria.core.notifiers.protocol import Notifier, NotifierError
 from aria.core.plan_validator import MAX_REPLAN_ATTEMPTS, PlanStep, check_oracle_naebal, validate_plan
 from aria.core.secretscanner import ScanResult, assert_no_secrets, scan_changed_files
-from aria.db.enums import AuditVerdict, IntegrityVerdict, PlanStatus, TaskStatus
+from aria.db.enums import PLAN_PHASES, AuditVerdict, IntegrityVerdict, PlanStatus, TaskStatus
 from aria.db.models import IntegrityEvent, Task, TaskPlan, ToolCall
 from aria.storage.obsidian_vault import search_vault, vault_root, write_note_atomic
 from aria.config import get_settings
@@ -50,6 +50,24 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════
 # PR-2: единственная дверь смены статуса — repo.set_task_status (§8.1)
 # ═══════════════════════════════════════════════════════════════════
+
+
+def _set_phase(session: OrmSession, task: Task, phase: str) -> None:
+    """PR-4: пишет внутреннюю фазу плана в task_plans.phase.
+
+    Грубые состояния остаются в TaskStatus (§8.1); фаза уточняет, где именно внутри
+    прогона находится задача, и переживает рестарт процесса и воркера.
+    """
+    from sqlalchemy import select
+
+    if phase not in PLAN_PHASES:
+        raise ValueError(f"unknown plan phase {phase!r}; allowed={PLAN_PHASES}")
+    plan = session.execute(
+        select(TaskPlan).where(TaskPlan.task_id == task.id).order_by(TaskPlan.created_at.desc())
+    ).scalars().first()
+    if plan is not None:
+        plan.phase = phase
+        session.flush()
 
 
 def _transition(
@@ -283,7 +301,9 @@ async def _run_task_impl(
 
     # ── Stage 2: Plan ─────────────────────────────────────────────
     logger.info("Stage 2: Plan for task %s", task_id[:8])
+    _set_phase(session, task, "compile")
     task_plan, oracle_flags = await _stage2_plan(session, task, vault_context, router)
+    _set_phase(session, task, "plan")
 
     if oracle_flags:
         # Oracle НАЕБАЛ — escalation, выход
@@ -297,10 +317,12 @@ async def _run_task_impl(
 
     # ── Stage 3: Execute ──────────────────────────────────────────
     logger.info("Stage 3: Execute for task %s", task_id[:8])
+    _set_phase(session, task, "execute")
     tool_calls_raw = await _stage3_execute(session, task, task_plan, router)
 
     # ── Stage 4: Audit ────────────────────────────────────────────
     logger.info("Stage 4: Audit for task %s", task_id[:8])
+    _set_phase(session, task, "audit")
     _transition(session, task, TaskStatus.under_audit)
     integrity_flags = await _stage4_audit(session, task, task_plan, tool_calls_raw, router)
     await _log_integrity_events(session, task_id, integrity_flags, tool_calls_raw)
@@ -403,6 +425,7 @@ async def _run_task_impl(
 
     # ── Stage 7: Delivery ─────────────────────────────────────────
     logger.info("Stage 7: Delivery for task %s", task_id[:8])
+    _set_phase(session, task, "report")
     note_path = await _stage7_delivery(session, task, task_plan, integrity_flags)
 
     task_plan.status = PlanStatus.done.value
@@ -447,6 +470,14 @@ async def _stage2_plan(
     """
     task_id = str(task.id)
 
+    # PR-4 (COMPILE): контракт задачи -> постановка для Oracle. Плана без критериев
+    # приёмки не бывает, когда TaskSpec их содержит.
+    from aria.core import clarifier as _clarifier
+    from aria.core import compiler as _compiler
+
+    spec = _clarifier.load_spec(session, task.id)
+    criteria_ids = [c.id for c in spec.acceptance_criteria] if spec is not None else None
+
     # Проверяем существующий план
     result = session.execute(
         select(TaskPlan).where(TaskPlan.task_id == task.id).order_by(TaskPlan.created_at.desc())
@@ -475,7 +506,7 @@ async def _stage2_plan(
                     ChatMessage(
                         role="user",
                         content=(
-                            f"Objective: {task.objective}"
+                            (_compiler.compile_task_input(spec, vault_context) if spec is not None else f"Objective: {task.objective}")
                             + (f"\n\nОбратная связь от аудита (переделай план с учётом этого):\n{feedback}" if feedback else "")
                         ),
                     ),
@@ -500,7 +531,7 @@ async def _stage2_plan(
                     "no LLM provider configured — Oracle plan cannot be generated"
                 )
 
-            plan_steps = validate_plan(plan_steps)
+            plan_steps = validate_plan(plan_steps, criteria_ids=criteria_ids)
             break
         except (ValueError, json.JSONDecodeError, KeyError) as e:
             last_error = str(e)

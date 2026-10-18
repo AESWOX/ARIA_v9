@@ -49,6 +49,15 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         can_delegate=False,
         max_subagents=0,
     ),
+    "compiler": RoleDefinition(
+        role_id="compiler",
+        description="Фаза COMPILE: превращает TaskSpec в постановку для planner и следит за покрытием критериев.",
+        system_prompt_asset="prompts/compiler.md",
+        tool_whitelist=(),
+        default_model_policy="standard_reasoning",
+        can_delegate=False,
+        max_subagents=0,
+    ),
     "orchestrator": RoleDefinition(
         role_id="orchestrator",
         description="Строит план, выбирает роль/модель/tool-стратегию, может делегировать.",

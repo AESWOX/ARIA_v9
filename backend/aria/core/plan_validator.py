@@ -23,6 +23,13 @@ class PlanStep(BaseModel):
     path: str | None = None
     status: Literal["pending", "in_progress", "done", "failed"] = "pending"
     tool_call_ids: list[uuid.UUID] = []
+    # PR-4: план — это DAG, а не список. depends_on — id шагов-предшественников,
+    # covers — id критериев приёмки TaskSpec, которые закрывает шаг,
+    # write_scope — пути/ресурсы, которые шаг пишет (по ним PR-5 решает, что можно
+    # исполнять параллельно, а что обязано идти последовательно).
+    depends_on: list[str] = []
+    covers: list[str] = []
+    write_scope: list[str] = []
 
     @model_validator(mode="after")
     def must_have_tool_or_skill(self) -> "PlanStep":
@@ -37,8 +44,17 @@ class PlanStep(BaseModel):
 # Максимум replan-попыток для Oracle до НАЕБАЛ
 MAX_REPLAN_ATTEMPTS = 2
 
+# PR-4: лимит 7 шагов пересмотрен — у DAG несколько ветвей идут параллельно, поэтому
+# 12 узлов дают примерно то же время прогона, что прежние 7 последовательных.
+MAX_PLAN_STEPS = 12
+
 
 _STEP_NS = uuid.UUID("6f1c2e3a-5b7d-4c8e-9a10-2b3c4d5e6f70")
+
+
+def _uuid_of(step_id: str) -> str:
+    """Детерминированный uuid5 для не-UUID id шага (см. _normalize_step_ids)."""
+    return str(uuid.uuid5(_STEP_NS, step_id.strip()))
 
 
 def _normalize_step_ids(steps: list[dict]) -> list[dict]:
@@ -48,39 +64,152 @@ def _normalize_step_ids(steps: list[dict]) -> list[dict]:
     (в пределах плана одинаковая строка + номер шага = разные, но стабильные идентификаторы).
     """
     out: list[dict] = []
+    # PR-4: depends_on ссылается на те же id, что и step_id, поэтому нормализуем
+    # их одним и тем же правилом, иначе валидатор не увидит связей вообще.
+    raw_ids: dict[str, str] = {}
+    for i, raw in enumerate(steps):
+        if not isinstance(raw, dict):
+            continue
+        sid = raw.get("step_id")
+        if isinstance(sid, str) and sid.strip():
+            key = sid.strip()
+            try:
+                resolved = str(uuid.UUID(key))
+            except ValueError:
+                resolved = str(uuid.uuid5(_STEP_NS, f"{i}:{key}"))
+            # depends_on ссылается на первый шаг с таким id; повтор того же id (Oracle
+            # иногда отдаёт «step» дважды) получает собственный детерминированный id
+            # по индексу — иначе два разных шага склеивались бы в один.
+            raw_ids.setdefault(key, resolved)
+            raw_ids[f"{key}#{i}"] = resolved
+
     for i, raw in enumerate(steps):
         item = dict(raw) if isinstance(raw, dict) else raw
         sid = item.get("step_id") if isinstance(item, dict) else None
         if isinstance(sid, str) and sid.strip():
-            try:
-                uuid.UUID(sid.strip())
-            except ValueError:
-                item["step_id"] = str(uuid.uuid5(_STEP_NS, f"{i}:{sid.strip()}"))
+            item["step_id"] = raw_ids.get(
+                f"{sid.strip()}#{i}",
+                raw_ids.get(sid.strip(), str(uuid.uuid5(_STEP_NS, f"{i}:{sid.strip()}"))),
+            )
+        if isinstance(item, dict):
+            deps = item.get("depends_on")
+            if isinstance(deps, list):
+                item["depends_on"] = [
+                    raw_ids.get(str(d).strip(), str(d).strip()) for d in deps if str(d).strip()
+                ]
         out.append(item)
     return out
 
 
-def validate_plan(steps: list[dict]) -> list[PlanStep]:
-    """Валидирует список словарей как PlanStep[].
+def find_cycles(steps: list[dict]) -> list[str]:
+    """Ищет циклы в depends_on. Возвращает список id шагов, образующих цикл.
+
+    Пустой список — граф ацикличен (в т.ч. когда зависит только от внешних/неизвестных id).
+    """
+    ids = {str(s.get("step_id")): s for s in steps}
+    state: dict[str, int] = {}  # 0 — в обходе, 1 — завершён
+    cycles: list[str] = []
+
+    def visit(node: str, stack: list[str]) -> None:
+        if state.get(node) == 1:
+            return
+        if node in stack:
+            cycles.extend(stack[stack.index(node):] + [node])
+            return
+        state[node] = 0
+        for dep in (ids[node].get("depends_on") or []):
+            dep_id = str(dep)
+            if dep_id in ids:
+                visit(dep_id, stack + [node])
+        state[node] = 1
+
+    for node_id in list(ids):
+        if state.get(node_id) is None:
+            visit(node_id, [])
+    return cycles
+
+
+def topological_waves(steps: list[dict]) -> list[list[int]]:
+    """Разбивает план на волны исполнения (PR-5 использует это напрямую).
+
+    Волна N — шаги, все зависимости которых лежат в волнах < N: внутри волны узлы
+    независимы и могут идти параллельно. Ссылки на несуществующие шаги игнорируются,
+    цикл (его ловит validate_plan заранее) здесь не подвешивает разбор — остаток
+    уходит последней волной.
+    """
+    ids = {str(s.get("step_id")): i for i, s in enumerate(steps)}
+    pending = set(range(len(steps)))
+    done: set[int] = set()
+    waves: list[list[int]] = []
+    while pending:
+        ready = [
+            i for i in sorted(pending)
+            if all(
+                str(dep) not in ids or ids[str(dep)] in done
+                for dep in (steps[i].get("depends_on") or [])
+            )
+        ]
+        if not ready:
+            waves.append(sorted(pending))
+            break
+        waves.append(ready)
+        done.update(ready)
+        pending -= set(ready)
+    return waves
+
+
+def validate_plan(steps: list[dict], criteria_ids: list[str] | None = None) -> list[PlanStep]:
+    """Валидирует список словарей как PlanStep[] и проверяет целостность DAG.
 
     Args:
         steps: сырой список словарей от Oracle.
+        criteria_ids: id критериев приёмки TaskSpec. Если переданы, каждый шаг обязан
+            иметь covers, а каждый критерий — быть покрыт хотя бы одним шагом.
 
     Returns:
         list[PlanStep]: валидированные шаги.
 
     Raises:
-        ValueError: если хотя бы один шаг — freeform.
+        ValueError: freeform-шаг, цикл в depends_on, превышен MAX_PLAN_STEPS,
+            непокрытый критерий или шаг без covers при заданных критериях.
     """
+    normalized = _normalize_step_ids(steps)
     result: list[PlanStep] = []
     errors: list[str] = []
-    for i, raw in enumerate(_normalize_step_ids(steps)):
+    for i, raw in enumerate(normalized):
         try:
             result.append(PlanStep(**raw))
         except ValueError as e:
             errors.append(f"  step[{i}]: {e}")
     if errors:
         raise ValueError("Plan validation failed:\n" + "\n".join(errors))
+
+    if len(result) > MAX_PLAN_STEPS:
+        raise ValueError(f"Plan validation failed: {len(result)} шагов > MAX_PLAN_STEPS={MAX_PLAN_STEPS}")
+
+    cycles = find_cycles(normalized)
+    if cycles:
+        raise ValueError(f"Plan validation failed: цикл в depends_on: {' -> '.join(cycles)}")
+
+    if criteria_ids is not None:
+        known = {str(c) for c in criteria_ids}
+        covered: set[str] = set()
+        for step in result:
+            if not step.covers:
+                raise ValueError(
+                    f"Plan validation failed: step {step.step_id} не объявляет covers[] — "
+                    "каждый шаг обязан быть привязан к критерию приёмки"
+                )
+            unknown = [c for c in step.covers if c not in known]
+            if unknown:
+                raise ValueError(
+                    f"Plan validation failed: step {step.step_id} покрывает неизвестные критерии {unknown}"
+                )
+            covered.update(step.covers)
+        missing = sorted(known - covered)
+        if missing:
+            raise ValueError(f"Plan validation failed: критерии не покрыты ни одним шагом: {missing}")
+
     return result
 
 

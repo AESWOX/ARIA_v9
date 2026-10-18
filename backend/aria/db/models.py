@@ -364,6 +364,9 @@ class TaskPlan(Base):
     plan_history: Mapped[dict] = mapped_column(JSON, default=list)  # [{version, plan_json, changed_at}]
 
     status: Mapped[str] = mapped_column(String(32), default="draft")  # PlanStatus
+    # PR-4: внутренняя фаза (PLAN_PHASES) — чтобы после рестарта было видно,
+    # на чём именно остановился прогон внутри грубого in_progress.
+    phase: Mapped[str] = mapped_column(String(16), default="plan")
     final_result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     integrity_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)  # IntegrityVerdict
 

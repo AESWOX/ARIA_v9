@@ -64,6 +64,12 @@ TASK_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
 }
 
 
+# PR-4: внутренние фазы плана (COMPILE → PLAN → EXECUTE → AUDIT → REPORT).
+# Новый enum рядом с TaskStatus не вводится: грубые состояния остаются в TaskStatus,
+# фаза живёт строкой в task_plans.phase и переживает рестарт процесса.
+PLAN_PHASES: tuple[str, ...] = ("compile", "plan", "execute", "audit", "report")
+
+
 class ApprovalStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
