@@ -393,6 +393,17 @@ class IntegrityEvent(Base):
     tool_call = relationship("ToolCall", backref="integrity_events")
 
 
+class PrivacyShadowMap(Base):
+    """PR-7: соответствие плейсхолдер → исходное значение для DLP чата, по сессии."""
+
+    __tablename__ = "privacy_shadow_maps"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("sessions.id"), primary_key=True)
+    map_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 class TaskSpecRow(Base):
     """PR-3: §2 TaskSpec — контракт задачи и его версии.
 

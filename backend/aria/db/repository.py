@@ -193,6 +193,28 @@ def set_task_status(db: OrmSession, task: m.Task, status: TaskStatus, error_code
     return task
 
 
+# ---------- privacy shadow maps (PR-7) ----------
+
+def get_privacy_shadow_map(db: OrmSession, session_id: uuid.UUID) -> m.PrivacyShadowMap | None:
+    return db.get(m.PrivacyShadowMap, session_id)
+
+
+def upsert_privacy_shadow_map(db: OrmSession, session_id: uuid.UUID, map_json: dict) -> m.PrivacyShadowMap:
+    """Перезаписывает карту масок сессии. Значения не накапливаются вечно: старые
+    плейсхолдеры остаются, если модель/пользователь ещё может на них ссылаться."""
+    row = db.get(m.PrivacyShadowMap, session_id)
+    merged = dict((row.map_json if row is not None else {}) or {})
+    merged.update(dict(map_json or {}))
+    if row is None:
+        row = m.PrivacyShadowMap(session_id=session_id, map_json=merged)
+        db.add(row)
+    else:
+        row.map_json = merged
+        row.updated_at = _now()
+    db.flush()
+    return row
+
+
 # ---------- task specs (PR-3) ----------
 
 def get_task_spec(db: OrmSession, task_id: uuid.UUID) -> m.TaskSpecRow | None:

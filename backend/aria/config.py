@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # при нехватке памяти TaskRunner сам опускается до 1 воркера.
     runner_max_workers: int = 3
     audit_max_attempts: int = 3
+    # PR-7: DLP включается только для чата и по умолчанию выключен; агентский
+    # цикл не маскируется — плейсхолдеры сломали бы пути и команды в tool calls.
+    dlp_chat_enabled: bool = False
+    dlp_names: str = ""  # имена/логины через запятую: то, что не ловится шаблоном
     delegate_max_parallel: int = 5
     delegate_timeout_sec: int = 60
     tools_default_timeout_sec: int = 120
@@ -250,6 +254,11 @@ class Settings(BaseSettings):
     @property
     def gemini_pro_chain(self) -> list[str]:
         return self._model_chain(self.gemini_pro_models or self._auto_chain("pro"), self.gemini_pro_model)
+
+    @property
+    def dlp_names_list(self) -> list[str]:
+        """PR-7: явный список имён/сущностей для маскировки чата."""
+        return [n.strip() for n in (self.dlp_names or "").split(",") if n.strip()]
 
     @property
     def compression_chain(self) -> list[str]:

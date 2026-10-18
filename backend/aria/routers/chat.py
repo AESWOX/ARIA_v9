@@ -140,6 +140,39 @@ def _attach_dynamic(prompt: list[ChatMessage], dynamic: str) -> list[ChatMessage
     return prompt[:insert_at] + [ChatMessage(role="system", content=dynamic)] + prompt[insert_at:]
 
 
+def _dlp_mask(prompt: list[ChatMessage], session_id: uuid.UUID) -> tuple[list[ChatMessage], bool]:
+    """PR-7: маскирует исходящий промпт чата, если DLP включён флагом.
+
+    Returns:
+        (промпт, применено_ли_маскирование). При выключенном флаге промпт возвращается
+        как есть — путь чата не меняется вовсе.
+    """
+    settings = get_settings()
+    if not settings.dlp_chat_enabled:
+        return prompt, False
+    from aria.core.privacy import EntityAnonymizer
+
+    with session_scope() as db:
+        row = repo.get_privacy_shadow_map(db, session_id)
+        shadow = dict(row.map_json or {}) if row is not None else {}
+
+    anonymizer = EntityAnonymizer(names=settings.dlp_names_list, shadow_map=shadow)
+    masked = [ChatMessage(role=m.role, content=anonymizer.anonymize(m.content)) for m in prompt]
+    with session_scope() as db:
+        repo.upsert_privacy_shadow_map(db, session_id, anonymizer.shadow_map)
+    return masked, True
+
+
+def _dlp_restore(text: str, session_id: uuid.UUID) -> str:
+    """PR-7: возвращает владельцу исходные значения вместо плейсхолдеров."""
+    from aria.core.privacy import EntityAnonymizer
+
+    with session_scope() as db:
+        row = repo.get_privacy_shadow_map(db, session_id)
+        shadow = dict(row.map_json or {}) if row is not None else {}
+    return EntityAnonymizer(shadow_map=shadow).restore(text)
+
+
 def _explain_llm_error(exc: Exception) -> HTTPException:
     if isinstance(exc, (ProviderUnavailable, NoAvailableKeys)):
         tried = tried_suffix(exc)
@@ -366,6 +399,9 @@ async def chat_send(
     hint = runprofile.thinking_hint(profile)
     # PR-1: thinking_hint больше не дописывается в messages[0] — он тоже ломал кэш.
     prompt = _attach_dynamic(prompt, hint)
+    # PR-7: DLP применяется к исходящему промпту и снимается с ответа. Только чат —
+    # агентский цикл не трогаем: плейсхолдеры сломали бы пути и команды в tool calls.
+    prompt, dlp_applied = _dlp_mask(prompt, session_id)
     try:
         result = await request.app.state.router.route_chat(
             chat_class,
@@ -381,6 +417,8 @@ async def chat_send(
         logger.warning("chat: model call failed: %s", exc)
         raise _explain_llm_error(exc) from exc
     reply = (result.response.text or "").strip()
+    if dlp_applied and reply:
+        reply = _dlp_restore(reply, session_id)
     if not reply:
         raise HTTPException(status_code=502, detail="The model returned an empty answer. Try again.")
     if result.provider_id.startswith("stub"):
