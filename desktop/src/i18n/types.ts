@@ -17,6 +17,16 @@ export type Locale =
   | "hu";
 
 export interface Translations {
+  /** П.3 ТЗ: строки карточки уточнений / плана / аудита (остальные локали — через fallback на en). */
+  taskSpec?: {
+    clarifyTitle: string; clarifyHint: string; clarifyAnswer: string;
+    clarifySend: string; clarifyAccept: string;
+    planTitle: string; planRequest: string; planApprove: string; planReject: string;
+    planNoDeps: string; planNoneDeps: string; planWaves: string;
+    waves: string; subtasks: string; noSubtasks: string;
+    auditTitle: string; auditVerdict: string; auditCriteria: string;
+  };
+
   // ── Common ──
   common: {
     save: string;

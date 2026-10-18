@@ -61,7 +61,6 @@ backend/.coverage
 # Delivery artifacts
 *.bundle
 release/
-GENSPARK_*
 delivery_*
 *.patch
 aria_full_delivery_audit.ps1

@@ -1,0 +1,23 @@
+# authorship.yml — в историю попадают только коммиты разрешённого автора и без Co-authored-by.
+name: authorship
+on:
+  push:
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Диапазон коммитов
+        id: rng
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "range=origin/${{ github.base_ref }}..HEAD" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            echo "range=HEAD~1..HEAD" >> "$GITHUB_OUTPUT"
+          else
+            echo "range=${{ github.event.before }}..${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+      - run: python3 scripts/check_authorship.py "${{ steps.rng.outputs.range }}"

@@ -160,9 +160,13 @@ def test_post_message_goes_through_runner_not_http_request():
     rec = _RecordingRunner()
     app.state.task_runner = rec
     app.state.router = ProviderRouter()
+    from aria.core.taskspec import TaskSpec, default_criterion
+
     with session_scope() as db:
         s = repo.create_session(db, title="pm")
-        repo.create_task(db, s, role="general", objective="x")
+        t = repo.create_task(db, s, role="general", objective="x")
+        spec = TaskSpec(goal="сделать задачу", acceptance_criteria=[default_criterion("результат")])
+        repo.upsert_task_spec(db, t, spec.model_dump(mode="json"), valid=spec.is_valid, clarify_rounds=0)
         sid = str(s.id)
     r = TestClient(app).post(f"/sessions/{sid}/messages", json={"content": "сделай"})
     assert r.status_code == 200, r.text

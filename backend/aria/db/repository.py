@@ -193,6 +193,66 @@ def set_task_status(db: OrmSession, task: m.Task, status: TaskStatus, error_code
     return task
 
 
+# ---------- privacy shadow maps (PR-7) ----------
+
+def get_privacy_shadow_map(db: OrmSession, session_id: uuid.UUID) -> m.PrivacyShadowMap | None:
+    return db.get(m.PrivacyShadowMap, session_id)
+
+
+def upsert_privacy_shadow_map(db: OrmSession, session_id: uuid.UUID, map_json: dict) -> m.PrivacyShadowMap:
+    """Перезаписывает карту масок сессии. Значения не накапливаются вечно: старые
+    плейсхолдеры остаются, если модель/пользователь ещё может на них ссылаться."""
+    row = db.get(m.PrivacyShadowMap, session_id)
+    merged = dict((row.map_json if row is not None else {}) or {})
+    merged.update(dict(map_json or {}))
+    if row is None:
+        row = m.PrivacyShadowMap(session_id=session_id, map_json=merged)
+        db.add(row)
+    else:
+        row.map_json = merged
+        row.updated_at = _now()
+    db.flush()
+    return row
+
+
+# ---------- task specs (PR-3) ----------
+
+def get_task_spec(db: OrmSession, task_id: uuid.UUID) -> m.TaskSpecRow | None:
+    """Последняя версия TaskSpec задачи (None — контракта ещё нет)."""
+    return db.execute(
+        select(m.TaskSpecRow)
+        .where(m.TaskSpecRow.task_id == task_id)
+        .order_by(m.TaskSpecRow.version.desc())
+    ).scalars().first()
+
+
+def upsert_task_spec(
+    db: OrmSession,
+    task: m.Task,
+    spec_json: dict,
+    *,
+    valid: bool,
+    clarify_rounds: int = 0,
+) -> m.TaskSpecRow:
+    """Пишет TaskSpec задачи; версия растёт только при изменении содержимого."""
+    row = get_task_spec(db, task.id)
+    if row is None:
+        row = m.TaskSpecRow(
+            task_id=task.id, version=1, spec_json=dict(spec_json or {}),
+            valid=bool(valid), clarify_rounds=int(clarify_rounds),
+        )
+        db.add(row)
+    else:
+        if dict(row.spec_json or {}) != dict(spec_json or {}):
+            row.version = (row.version or 1) + 1
+        row.spec_json = dict(spec_json or {})
+        row.valid = bool(valid)
+        row.clarify_rounds = int(clarify_rounds)
+        row.updated_at = _now()
+    db.flush()
+    return row
+
+
 # ---------- messages ----------
 
 def append_message(db: OrmSession, session: m.Session, role: str, content: str, source_trust: SourceTrust = SourceTrust.trusted, content_json: dict | None = None) -> m.Message:
@@ -374,6 +434,31 @@ def list_audit_reports_by_session(db: OrmSession, session_id: uuid.UUID) -> list
 
 
 # ---------- agent_state ----------
+
+def get_shadow_map(db: OrmSession, session_id: uuid.UUID) -> dict[str, str]:
+    """П.5.4 ТЗ: карта DLP сессии с расшифровкой значений (enc:v1: -> plain)."""
+    from aria.core import crypto_box
+
+    row = db.get(m.PrivacyShadowMap, session_id)
+    if row is None:
+        return {}
+    return {str(k): crypto_box.decrypt(v) for k, v in dict(row.map_json or {}).items()}
+
+
+def save_shadow_map(db: OrmSession, session_id: uuid.UUID, mapping: dict) -> m.PrivacyShadowMap:
+    """П.5.4 ТЗ: в БД ложатся только ЗАШИФРОВАННЫЕ значения (открытый текст не персистится)."""
+    from aria.core import crypto_box
+
+    encrypted = {str(k): crypto_box.encrypt(str(v)) for k, v in dict(mapping or {}).items()}
+    row = db.get(m.PrivacyShadowMap, session_id)
+    if row is None:
+        row = m.PrivacyShadowMap(session_id=session_id, map_json=encrypted)
+        db.add(row)
+    else:
+        row.map_json = encrypted
+    db.flush()
+    return row
+
 
 def get_agent_state(db: OrmSession, key: str) -> dict | None:
     row = db.get(m.AgentState, key)

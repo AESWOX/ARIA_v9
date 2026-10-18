@@ -2,6 +2,8 @@
 лёгкое состояние запуска для опроса. Каждый тест падает на коде до этапа 2."""
 from __future__ import annotations
 
+import uuid
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -30,13 +32,26 @@ def _chat_session(title: str = "chat-only") -> str:
         return str(repo.create_session(db, title, active_role="general").id)
 
 
+def _task_with_valid_spec(sid: str) -> str:
+    """PR-3: задача получает контракт (goal + критерий приёмки) до запуска."""
+    from aria.core.taskspec import TaskSpec, default_criterion
+
+    with session_scope() as db:
+        session = repo.get_session(db, uuid.UUID(sid))
+        task = repo.create_task(db, session, role="general", objective="сделай")
+        spec = TaskSpec(goal="сделать задачу", acceptance_criteria=[default_criterion("результат")])
+        repo.upsert_task_spec(db, task, spec.model_dump(mode="json"), valid=spec.is_valid, clarify_rounds=0)
+        return str(task.id)
+
+
 def test_mode_plan_is_passed_to_runner():
     client, rec = _client()
     sid = _chat_session()
+    task_id = _task_with_valid_spec(sid)
     r = client.post(f"/sessions/{sid}/messages", json={"content": "сделай", "mode": "plan"})
     assert r.status_code == 200, r.text
     assert r.json()["mode"] == "plan"
-    assert rec.submitted and rec.submitted[0][1] == "plan"
+    assert rec.submitted and rec.submitted[0][0] == task_id and rec.submitted[0][1] == "plan"
 
 
 def test_mode_defaults_to_agent():
@@ -57,6 +72,7 @@ def test_unknown_mode_is_rejected_and_nothing_is_queued():
 def test_message_in_session_without_task_starts_a_task():
     client, rec = _client()
     sid = _chat_session()
+    _task_with_valid_spec(sid)
     r = client.post(f"/sessions/{sid}/messages", json={"content": "сделай отчёт"})
     body = r.json()
     assert body["queued"] is True and body["task_id"]

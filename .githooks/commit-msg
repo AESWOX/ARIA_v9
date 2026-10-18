@@ -1,0 +1,8 @@
+#!/bin/sh
+# Убирает из сообщения коммита строки соавторства и пометки инструментов.
+# Включение (один раз на клон): git config core.hooksPath .githooks
+f="$1"
+[ -f "$f" ] || exit 0
+grep -viE '^[[:space:]]*co-authored-by[[:space:]]*:|^[[:space:]]*[^[:alnum:][:space:]]*[[:space:]]*generated (with|by) ' "$f" > "$f.tmp" || true
+mv "$f.tmp" "$f"
+exit 0

@@ -19,6 +19,8 @@ jobs:
   pytest:
     name: pytest (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: "1"
     timeout-minutes: 30
     strategy:
       fail-fast: false

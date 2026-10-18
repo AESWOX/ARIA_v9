@@ -68,6 +68,32 @@ RETRY_ATTEMPTS_PER_PROVIDER = 2      # same provider, on 5xx only
 RETRY_BACKOFF_SEC = 1.0              # 1s, then 2s
 
 
+def log_cache_usage(provider_id: str, response) -> dict[str, int | None]:
+    """PR-1: логирует попадание/промах prompt-кэша провайдера.
+
+    DeepSeek и OpenAI-совместимые API возвращают в usage
+    ``prompt_cache_hit_tokens`` / ``prompt_cache_miss_tokens``; до PR-1 они не
+    читались нигде, и «кэш работает или нет» нельзя было проверить по логам.
+    Провайдер без этих полей (Gemini/Groq) молча пропускается.
+    """
+    usage = getattr(response, "usage", None) or {}
+    if not isinstance(usage, dict):
+        return {"hit": None, "miss": None}
+    hit = usage.get("prompt_cache_hit_tokens", usage.get("prompt_cache_hit"))
+    miss = usage.get("prompt_cache_miss_tokens", usage.get("prompt_cache_miss"))
+    if hit is None and miss is None:
+        return {"hit": None, "miss": None}
+    try:
+        hit_i = int(hit) if hit is not None else 0
+        miss_i = int(miss) if miss is not None else 0
+    except (TypeError, ValueError):
+        return {"hit": None, "miss": None}
+    total = hit_i + miss_i
+    ratio = (hit_i / total) if total else 0.0
+    logger.info("prompt_cache: provider=%s hit=%d miss=%d hit_ratio=%.3f", provider_id, hit_i, miss_i, ratio)
+    return {"hit": hit_i, "miss": miss_i}
+
+
 @dataclass
 class RoutingResult:
     response: LlmResponse
@@ -82,6 +108,8 @@ class ProviderRouter:
     # provider_id -> момент (по self.clock), до которого провайдер откладывается в конец очереди
     cooldown_until: dict[str, float] = field(default_factory=dict)
     clock: callable = time.monotonic
+    # П.5.2 ТЗ: семафоры по классам провайдеров (квоты Gemini free-tier / Groq).
+    semaphores: dict[str, object] = field(default_factory=dict)
 
     def _cooling(self, provider: LlmProvider) -> bool:
         return self.cooldown_until.get(provider.provider_id, 0.0) > self.clock()
@@ -159,7 +187,66 @@ class ProviderRouter:
                     return provider
         return None
 
+    def provider_concurrency_limits(self) -> dict[str, int]:
+        """П.5.2 ТЗ: лимиты из provider_max_concurrency ("класс=лимит,класс=лимит")."""
+        settings = get_settings()
+        return dict(getattr(settings, "provider_concurrency_limits", {}) or {})
+
+    def provider_slot(self, provider_class: str):
+        """Асинхронный контекст-менеджер семафора класса провайдера (П.5.2 ТЗ)."""
+        import asyncio
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _slot():
+            settings = get_settings()
+            limits = dict(getattr(settings, "provider_concurrency_limits", {}) or {})
+            limit = max(1, int(limits.get(provider_class, getattr(settings, "delegate_max_parallel", 5) or 5)))
+            holder = self.semaphores.get(provider_class)
+            if holder is None or getattr(holder, "aria_limit", None) != limit:
+                holder = asyncio.Semaphore(limit)
+                try:
+                    holder.aria_limit = limit
+                except Exception:  # noqa: BLE001
+                    pass
+                self.semaphores[provider_class] = holder
+            async with holder:
+                yield
+
+        return _slot()
+
     async def route_chat(
+        self,
+        provider_class: str,
+        messages: list[ChatMessage],
+        tools: list[dict],
+        timeout_sec: float = 60,
+        allow_degrade: bool = True,
+        db: OrmSession | None = None,
+        resilient: bool = False,
+        fallback_classes: tuple[str, ...] = (),
+        retry_backoff_sec: float = RETRY_BACKOFF_SEC,
+        prefer_provider_id: str | None = None,
+        reject_empty: bool = False,
+    ) -> RoutingResult:
+        """П.5.2 ТЗ: запрос держит слот класса провайдера — параллельные волны EXECUTE
+        и делегирование не выбивают квоты free-tier одним залпом."""
+        async with self.provider_slot(provider_class):
+            return await self._route_chat_impl(
+                provider_class,
+                messages,
+                tools,
+                timeout_sec=timeout_sec,
+                allow_degrade=allow_degrade,
+                db=db,
+                resilient=resilient,
+                fallback_classes=fallback_classes,
+                retry_backoff_sec=retry_backoff_sec,
+                prefer_provider_id=prefer_provider_id,
+                reject_empty=reject_empty,
+            )
+
+    async def _route_chat_impl(
         self,
         provider_class: str,
         messages: list[ChatMessage],
@@ -188,6 +275,7 @@ class ProviderRouter:
                         if reject_empty and _is_empty_reply(response):
                             logger.warning("preferred model %s returned an empty reply; using the class chain", prefer_provider_id)
                         else:
+                            log_cache_usage(preferred.provider_id, response)
                             return RoutingResult(response=response, provider_id=preferred.provider_id)
                 except Exception as exc:  # noqa: BLE001 — выбранная модель не должна ронять задачу
                     logger.warning("preferred model %s failed (%s); using the class chain", prefer_provider_id, type(exc).__name__)
@@ -238,6 +326,7 @@ class ProviderRouter:
             raise ProviderUnavailable(f"no available provider for class={target_class} (§12.3)")
 
         response = await provider.chat(messages, tools, timeout_sec)
+        log_cache_usage(provider.provider_id, response)
         return RoutingResult(response=response, provider_id=provider.provider_id, degraded_to_free=degraded)
 
 
@@ -344,6 +433,7 @@ class ProviderRouter:
                             attempts.append(f"{provider.provider_id} empty reply{_finish_hint(response)}")
                             last_exc = ProviderUnavailable(f"{provider.provider_id} returned an empty reply")
                             break
+                        log_cache_usage(provider.provider_id, response)
                         return RoutingResult(
                             response=response,
                             provider_id=provider.provider_id,

@@ -83,7 +83,6 @@ NOT_404: dict[str, tuple[int, str]] = {
     "/actions/{name}/status": (200, "опрос состояния: действие, которое не запускали, = running:false"),
     "/providers/oauth/{provider_id}/poll/{session_id}": (200, "опрос: неизвестная сессия = status:expired"),
     "/storage/b2/objects/{key}/meta": (503, "B2 не настроен в тестовом окружении"),
-    "/tasks/{task_id}/audit-reports": (200, "пустой список; несогласовано с остальными /tasks/{id}/* (404), см. DOD B4"),
     "/messaging/telegram/onboarding/{pairing_id}": (200, "ЗАГЛУШКА (routers/stubs.py, B6): всегда 'waiting' с выдуманным expires_at; убрать вместе со stubs.py"),
 }
 

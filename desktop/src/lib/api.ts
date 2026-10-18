@@ -822,6 +822,29 @@ export const api = {
     fetchJSON<{ ok: boolean }>(`/api/attention-items/${encodeURIComponent(id)}/reject`, { method: "POST" }),
   runCancel: (taskId: string) =>
     fetchJSON<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" }),
+  // ---- П.3 ТЗ: карточка уточнений, предпросмотр плана, подзадачи, отчёт аудита ----
+  taskClarify: (taskId: string, body: unknown) =>
+    fetchJSON<ClarifyResult>(`/api/tasks/${encodeURIComponent(taskId)}/clarify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    }),
+  taskPlan: (taskId: string) =>
+    fetchJSON<TaskPlanView>(`/api/tasks/${encodeURIComponent(taskId)}/plan`),
+  taskRequestPlanApproval: (taskId: string) =>
+    fetchJSON<{ ok: boolean; attention_item: unknown }>(
+      `/api/tasks/${encodeURIComponent(taskId)}/plan/request-approval`, { method: "POST" },
+    ),
+  taskChildren: (taskId: string) =>
+    fetchJSON<{ id: string; objective?: string; status?: string; role?: string }[]>(
+      `/api/tasks/${encodeURIComponent(taskId)}/children`,
+    ),
+  taskAuditReports: (taskId: string) =>
+    fetchJSON<{
+      id: string; verdict: string; attempt_no: number;
+      metrics_compared?: Record<string, unknown>;
+      missing_requirements?: string[]; patch_suggestions?: string[];
+    }[]>(`/api/tasks/${encodeURIComponent(taskId)}/audit-reports`),
   // ---- Obsidian vault / notes (backend: routers/vault.py) ----
   getVaultTree: (subdir = "") =>
     fetchJSON<VaultTree>(`/api/vault/tree?subdir=${encodeURIComponent(subdir)}`),
@@ -2234,6 +2257,35 @@ export interface RunAttentionItem {
   title: string;
   body_md: string | null;
   task_id: string | null;
+}
+
+export interface PlanStepView {
+  step_id: string;
+  objective: string;
+  role: string;
+  tool_ref: string | null;
+  depends_on: string[] | null;
+  covers: string[];
+  write_scope: string[];
+  status: string | null;
+}
+
+export interface TaskPlanView {
+  ok: boolean;
+  task_id: string;
+  phase: string | null;
+  status: string | null;
+  waves: number[][];
+  criteria: { id: string; statement: string }[];
+  steps: PlanStepView[];
+}
+
+export interface ClarifyResult {
+  ok: boolean;
+  task_id: string;
+  status: string;
+  valid: boolean;
+  questions: string[];
 }
 
 export interface RunState {

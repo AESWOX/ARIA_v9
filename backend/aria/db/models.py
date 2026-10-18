@@ -364,6 +364,9 @@ class TaskPlan(Base):
     plan_history: Mapped[dict] = mapped_column(JSON, default=list)  # [{version, plan_json, changed_at}]
 
     status: Mapped[str] = mapped_column(String(32), default="draft")  # PlanStatus
+    # PR-4: внутренняя фаза (PLAN_PHASES) — чтобы после рестарта было видно,
+    # на чём именно остановился прогон внутри грубого in_progress.
+    phase: Mapped[str] = mapped_column(String(16), default="plan")
     final_result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     integrity_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)  # IntegrityVerdict
 
@@ -388,3 +391,38 @@ class IntegrityEvent(Base):
 
     task = relationship("Task", backref="integrity_events")
     tool_call = relationship("ToolCall", backref="integrity_events")
+
+
+class PrivacyShadowMap(Base):
+    """PR-7: соответствие плейсхолдер → исходное значение для DLP чата, по сессии."""
+
+    __tablename__ = "privacy_shadow_maps"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("sessions.id"), primary_key=True)
+    map_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class TaskSpecRow(Base):
+    """PR-3: §2 TaskSpec — контракт задачи и его версии.
+
+    Класс назван TaskSpecRow, чтобы не путать ORM-строку с pydantic-моделью
+    TaskSpec из core/taskspec.py: модель описывает контракт, строка — его версию в БД.
+    """
+
+    __tablename__ = "task_specs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    spec_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    valid: Mapped[bool] = mapped_column(Boolean, default=False)
+    clarify_rounds: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    task = relationship("Task", backref="task_specs")

@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@vendor/ui/ui/components/button";
 import { Markdown } from "@/components/Markdown";
 import { TeamPanel } from "@/components/TeamPanel";
+import { TaskSpecPanel, type ClarifyQuestion } from "@/components/TaskSpecPanel";
 import { ChatTopBar } from "@/components/ChatTopBar";
 
 /* ------------------------------------------------------------------ */
@@ -82,6 +83,7 @@ export default function NativeChatPage() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [taskQuestions, setTaskQuestions] = useState<ClarifyQuestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<Mode>("chat");
@@ -291,9 +293,14 @@ export default function NativeChatPage() {
     ]);
     setInput("");
     const res = await api.runPost(sid, { content: text, mode: runMode });
+    // Гейт уточнений (Agent/Plan): бэкенд отвечает queued:false + questions — показываем карточку,
+    // а не ошибку «already queued».
+    const qs = (res as unknown as { questions?: ClarifyQuestion[] })?.questions ?? null;
+    const hasQuestions = !!qs && qs.length > 0;
+    setTaskQuestions(hasQuestions ? qs : null);
     setMessages(await api.chatMessages(sid));
     setRun(await api.runState(sid));
-    if (res.queued === false) setError("This task is already queued or running.");
+    if (res.queued === false && !hasQuestions) setError("This task is already queued or running.");
   };
 
   const decide = async (itemId: string, approve: boolean) => {
@@ -346,7 +353,10 @@ export default function NativeChatPage() {
         ]);
         setInput("");
       }
-      await api.chatSend(sid, retry ? { retry: true } : { content: text });
+      const sent = await api.chatSend(sid, retry ? { retry: true } : { content: text });
+      // П.3.1 ТЗ: бэкенд вернул пакет уточнений -> показываем карточку, а не просто текст.
+      const qs = (sent as unknown as { questions?: ClarifyQuestion[] })?.questions ?? null;
+      setTaskQuestions(qs && qs.length > 0 ? qs : null);
       await loadMessages(sid);
       setStatus(await api.chatStatus());
     } catch (e) {
@@ -568,6 +578,20 @@ export default function NativeChatPage() {
             )}
           </div>
         )}
+
+        <TaskSpecPanel
+          taskId={run?.task_id ?? null}
+          sessionId={activeId}
+          questions={taskQuestions}
+          onAnswered={async () => {
+            setTaskQuestions(null);
+            if (activeId) {
+              await loadMessages(activeId);
+              setRun(await api.runState(activeId).catch(() => null));
+            }
+          }}
+          onError={(m) => setError(m)}
+        />
 
         {profile && (
           <TeamPanel profile={profile} models={models} disabled={sending || runBusy(run)} notes={profileNotes} onChange={changeProfile} />

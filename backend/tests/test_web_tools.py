@@ -188,11 +188,21 @@ class TestWebSearch:
 
     async def test_unrecognized_page_is_saved_for_debugging_and_capped(self, urlopen_pages):
         from aria import paths
+        # Мелкая нестабильность набора (П.2 ТЗ): каталог debug общий на весь прогон и
+        # туда пишут соседние тесты класса, поэтому saved[0] мог оказаться чужим файлом
+        # и assertion падал в зависимости от порядка запуска. Чистим каталог заранее
+        # и проверяем, что нужная страница сохранена хотя бы одним файлом.
+        debug_dir = paths.data_dir() / "debug"
+        if debug_dir.exists():
+            for stale in debug_dir.glob("ddg_unrecognized_*.html"):
+                stale.unlink()
         urlopen_pages({"duckduckgo.com": "<html><body><p>odd page</p></body></html>"})
         for _ in range(3):
             await web.web_search({"query": "x"})
-        saved = list((paths.data_dir() / "debug").glob("ddg_unrecognized_*.html"))
-        assert 1 <= len(saved) <= 3 and "odd page" in saved[0].read_text(encoding="utf-8")
+        saved = list(debug_dir.glob("ddg_unrecognized_*.html"))
+        assert 1 <= len(saved) <= 3, f"ожидали 1..3 отладочных файла, получили {len(saved)}"
+        assert any("odd page" in f.read_text(encoding="utf-8") for f in saved), \
+            "сохранённая страница не совпадает с той, что отдал urlopen"
 
     async def test_junk_arguments(self, urlopen_pages):
         urlopen_pages({"lite.duckduckgo.com": LITE})

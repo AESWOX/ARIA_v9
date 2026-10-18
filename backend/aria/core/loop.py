@@ -612,6 +612,25 @@ async def _finalize_task_inner(task_id: uuid.UUID, router: ProviderRouter) -> tu
         try:
             audit_level, audit_class, audit_prefer = runprofile.audit_settings(runprofile.get_profile(db, session.id), router)
             report = await run_audit(db, session, task, router, level=audit_level, auditor_class=audit_class, auditor_prefer=audit_prefer)
+
+            # П.5.1 ТЗ: вердикт needs_info — аудитору не хватает данных. Задача уходит
+            # на уточнение контракта (under_audit -> awaiting_clarification), а не в переделку.
+            if getattr(report, "verdict", None) == AuditVerdict.needs_info:
+                try:
+                    repo.set_task_status(db, task, TaskStatus.awaiting_clarification)
+                except Exception:  # noqa: BLE001 — переход мог быть уже совершён
+                    logger.info("needs_info: статус задачи %s уже изменён", str(task.id)[:8])
+                try:
+                    session_row = repo.get_session(db, task.session_id)
+                    if session_row is not None:
+                        repo.append_message(
+                            db, session_row, role="assistant",
+                            content="Аудит запросил уточнение контракта (needs_info): "
+                                    + "; ".join(list(getattr(report, 'missing_requirements', []) or [])[:5])
+                                    or "Аудит запросил уточнение контракта (needs_info).",
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.exception("needs_info: не удалось записать сообщение в чат")
         except Exception as exc:  # noqa: BLE001
             logger.exception("audit crashed for task %s", task_id)
             repo.set_task_status(db, task, TaskStatus.failed, error_code="audit_crash", error_message=str(exc))

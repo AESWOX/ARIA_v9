@@ -1,0 +1,52 @@
+{"text": "сделай красиво", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "починить это по-быстрому", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "создай что-нибудь полезное", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "напиши про наш проект", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "собери данные по рынку", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "поанализируй вчерашнюю ситуацию", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "проанализируй нашу позицию на рынке", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "настрой всё как надо", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "сгенерируй идеи для продукта", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "обнови документацию", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "перепиши нормально", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "запусти процесс обработки", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "исправь, пожалуйста", "vague": true, "lang": "ru", "must_slots": []}
+{"text": "write something nice", "vague": true, "lang": "en", "must_slots": []}
+{"text": "fix it quickly", "vague": true, "lang": "en", "must_slots": []}
+{"text": "create something useful", "vague": true, "lang": "en", "must_slots": []}
+{"text": "research the market for us", "vague": true, "lang": "en", "must_slots": []}
+{"text": "build it properly", "vague": true, "lang": "en", "must_slots": []}
+{"text": "generate some ideas", "vague": true, "lang": "en", "must_slots": []}
+{"text": "review our situation", "vague": true, "lang": "en", "must_slots": []}
+{"text": "refactor that part", "vague": true, "lang": "en", "must_slots": []}
+{"text": "analyze how we are doing", "vague": true, "lang": "en", "must_slots": []}
+{"text": "implement something clever", "vague": true, "lang": "en", "must_slots": []}
+{"text": "migrate to the newer thing", "vague": true, "lang": "en", "must_slots": []}
+{"text": "improve everything", "vague": true, "lang": "en", "must_slots": []}
+{"text": "install what we need", "vague": true, "lang": "en", "must_slots": []}
+{"text": "создай файл generated/report.md с отчётом", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "напиши файл generated/out.txt и проверь, что содержимое равно hello", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "проверь, что тесты проходят и exit code равен 0", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "собери отчёт: файл report.md должен содержать все разделы", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "запусти pytest и покажи, что passed не менее 10 тестов", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "почини тест tests/test_x.py: он должен проходить", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "обнови README.md: файл должен содержать раздел установки", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "настрой конфиг config.yaml: путь должен быть /etc/app", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "сгенерируй файл schema.json, длина которого не менее 100 символов", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "исправь скрипт build.sh так, чтобы код возврата был равен 0", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "посчитай сумму продаж и запиши результат в файл totals.csv", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "создай файл logs/app.log и убедись, что он присутствует", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "напиши файл notes.md, количество строк в котором ровно пять", "vague": false, "lang": "ru", "must_slots": ["acceptance_criteria"]}
+{"text": "write the file generated/report.md with the summary", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "create out.txt and check that the content equals hello", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "make sure pytest passes and the exit code is 0", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "fix the test tests/test_x.py so that it passes", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "build the report: the file report.md must contain all sections", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "update README.md so the file contains a setup section", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "generate schema.json whose length is not less than 100", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "research competitors and save the result to file research.csv", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "deploy the config so that the path equals /etc/app", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "install the dependency and write the file requirements.lock", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "refactor utils.py so all tests still pass", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "write notes.md with exactly five lines", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
+{"text": "implement the parser and save it to file parser.py", "vague": false, "lang": "en", "must_slots": ["acceptance_criteria"]}
