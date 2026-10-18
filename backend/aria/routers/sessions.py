@@ -373,7 +373,10 @@ async def post_message(
             repo.set_task_status(db, task, TaskStatus.draft)
         msg = repo.append_message(db, session, role=role, content=content, source_trust=SourceTrust.trusted)
         if task and role == "user":
-            task.objective = content
+            # П.4.4 ТЗ: пока задача ждёт уточнения, ответ владельца идёт в TaskSpec
+            # (через гейт ниже), а исходная цель задачи не перезаписывается ответом.
+            if task.status != TaskStatus.awaiting_clarification:
+                task.objective = content
             if task.status == TaskStatus.needs_rework:
                 # §8.1: needs_rework допускает только in_progress/cancelled, approved запрещён
                 repo.set_task_status(db, task, TaskStatus.in_progress)

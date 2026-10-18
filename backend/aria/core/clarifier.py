@@ -26,14 +26,35 @@ from aria.llm.router import ProviderRouter
 
 logger = logging.getLogger(__name__)
 
-# Маркеры задачи для agent-режима: без них короткая реплика — обычный чат.
-_TASK_VERBS = (
-    "сделай", "создай", "напиши", "проверь", "почини", "исправь", "найди", "собери",
-    "разверн", "задеплой", "обнови", "перенеси", "проанализируй", "посчитай",
-    "сгенерируй", "настрой", "установи", "запусти", "перепиши", "отрефактори",
+# П.4.2 ТЗ: маркеры задачи для agent-режима. Латиница сверяется ЦЕЛЫМ словом
+# (иначе "fix" срабатывал на "prefix", а "build" — на "building"), кириллица —
+# по основе слова (основа + любые окончания: "сдела" -> "сделай", "почин" -> "почини").
+# Список переопределяется настройкой clarifier_task_verbs (через запятую).
+_DEFAULT_TASK_VERBS: tuple[str, ...] = (
+    "сдела", "созда", "напиш", "провер", "почин", "исправ", "найд", "собер",
+    "разверн", "задепло", "обнов", "перенес", "проанализиру", "посчита",
+    "сгенерир", "настро", "установ", "запуст", "перепиш", "отрефактор",
     "build", "create", "implement", "fix", "refactor", "research", "write",
     "deploy", "generate", "analyze", "analyse", "migrate", "install", "review",
 )
+_TASK_VERBS = _DEFAULT_TASK_VERBS  # обратная совместимость импортов
+
+
+def configured_task_verbs() -> list[str]:
+    """П.4.2 ТЗ: список глаголов-маркеров из настроек, иначе встроенный."""
+    from aria.config import get_settings
+
+    configured = list(getattr(get_settings(), "clarifier_verbs_list", []) or [])
+    return configured or list(_DEFAULT_TASK_VERBS)
+
+
+def _verb_pattern(verb: str) -> re.Pattern:
+    v = (verb or "").strip()
+    if not v:
+        return re.compile(r"(?!x)x")  # заведомо не срабатывающий шаблон
+    if re.search(r"[A-Za-z]", v) and not re.search(r"[А-Яа-яЁё]", v):
+        return re.compile(rf"(?<!\w){re.escape(v)}(?!\w)", re.IGNORECASE)
+    return re.compile(rf"(?<![А-Яа-яЁё]){re.escape(v)}[А-Яа-яЁё]*", re.IGNORECASE)
 
 AUTONOMOUS_NOTE = (
     "Автономный режим (cron/Telegram): уточняющие вопросы не задавались, "
@@ -68,11 +89,19 @@ def gate_required(content: str, mode: str = "plan") -> bool:
     plan-режим — это Stage 1–7 с tool calls, там контракт обязателен. В agent-режиме
     гейт включается только при явном маркере задачи, иначе обычная переписка
     («привет», «как дела») получала бы вопросы вместо ответа.
+
+    П.4.1 ТЗ: при ``clarifier_gate_enabled=False`` гейт выключен полностью — задача
+    идёт быстрым путём ``draft -> approved``, как до PR-3.
+    П.4.2 ТЗ: маркеры сверяются по границам слов/основ, а не подстрокой.
     """
-    text = (content or "").strip().lower()
+    from aria.config import get_settings
+
+    if not bool(getattr(get_settings(), "clarifier_gate_enabled", True)):
+        return False
+    text = (content or "").strip()
     if mode == "plan":
         return True
-    return any(v in text for v in _TASK_VERBS)
+    return any(_verb_pattern(v).search(text) for v in configured_task_verbs())
 
 
 # ═══════════════════════════════════════════════════════════════════
