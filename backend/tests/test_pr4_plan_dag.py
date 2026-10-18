@@ -89,10 +89,11 @@ def test_plans_without_criteria_still_validate_as_before():
 # ─────────────────────────── waves ───────────────────────────
 
 def test_topological_waves_group_independent_steps():
+    """П.1 ТЗ: параллель — только при явном `depends_on: []` и непересекающемся write_scope."""
     steps = pv.validate_plan([
-        _step("step-1", covers=["ac-1"], tool="file_read"),
-        _step("step-2", covers=["ac-1"], tool="file_read"),
-        _step("step-3", deps=["step-1", "step-2"], covers=["ac-1"]),
+        _step("step-1", deps=[], covers=["ac-1"], scope=["generated/a.txt"]),
+        _step("step-2", deps=[], covers=["ac-1"], scope=["generated/b.txt"]),
+        _step("step-3", deps=["step-1", "step-2"], covers=["ac-1"], scope=["generated/c.txt"], tool="file_read"),
     ])
     raw = [s.model_dump(mode="json") for s in steps]
     assert pv.topological_waves(raw) == [[0, 1], [2]]

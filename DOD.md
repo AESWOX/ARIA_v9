@@ -249,3 +249,16 @@
   - Пул ключей ×3: сейчас сохраняется только маска ключа, сам ключ не хранится и роутером не используется. Нужно решение: хранить в `secrets`-провайдере и включить ротацию в `llm/` router.
   - Плагины панели ×9 и curator ×3: нужна модель плагина/расписание уборки скиллов; `plugins/importer.py` и `routers/skills.py` — база. Решение: что считать плагином в ARIA.
   - update ×2, config-migrate, debug-share: у ARIA нет серверной части для обновлений, версионирования конфига и загрузки диагностики. Предлагается убрать кнопки.
+
+### PR1–7 follow-up (`fix/pr1-7-followup`), 2026-10-16
+
+| ID | Что сделано | Тест | Статус |
+|----|-------------|------|--------|
+| A43 | P0-регрессия закрыта: `depends_on` отсутствует -> шаг зависит от предыдущего (цепочка); `[]` -> независим; `shell_execute`/`file_write` без `write_scope` не делят волну; выключатель `plan_dag_parallel_enabled=False` -> строго последовательный EXECUTE | `tests/test_pr1_1_plan_order.py`, `tests/test_executor_stage3.py` (30 прогонов) | verified (sandbox, Linux) |
+| A44 | Выключатель `clarifier_gate_enabled` (поведение до PR-3 при False); маркеры задачи по границам слов/основ вместо подстроки; конфигурируемый список глаголов `clarifier_task_verbs`; eval-набор 52 запроса + `scripts/clarify_eval.py` | `tests/test_pr4_1_gate_triage.py`, `tests/test_pr1_7_followup.py` | verified (sandbox, скриптовый режим) |
+| A45 | UI: карточка уточнений (варианты + своё поле + «Принять допущения»), предпросмотр плана (шаги, зависимости, роли, критерии, волны), подзадачи, отчёт аудита, строки i18n en/ru, типы в `api.ts` | `npm run build` (desktop) | verified (сборка) |
+| A46 | `AuditVerdict.needs_info` + переход `under_audit -> awaiting_clarification` (миграция `e3f5a6b7c8d9`); лимиты параллелизма по классам провайдеров (`provider_max_concurrency`); аудитор на классе, отличном от класса исполнителя | `tests/test_pr5_1_improvements.py` | verified (sandbox) |
+| A47 | DLP (PR-7): значения `privacy_shadow_maps` не лежат в БД открытым текстом (`enc:v1:` + HMAC-SHA256-CTR, ключ из секрет-провайдера или `<home>/.local-agent-ui/dlp.key` 0600); восстановление имён сохраняет написание пользователя | `tests/test_pr1_7_followup.py`, `tests/test_pr7_dlp_chat.py` | verified (sandbox) |
+
+Ограничения: не проверено на Windows и с живыми провайдерами (Gemini/Groq/DeepSeek/Telegram);
+живой режим eval-набора требует ключей и в CI не запускается. Предпросмотр плана в GUI проверен сборкой, живой сценарий — в `WORK_NOTES.md`.

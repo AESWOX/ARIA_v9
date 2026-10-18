@@ -1,4 +1,11 @@
 # Changelog
+## 2026-10-16 — PR1–7 follow-up (`fix/pr1-7-followup`)
+
+- **P0 регрессия плана**: план без `depends_on` исполняется строго по порядку шагов; параллель включается только явным `depends_on: []` или явными зависимостями; шаги `shell_execute`/`file_write` без `write_scope` не делят волну; выключатель `plan_dag_parallel_enabled` (default `True`). Тесты `tests/test_pr1_1_plan_order.py`; `test_executor_stage3.py` — 30 прогонов подряд.
+- **Триаж гейта**: `clarifier_gate_enabled=False` возвращает быстрый путь `draft -> approved`; маркеры задачи сравниваются по границам слов (кириллица — по основам, латиница — целым словом); список глаголов в `clarifier_task_verbs`; eval-набор `tests/fixtures/clarify_eval.jsonl` (52 запроса) и `scripts/clarify_eval.py`.
+- **UI**: карточки уточнений, предпросмотра плана, волн/подзадач и отчёта аудита в чате; эндпоинты `POST /tasks/{id}/clarify`, `GET /tasks/{id}/plan`, `POST /tasks/{id}/plan/request-approval`, `GET /tasks/{id}/audit-reports`.
+- **Улучшения**: вердикт `needs_info` и переход `under_audit -> awaiting_clarification`; лимиты параллелизма по классам провайдеров; аудитор на классе, отличном от класса исполнителя; DLP-карта шифруется (`enc:v1:`), восстановление имён сохраняет написание пользователя.
+- **Стабильность**: пустой ответ qa_auditor больше не даёт ложный `needs_rework` (`reject_empty=True` у аудитора).
 
 ## 2026-10-15 (3)
 - fix(llm,chat): 200 OK без текста и без вызова тула больше не завершает цепочку: `route_chat(reject_empty=True)` (чат) считает это отказом звена, пишет `empty reply (finish_reason=…)` в `tried:` и идёт дальше (смоук `ctx` 15.10 падал 502 «empty answer», не дойдя до остальных звеньев; DOD A42). Агентский цикл без изменений.
