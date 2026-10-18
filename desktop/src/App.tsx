@@ -121,6 +121,7 @@ const SystemPage = lazy(() => import("@/pages/SystemPage"));
 // once the host first mounts, keeping it out of the initial main chunk.
 const ChatPage = lazy(() => import("@/pages/ChatPage"));
 import { PageSkeleton, TerminalSkeleton } from "@/components/Skeleton";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 function RootRedirect() {
   return <Navigate to="/sessions" replace />;
@@ -907,6 +908,7 @@ export default function App() {
                 )}
               >
                 <ProfileKeyedRoutes>
+                  <ErrorBoundary resetKey={pathname}>
                   <Suspense fallback={<PageSkeleton />}>
                     <Routes>
                       {routes.map(({ key, path, element }) => (
@@ -920,6 +922,7 @@ export default function App() {
                       />
                     </Routes>
                   </Suspense>
+                  </ErrorBoundary>
                 </ProfileKeyedRoutes>
 
                 {embeddedChat &&
