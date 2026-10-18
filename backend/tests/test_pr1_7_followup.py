@@ -112,3 +112,74 @@ def test_record_needs_info_fills_open_questions():
     assert_transition_allowed(TaskStatus.under_audit, TaskStatus.awaiting_clarification)
     spec = clarifier.__dict__.get("AUTONOMOUS_NOTE")
     assert spec  # модуль импортирован и содержит автономную заметку
+
+
+# ─────────────────── раунд 2 п.3: crypto_box, вариант Б ───────────────────
+
+def test_crypto_box_v2_roundtrip_and_idempotent():
+    secret = "sk-round2-secret-0001"
+    box = encrypt(secret)
+    assert box.startswith(crypto_box.PREFIX) and crypto_box.PREFIX == "enc:v2:"
+    assert decrypt(box) == secret
+    assert encrypt(box) == box  # идемпотентно для v2
+
+
+def test_crypto_box_rejects_tampered_ciphertext():
+    """Encrypt-then-MAC: подмена любого байта шифртекста/nonce/тега отклоняется."""
+    import base64 as _b64
+
+    box = encrypt("sk-tamper-target-0001")
+    raw = bytearray(_b64.urlsafe_b64decode(box[len(crypto_box.PREFIX):].encode("ascii")))
+    raw[len(raw) // 2] ^= 0xFF  # подмена байта тела шифртекста
+    tampered = crypto_box.PREFIX + _b64.urlsafe_b64encode(bytes(raw)).decode("ascii")
+    with pytest.raises(ValueError):
+        decrypt(tampered)
+
+
+def test_crypto_box_rejects_tampered_tag():
+    import base64 as _b64
+
+    box = encrypt("sk-tamper-tag-0001")
+    raw = bytearray(_b64.urlsafe_b64decode(box[len(crypto_box.PREFIX):].encode("ascii")))
+    raw[-1] ^= 0x01  # подмена байта тега MAC
+    tampered = crypto_box.PREFIX + _b64.urlsafe_b64encode(bytes(raw)).decode("ascii")
+    with pytest.raises(ValueError):
+        decrypt(tampered)
+
+
+def test_crypto_box_legacy_v1_decrypt_and_lazy_migration(monkeypatch):
+    """enc:v1: (раунд 1) читается; при повторной записи лениво перешифровывается в v2."""
+    import base64 as _b64
+    import hashlib as _h
+    import os as _os
+
+    raw = "sk-legacy-v1-value-0001"
+    nonce = _os.urandom(crypto_box._NONCE_BYTES)
+    key = crypto_box._load_key()
+    data = raw.encode("utf-8")
+    body = bytes(a ^ b for a, b in zip(data, crypto_box._keystream(key, nonce, len(data))))
+    legacy = crypto_box.LEGACY_PREFIX + _b64.urlsafe_b64encode(nonce + body).decode("ascii")
+    assert decrypt(legacy) == raw
+    migrated = encrypt(legacy)
+    assert migrated.startswith("enc:v2:")
+    assert decrypt(migrated) == raw
+
+
+def test_crypto_box_no_silent_fallback_key(monkeypatch):
+    """Раунд 2 п.3 (Б): недоступный ключ -> KeyUnavailableError, а не производная от хоста."""
+    import sys
+    import types
+
+    fake_secrets = types.ModuleType("aria.secrets")
+    fake_provider = types.ModuleType("aria.secrets.secret_provider")
+
+    def _fail(name):
+        raise RuntimeError("secret provider unavailable in test")
+
+    fake_provider.get_key = _fail
+    fake_secrets.secret_provider = fake_provider
+    monkeypatch.setitem(sys.modules, "aria.secrets", fake_secrets)
+    monkeypatch.setattr(crypto_box, "_cached_key", None)
+    monkeypatch.setattr(crypto_box, "_key_path", lambda: Path("/proc/aria-nonexistent/dlp.key"))
+    with pytest.raises(crypto_box.KeyUnavailableError):
+        encrypt("sk-no-key-possible-0001")
