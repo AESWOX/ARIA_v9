@@ -19,6 +19,18 @@ MAX_CLARIFY_ROUNDS = 3
 MIN_GOAL_CHARS = 8
 MIN_CRITERION_CHARS = 10
 
+# Раунд 2 (п.1.1.5): детерминированные тексты вопросов для недостающих слотов.
+SLOT_GOAL_QUESTION = "Сформулируйте цель задачи: что именно нужно сделать и зачем (минимум 8 символов)?"
+SLOT_CRITERION_QUESTION = (
+    "Как проверить, что задача выполнена? Опишите критерий приёмки: что и где должно получиться."
+)
+
+# Слоты, для которых вопрос детерминированно восстанавливается из недостающего поля.
+SLOT_QUESTIONS: dict[str, str] = {
+    "goal": SLOT_GOAL_QUESTION,
+    "acceptance_criteria": SLOT_CRITERION_QUESTION,
+}
+
 # «Проверяемость» формулировки критерия: без измеримого условия это пожелание,
 # а не критерий приёмки — такой TaskSpec гейт не проходит.
 _VERIFIABLE_RE = re.compile(
@@ -74,8 +86,18 @@ class TaskSpec(BaseModel):
     acceptance_criteria: list[AcceptanceCriterion] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
+    # Раунд 2 (п.1.1.1): вопросы со стабильными id ({id, text, field, blocking}) —
+    # open_questions остаётся зеркалом текстов для валидации и отчёта.
+    clarify_questions: list[dict] = Field(default_factory=list)
+    # Раунд 2 (п.1.1.2): структурные записи ответов на уточнения
+    # ({question_id, question, answer}) вместо «q1: да» в constraints.
+    clarifications: list[dict] = Field(default_factory=list)
     clarify_rounds: int = 0
     high_risk: bool = False
+
+    def sync_questions(self) -> None:
+        """Синхронизирует зеркало open_questions с уточнённым списком вопросов."""
+        self.open_questions = [str(q.get("text") or "") for q in (self.clarify_questions or []) if q.get("text")]
 
     @property
     def is_valid(self) -> bool:
@@ -127,6 +149,11 @@ def derive_criteria(content: str, limit: int = 5) -> list[AcceptanceCriterion]:
         if len(criteria) >= limit:
             break
     return criteria
+
+
+def slot_question(slot: str) -> str | None:
+    """Раунд 2 (п.1.1.5): детерминированный текст вопроса для недостающего слота."""
+    return SLOT_QUESTIONS.get(slot)
 
 
 def default_criterion(goal: str) -> AcceptanceCriterion:

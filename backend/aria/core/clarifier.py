@@ -149,21 +149,46 @@ async def _ask_model(router: ProviderRouter, content: str, spec: TaskSpec) -> di
     return data
 
 
+def question_id(text: str) -> str:
+    """Раунд 2 (п.1.1.1): стабильный id вопроса — короткий хеш текста.
+
+    Один и тот же вопрос в разных раундах получает один и тот же id, поэтому
+    ответы в UI и в POST /clarify больше не перетирают друг друга.
+    """
+    import hashlib
+
+    return "q-" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
+
+
 def _normalise_questions(raw) -> list[dict]:
+    """Раунд 2 (п.1.1.1–1.1.2): каждый вопрос получает стабильный id, а поле по
+    умолчанию — ``clarification`` (не ``goal``): ответ на такой вопрос больше не
+    затирает цель, а сохраняется структурной записью в TaskSpec.clarifications."""
     out: list[dict] = []
+    seen_ids: set[str] = set()
     if not isinstance(raw, list):
         return out
     for item in raw:
         if isinstance(item, str) and item.strip():
-            out.append({"text": item.strip(), "blocking": True, "field": "goal"})
+            text = item.strip()
+            qid = question_id(text)
+            if qid in seen_ids:
+                continue
+            seen_ids.add(qid)
+            out.append({"id": qid, "text": text, "blocking": True, "field": "clarification"})
         elif isinstance(item, dict):
             text = str(item.get("text") or item.get("question") or "").strip()
             if not text:
                 continue
+            qid = str(item.get("id") or "").strip() or question_id(text)
+            if qid in seen_ids:
+                continue
+            seen_ids.add(qid)
             out.append({
+                "id": qid,
                 "text": text,
                 "blocking": bool(item.get("blocking", True)),
-                "field": str(item.get("field") or "goal"),
+                "field": str(item.get("field") or "clarification"),
             })
     return out
 
@@ -307,14 +332,18 @@ async def run_gate(
         # После исчерпания лимита раундов вопросов владельцу больше не задаём: остаток
         # превращается в допущения и попадает в отчёт (PR-6).
         blocking = [{
-            "text": "Как проверить, что задача выполнена? Опишите критерий приёмки: что и где должно получиться.",
+            "id": question_id(taskspec.SLOT_CRITERION_QUESTION),
+            "text": taskspec.SLOT_CRITERION_QUESTION,
             "blocking": True,
             "field": "acceptance_criteria",
         }]
 
     if blocking:
         spec.clarify_rounds = rounds + 1
-        spec.open_questions = [q["text"] for q in blocking]
+        # Раунд 2 (п.1.1.1): вопросы хранятся со стабильными id, open_questions —
+        # зеркало текстов для валидации missing_fields() и отчёта.
+        spec.clarify_questions = blocking
+        spec.sync_questions()
         with session_scope() as db:
             task = repo.get_task(db, task_id)
             if task is None:
