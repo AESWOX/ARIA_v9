@@ -27,7 +27,10 @@ class PlanStep(BaseModel):
     # covers — id критериев приёмки TaskSpec, которые закрывает шаг,
     # write_scope — пути/ресурсы, которые шаг пишет (по ним PR-5 решает, что можно
     # исполнять параллельно, а что обязано идти последовательно).
-    depends_on: list[str] = []
+    # П.1.1 ТЗ: None = «зависимости не указаны» (шаг идёт за предыдущим),
+    # [] = «шаг независим явно» (разрешена параллель). Различие принципиально:
+    # без него старый план из БД исполнялся волной и читал файл до его создания.
+    depends_on: list[str] | None = None
     covers: list[str] = []
     write_scope: list[str] = []
 
@@ -129,29 +132,60 @@ def find_cycles(steps: list[dict]) -> list[str]:
     return cycles
 
 
+def _is_write_without_scope(step: dict) -> bool:
+    """П.1.4 ТЗ: шаг, пишущий наружу (shell_execute/file_write) без write_scope,
+    не имеет права делить волну с другими шагами."""
+    tool = str(step.get("tool_ref") or step.get("skill_ref") or "").strip().lower()
+    if tool not in ("shell_execute", "file_write"):
+        return False
+    return not [w for w in (step.get("write_scope") or []) if str(w).strip()]
+
+
+def effective_dependencies(steps: list[dict]) -> list[set[int]]:
+    """П.1.3 ТЗ: различает «зависимости не указаны» и «независим явно».
+
+    * ``depends_on is None`` — поле не указано: шаг зависит от ПРЕДЫДУЩЕГО шага
+      плана (цепочка). Так исполняется любой старый план из БД, где Oracle поле
+      не заполнил, и он больше не обгоняет своего предшественника.
+    * ``depends_on == []`` — шаг явно объявлен независимым: может идти первым.
+    * непустой список — явные предшественники (id вне плана игнорируются).
+    """
+    ids = {str(s.get("step_id")): i for i, s in enumerate(steps)}
+    out: list[set[int]] = []
+    for i, step in enumerate(steps):
+        raw = step.get("depends_on")
+        if raw is None:
+            out.append({i - 1} if i > 0 else set())
+            continue
+        out.append({d for d in ({ids[str(dep)] for dep in raw if str(dep) in ids}) if d != i})
+    return out
+
+
 def topological_waves(steps: list[dict]) -> list[list[int]]:
     """Разбивает план на волны исполнения (PR-5 использует это напрямую).
 
     Волна N — шаги, все зависимости которых лежат в волнах < N: внутри волны узлы
-    независимы и могут идти параллельно. Ссылки на несуществующие шаги игнорируются,
-    цикл (его ловит validate_plan заранее) здесь не подвешивает разбор — остаток
-    уходит последней волной.
+    независимы и могут идти параллельно. П.1 ТЗ закрывает регрессию: шаг без
+    указанных `depends_on` больше НЕ считается независимым — он идёт за предыдущим
+    шагом. Параллельность включается только явным `depends_on: []` или явными
+    зависимостями. Дополнительно шаг `shell_execute`/`file_write` без `write_scope`
+    исполняется в одиночной волне. Ссылки на несуществующие шаги игнорируются,
+    цикл не подвешивает разбор — остаток уходит последней волной.
     """
-    ids = {str(s.get("step_id")): i for i, s in enumerate(steps)}
-    pending = set(range(len(steps)))
+    count = len(steps)
+    deps = effective_dependencies(steps)
+    unsocial = {i for i in range(count) if _is_write_without_scope(steps[i])}
+    pending = set(range(count))
     done: set[int] = set()
     waves: list[list[int]] = []
     while pending:
-        ready = [
-            i for i in sorted(pending)
-            if all(
-                str(dep) not in ids or ids[str(dep)] in done
-                for dep in (steps[i].get("depends_on") or [])
-            )
-        ]
+        ready = sorted(i for i in pending if deps[i] <= done)
         if not ready:
             waves.append(sorted(pending))
             break
+        if set(ready) & unsocial:
+            # пишущий шаг без write_scope — строго один в своей волне
+            ready = [min(ready)]
         waves.append(ready)
         done.update(ready)
         pending -= set(ready)

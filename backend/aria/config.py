@@ -45,6 +45,20 @@ class Settings(BaseSettings):
     # при нехватке памяти TaskRunner сам опускается до 1 воркера.
     runner_max_workers: int = 3
     audit_max_attempts: int = 3
+    # П.1.6 ТЗ: выключатель параллельного EXECUTE. False — волны DAG не собираются,
+    # план исполняется строго по порядку шагов (аварийный режим для старых планов).
+    plan_dag_parallel_enabled: bool = True
+    # П.4.1 ТЗ: выключатель Clarifier-гейта (PR-3). False — поведение как до PR-3:
+    # быстрый путь draft -> approved без уточняющих вопросов.
+    clarifier_gate_enabled: bool = True
+    # П.4.2 ТЗ: список глаголов-маркеров задачи (через запятую) для agent-режима;
+    # пусто = встроенный список clarifier._DEFAULT_TASK_VERBS.
+    clarifier_task_verbs: str = ""
+    # П.5.2 ТЗ: лимиты параллелизма по классам провайдеров, например
+    # "free_tier_reasoning=2,standard_reasoning=3" (иначе один общий лимит).
+    provider_max_concurrency: str = ""
+    # П.5.4 ТЗ: значения карты DLP хранятся зашифрованными (enc:v1:), не открытым текстом.
+    dlp_encrypt_secrets: bool = True
     # PR-7: DLP включается только для чата и по умолчанию выключен; агентский
     # цикл не маскируется — плейсхолдеры сломали бы пути и команды в tool calls.
     dlp_chat_enabled: bool = False
@@ -254,6 +268,28 @@ class Settings(BaseSettings):
     @property
     def gemini_pro_chain(self) -> list[str]:
         return self._model_chain(self.gemini_pro_models or self._auto_chain("pro"), self.gemini_pro_model)
+
+    @property
+    def clarifier_verbs_list(self) -> list[str]:
+        """П.4.2 ТЗ: настроенный список глаголов-маркеров задачи (пусто = встроенный)."""
+        return [v.strip() for v in (self.clarifier_task_verbs or "").split(",") if v.strip()]
+
+    @property
+    def provider_concurrency_limits(self) -> dict[str, int]:
+        """П.5.2 ТЗ: "класс=лимит" из provider_max_concurrency (мусор игнорируется)."""
+        out: dict[str, int] = {}
+        for chunk in (self.provider_max_concurrency or "").split(","):
+            if "=" not in chunk:
+                continue
+            name, _, value = chunk.partition("=")
+            name, value = name.strip(), value.strip()
+            try:
+                limit = int(value)
+            except ValueError:
+                continue
+            if name and limit > 0:
+                out[name] = limit
+        return out
 
     @property
     def dlp_names_list(self) -> list[str]:

@@ -677,9 +677,17 @@ def _serialize_by_write_scope(steps: list[dict], wave: list[int]) -> list[list[i
     def scope_of(idx: int) -> set[str]:
         return {str(w) for w in (steps[idx].get("write_scope") or []) if str(w)}
 
+    def unsocial(idx: int) -> bool:
+        # П.1.4 ТЗ: пишущий шаг без write_scope — только одиночной группой.
+        tool = str(steps[idx].get("tool_ref") or steps[idx].get("skill_ref") or "").strip().lower()
+        return tool in ("shell_execute", "file_write") and not scope_of(idx)
+
     groups: list[list[int]] = []
     for idx in wave:
         scope = scope_of(idx)
+        if unsocial(idx):
+            groups.append([idx])
+            continue
         for group in groups:
             used: set[str] = set()
             for other in group:
@@ -892,7 +900,13 @@ async def _stage3_execute(
     session.commit()
 
     limit = _execute_parallelism()
-    waves = topological_waves(steps)
+    # П.1.6 ТЗ: аварийный выключатель параллельного EXECUTE.
+    if not bool(getattr(settings, "plan_dag_parallel_enabled", True)):
+        waves = [[i] for i in range(len(steps))]
+        limit = 1
+        logger.info("Stage 3: plan_dag_parallel_enabled=False — строго последовательный EXECUTE")
+    else:
+        waves = topological_waves(steps)
     logger.info(
         "Stage 3: %d шагов, %d волн, лимит параллелизма %d (task %s)",
         len(steps), len(waves), limit, str(task.id)[:8],
