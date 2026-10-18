@@ -193,6 +193,44 @@ def set_task_status(db: OrmSession, task: m.Task, status: TaskStatus, error_code
     return task
 
 
+# ---------- task specs (PR-3) ----------
+
+def get_task_spec(db: OrmSession, task_id: uuid.UUID) -> m.TaskSpecRow | None:
+    """Последняя версия TaskSpec задачи (None — контракта ещё нет)."""
+    return db.execute(
+        select(m.TaskSpecRow)
+        .where(m.TaskSpecRow.task_id == task_id)
+        .order_by(m.TaskSpecRow.version.desc())
+    ).scalars().first()
+
+
+def upsert_task_spec(
+    db: OrmSession,
+    task: m.Task,
+    spec_json: dict,
+    *,
+    valid: bool,
+    clarify_rounds: int = 0,
+) -> m.TaskSpecRow:
+    """Пишет TaskSpec задачи; версия растёт только при изменении содержимого."""
+    row = get_task_spec(db, task.id)
+    if row is None:
+        row = m.TaskSpecRow(
+            task_id=task.id, version=1, spec_json=dict(spec_json or {}),
+            valid=bool(valid), clarify_rounds=int(clarify_rounds),
+        )
+        db.add(row)
+    else:
+        if dict(row.spec_json or {}) != dict(spec_json or {}):
+            row.version = (row.version or 1) + 1
+        row.spec_json = dict(spec_json or {})
+        row.valid = bool(valid)
+        row.clarify_rounds = int(clarify_rounds)
+        row.updated_at = _now()
+    db.flush()
+    return row
+
+
 # ---------- messages ----------
 
 def append_message(db: OrmSession, session: m.Session, role: str, content: str, source_trust: SourceTrust = SourceTrust.trusted, content_json: dict | None = None) -> m.Message:

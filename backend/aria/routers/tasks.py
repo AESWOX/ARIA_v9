@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from aria.api.auth import require_runtime_token
+from aria.core import clarifier
 from aria.db import repository as repo
 from aria.db.base import session_scope
 from aria.db.enums import TaskStatus
@@ -65,6 +66,11 @@ async def start_task(
         if task is None:
             raise HTTPException(status_code=404, detail="task not found")
         if task.status in (TaskStatus.draft, TaskStatus.awaiting_clarification):
+            # PR-3: draft/awaiting_clarification -> approved только с валидным TaskSpec.
+            try:
+                clarifier.assert_runnable(db, task)
+            except clarifier.ClarifyRequired as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             repo.set_task_status(db, task, TaskStatus.approved)
         elif task.status == TaskStatus.needs_rework:
             # §8.1: needs_rework допускает только in_progress/cancelled, approved запрещён
@@ -90,6 +96,11 @@ async def run_executor_pipeline(
         if task is None:
             raise HTTPException(status_code=404, detail="task not found")
         if task.status == TaskStatus.draft:
+            # PR-3: тот же гейт, что и в /start — контракт обязателен до Stage 1–7.
+            try:
+                clarifier.assert_runnable(db, task)
+            except clarifier.ClarifyRequired as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             repo.set_task_status(db, task, TaskStatus.approved)
     return runner.submit(task_id, mode="plan", source="executor")
 

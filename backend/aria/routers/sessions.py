@@ -13,6 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from aria.api.auth import require_runtime_token
+from aria.core import clarifier
 from aria.core.loop import execute_agent_loop
 from aria.db import models as m
 from aria.db import repository as repo
@@ -354,6 +355,7 @@ async def post_message(
         raise HTTPException(status_code=400, detail="mode must be one of ['agent', 'plan']")
     if not content:
         raise HTTPException(status_code=400, detail="content required")
+    gate_task_id: uuid.UUID | None = None
     with session_scope() as db:
         session = repo.get_session(db, session_id)
         if session is None:
@@ -372,14 +374,36 @@ async def post_message(
         msg = repo.append_message(db, session, role=role, content=content, source_trust=SourceTrust.trusted)
         if task and role == "user":
             task.objective = content
-            if task.status in (TaskStatus.draft, TaskStatus.awaiting_clarification):
-                repo.set_task_status(db, task, TaskStatus.approved)
-            elif task.status == TaskStatus.needs_rework:
+            if task.status == TaskStatus.needs_rework:
                 # §8.1: needs_rework допускает только in_progress/cancelled, approved запрещён
                 repo.set_task_status(db, task, TaskStatus.in_progress)
+            elif task.status in (TaskStatus.draft, TaskStatus.awaiting_clarification):
+                # PR-3: автоперевод в approved по факту прихода сообщения убран. Быстрый путь
+                # (простой чат) открывается сразу, всё остальное решает TaskSpec, а не текст.
+                if clarifier.gate_required(content, mode):
+                    gate_task_id = task.id
+                else:
+                    repo.set_task_status(db, task, TaskStatus.approved)
     emit_message_created(msg, session_id, task.id if task else None)
     if task:
         emit_task_status(task)
+
+    if gate_task_id is not None:
+        # Гейт вне DB-scope: внутри — сетевой вызов clarifier и сообщение с вопросами.
+        outcome = await clarifier.run_gate(
+            gate_task_id, content, router=getattr(request.app.state, "router", None)
+        )
+        with session_scope() as db:
+            task = repo.get_task(db, gate_task_id)
+        emit_task_status(task)
+        if outcome.status == "awaiting_clarification":
+            return {
+                "ok": True,
+                "queued": False,
+                "task_id": str(task.id),
+                "status": outcome.status,
+                "questions": outcome.questions,
+            }
 
     if task and role == "user" and task.status in (TaskStatus.approved, TaskStatus.in_progress):
         settings = get_settings()

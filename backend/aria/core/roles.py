@@ -40,6 +40,15 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         can_delegate=False,
         max_subagents=0,
     ),
+    "clarifier": RoleDefinition(
+        role_id="clarifier",
+        description="Приводит запрос владельца к TaskSpec: цель, ограничения, проверяемые критерии приёмки, блокирующие вопросы.",
+        system_prompt_asset="prompts/clarifier.md",
+        tool_whitelist=(),
+        default_model_policy="standard_reasoning",
+        can_delegate=False,
+        max_subagents=0,
+    ),
     "orchestrator": RoleDefinition(
         role_id="orchestrator",
         description="Строит план, выбирает роль/модель/tool-стратегию, может делегировать.",

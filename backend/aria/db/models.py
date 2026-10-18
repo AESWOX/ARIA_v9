@@ -388,3 +388,27 @@ class IntegrityEvent(Base):
 
     task = relationship("Task", backref="integrity_events")
     tool_call = relationship("ToolCall", backref="integrity_events")
+
+
+class TaskSpecRow(Base):
+    """PR-3: §2 TaskSpec — контракт задачи и его версии.
+
+    Класс назван TaskSpecRow, чтобы не путать ORM-строку с pydantic-моделью
+    TaskSpec из core/taskspec.py: модель описывает контракт, строка — его версию в БД.
+    """
+
+    __tablename__ = "task_specs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    spec_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    valid: Mapped[bool] = mapped_column(Boolean, default=False)
+    clarify_rounds: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    task = relationship("Task", backref="task_specs")

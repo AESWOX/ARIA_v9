@@ -168,6 +168,7 @@ def _generate_delivery_note(
     task: Task,
     plan: TaskPlan,
     integrity_flags: list[IntegrityFlag],
+    task_spec: Any | None = None,
 ) -> str:
     """Генерирует vault-заметку целиком из plan_json + final_result_json.
 
@@ -199,6 +200,10 @@ def _generate_delivery_note(
 
     iv = plan.integrity_verdict or "unknown"
 
+    # PR-3: допущения TaskSpec — часть отчёта, а не внутренняя деталь гейта.
+    assumptions = list(getattr(task_spec, "assumptions", []) or [])
+    assumptions_lines = "\n".join(f"- {a}" for a in assumptions)
+
     return (
         f"---\n"
         f"task_id: {task.id}\n"
@@ -214,6 +219,7 @@ def _generate_delivery_note(
         f"## Integrity Verdict\n\n"
         f"**{iv}**\n\n"
         + ("\n".join(integrity_lines) + "\n\n" if integrity_lines else "")
+        + (f"## Assumptions\n\n{assumptions_lines}\n\n" if assumptions_lines else "")
         + (
             f"## Result\n\n"
             f"{json.dumps(plan.final_result_json, indent=2, ensure_ascii=False)[:500]}\n"
@@ -869,12 +875,17 @@ async def _stage7_delivery(
     """
     task_id = str(task.id)
 
+    # PR-3: контракт задачи читаем из БД — он версионируется и переживает рестарт.
+    from aria.core import clarifier as _clarifier
+
+    task_spec = _clarifier.load_spec(session, task.id)
+
     # Delivery-контракт: проверяем, что есть результат для записи
     if task_plan.final_result_json is None:
-        content = _generate_delivery_note(task, task_plan, integrity_flags)
+        content = _generate_delivery_note(task, task_plan, integrity_flags, task_spec)
         content = content.replace("# Status\n\n**done**", "# Status\n\n**unfinished**\n\nЗадача не завершена. Причина: final_result_json не заполнен (возможно escalation).")
     else:
-        content = _generate_delivery_note(task, task_plan, integrity_flags)
+        content = _generate_delivery_note(task, task_plan, integrity_flags, task_spec)
 
     # Проверка delivery-контракта
     required_fields = [
