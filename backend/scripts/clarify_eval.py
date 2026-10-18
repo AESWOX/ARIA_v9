@@ -73,16 +73,40 @@ def evaluate(path: Path = FIXTURE) -> dict[str, float]:
     }
 
 
+def evaluate_detailed(path: Path = FIXTURE) -> dict:
+    """Раунд 2 (п.4.1): метрики + разбор — какие ясные запросы получили лишние вопросы
+    и какие обязательные слоты пропущены (для отчёта и правки derive_criteria/gate)."""
+    items = [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    clear = [i for i in items if not i.get("vague")]
+    extra = [
+        {"lang": i.get("lang"), "text": i["text"], "reason": "gate passed, no verifiable criteria derived"}
+        for i in clear if _predict_ask(i["text"])
+    ]
+    missed = []
+    for item in items:
+        required = list(item.get("must_slots") or [])
+        missing = set(_slots_missing(item["text"]))
+        hit = [slot for slot in required if slot in missing]
+        if hit:
+            missed.append({"lang": item.get("lang"), "text": item["text"], "missed_slots": hit})
+    return {"metrics": evaluate(path), "extra_questions_on_clear_list": extra, "missed_slots_list": missed}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="clarify triage eval (П.4.3 ТЗ)")
     parser.add_argument("--ci", action="store_true", help="скриптовый режим, без сети (по умолчанию)")
     parser.add_argument("--live", action="store_true", help="живой режим через LLM (нужны ключи)")
     parser.add_argument("--fixture", default=str(FIXTURE))
+    parser.add_argument("--detailed", action="store_true", help="раунд 2 п.4.1: выводить разбор лишних вопросов и пропусков")
     args = parser.parse_args()
 
     if args.live:
         print(json.dumps({"error": "live mode requires provider keys; run outside CI"}, ensure_ascii=False))
         # живой режим отдельно: в CI он сознательно не запускается
+        return 0
+
+    if args.detailed:
+        print(json.dumps(evaluate_detailed(Path(args.fixture)), ensure_ascii=False, indent=2))
         return 0
 
     metrics = evaluate(Path(args.fixture))

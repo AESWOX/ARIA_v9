@@ -36,7 +36,10 @@ SLOT_QUESTIONS: dict[str, str] = {
 _VERIFIABLE_RE = re.compile(
     r"(exit\s*0|exit_code|код возврата|0 ошиб|passed|pytest|тест|провер|совпад|содерж"
     r"|включ|равен|равно|не более|не менее|>=|<=|==|файл|путь|возвраща|присутств"
-    r"|отсутств|длина|колич|кол-во|секунд|мс\b|все\b|кажд|ровно|соответств)",
+    r"|отсутств|длина|колич|кол-во|секунд|мс\b|все\b|кажд|ровно|соответств"
+    r"|\bfile\b|\bpath\b|\bexists\b|\bcontains?\b|\bequals?\b|\bequal to\b"
+    r"|\bpass(es|ed)?\b|\btests?\b|\blength\b|\blines?\b|\bnot less than\b"
+    r"|\bnot more than\b|\bexactly\b|\bcheck\b|\bverify\b|\bensure\b|\bmake sure\b)",
     re.IGNORECASE,
 )
 
