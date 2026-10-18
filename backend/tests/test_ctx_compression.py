@@ -146,8 +146,12 @@ def test_build_prompt_puts_summary_into_system_and_budgets_by_tokens(monkeypatch
         ("user" if i % 2 == 0 else "assistant", f"m{i} " + "q" * 100) for i in range(10)
     ]
     prompt = _build_prompt(history)
-    assert prompt[0].content.startswith(SYSTEM_PROMPT) and "OLD-FACTS" in prompt[0].content
-    kept = [x.content[:3] for x in prompt[1:]]
+    # PR-1: messages[0] — дословно SYSTEM_PROMPT (стабильный префикс для prompt-кэша),
+    # сводка компрессии уходит отдельным system-сообщением.
+    assert prompt[0].content == SYSTEM_PROMPT
+    dynamic = [m.content for m in prompt[1:] if m.role == "system"]
+    assert dynamic and "OLD-FACTS" in dynamic[0]
+    kept = [x.content[:3] for x in prompt[1:] if x.role != "system"]
     assert kept and kept[-1] == "m9 "  # самые свежие остаются, старые отброшены по токенному бюджету
     assert len(kept) < 10
 
@@ -164,8 +168,9 @@ def test_chat_send_triggers_compression_and_sends_summary(ctx):
     try:
         r = c.post(f"/chat/sessions/{sid}/send", json={"content": "new question"})
         assert r.status_code == 200
-        system = fake.seen[0][0].content
-        assert "SUMMARY-TEXT" in system
+        assert fake.seen[0][0].content == SYSTEM_PROMPT  # PR-1: префикс неизменен
+        systems = [m.content for m in fake.seen[0] if m.role == "system"]
+        assert any("SUMMARY-TEXT" in x for x in systems)
         assert fake.seen[0][-1].content == "new question"
         assert len(ctx) == 1
     finally:
@@ -183,8 +188,8 @@ def test_build_prompt_keeps_protected_head_when_summary_exists(monkeypatch):
         + [("user" if i % 2 == 0 else "assistant", f"t{i} " + "q" * 200) for i in range(6)]
     )
     prompt = _build_prompt(history)
-    texts = [x.content for x in prompt[1:]]
+    texts = [x.content for x in prompt[1:] if x.role != "system"]
     assert texts[0].startswith("HEAD-0") and texts[1].startswith("HEAD-1")  # голова цела при любом бюджете
     assert texts[-1].startswith("t5")  # самое свежее остаётся
-    assert "SUM" in prompt[0].content
+    assert any("SUM" in m.content for m in prompt if m.role == "system")  # сводка — отдельным system-блоком
     assert len(texts) < 8  # а вот хвост обрезан бюджетом

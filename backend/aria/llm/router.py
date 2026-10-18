@@ -68,6 +68,32 @@ RETRY_ATTEMPTS_PER_PROVIDER = 2      # same provider, on 5xx only
 RETRY_BACKOFF_SEC = 1.0              # 1s, then 2s
 
 
+def log_cache_usage(provider_id: str, response) -> dict[str, int | None]:
+    """PR-1: логирует попадание/промах prompt-кэша провайдера.
+
+    DeepSeek и OpenAI-совместимые API возвращают в usage
+    ``prompt_cache_hit_tokens`` / ``prompt_cache_miss_tokens``; до PR-1 они не
+    читались нигде, и «кэш работает или нет» нельзя было проверить по логам.
+    Провайдер без этих полей (Gemini/Groq) молча пропускается.
+    """
+    usage = getattr(response, "usage", None) or {}
+    if not isinstance(usage, dict):
+        return {"hit": None, "miss": None}
+    hit = usage.get("prompt_cache_hit_tokens", usage.get("prompt_cache_hit"))
+    miss = usage.get("prompt_cache_miss_tokens", usage.get("prompt_cache_miss"))
+    if hit is None and miss is None:
+        return {"hit": None, "miss": None}
+    try:
+        hit_i = int(hit) if hit is not None else 0
+        miss_i = int(miss) if miss is not None else 0
+    except (TypeError, ValueError):
+        return {"hit": None, "miss": None}
+    total = hit_i + miss_i
+    ratio = (hit_i / total) if total else 0.0
+    logger.info("prompt_cache: provider=%s hit=%d miss=%d hit_ratio=%.3f", provider_id, hit_i, miss_i, ratio)
+    return {"hit": hit_i, "miss": miss_i}
+
+
 @dataclass
 class RoutingResult:
     response: LlmResponse
@@ -188,6 +214,7 @@ class ProviderRouter:
                         if reject_empty and _is_empty_reply(response):
                             logger.warning("preferred model %s returned an empty reply; using the class chain", prefer_provider_id)
                         else:
+                            log_cache_usage(preferred.provider_id, response)
                             return RoutingResult(response=response, provider_id=preferred.provider_id)
                 except Exception as exc:  # noqa: BLE001 — выбранная модель не должна ронять задачу
                     logger.warning("preferred model %s failed (%s); using the class chain", prefer_provider_id, type(exc).__name__)
@@ -238,6 +265,7 @@ class ProviderRouter:
             raise ProviderUnavailable(f"no available provider for class={target_class} (§12.3)")
 
         response = await provider.chat(messages, tools, timeout_sec)
+        log_cache_usage(provider.provider_id, response)
         return RoutingResult(response=response, provider_id=provider.provider_id, degraded_to_free=degraded)
 
 
@@ -344,6 +372,7 @@ class ProviderRouter:
                             attempts.append(f"{provider.provider_id} empty reply{_finish_hint(response)}")
                             last_exc = ProviderUnavailable(f"{provider.provider_id} returned an empty reply")
                             break
+                        log_cache_usage(provider.provider_id, response)
                         return RoutingResult(
                             response=response,
                             provider_id=provider.provider_id,

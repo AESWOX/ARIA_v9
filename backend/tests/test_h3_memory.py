@@ -180,7 +180,9 @@ def test_parse_remember():
 def test_build_prompt_appends_memory_only_when_present():
     assert _build_prompt([("user", "hi")])[0].content == SYSTEM_PROMPT
     block = "Long-term memory relevant to this message:\n- [fact] x"
-    assert _build_prompt([("user", "hi")], block)[0].content.endswith(block)
+    prompt = _build_prompt([("user", "hi")], block)
+    assert prompt[0].content == SYSTEM_PROMPT  # PR-1: динамика не в messages[0]
+    assert any(m.role == "system" and m.content.endswith(block) for m in prompt[1:])
 
 
 # ── Chat: «запомни» и подсказка ──────────────────────────────────────────
@@ -202,7 +204,8 @@ def test_chat_remember_saves_and_a_later_chat_session_sees_it():
     assert _count() == 1
     s2 = c.post("/chat/sessions", json={}).json()["session_id"]  # другая сессия
     assert c.post(f"/chat/sessions/{s2}/send", json={"content": "какой редактор я люблю?"}).status_code == 200
-    system_prompt = fake.seen[1][0].content
+    assert fake.seen[1][0].content == SYSTEM_PROMPT  # PR-1: префикс неизменен
+    system_prompt = "\n".join(m.content for m in fake.seen[1] if m.role == "system")
     assert "Neovim" in system_prompt and "Long-term memory" in system_prompt
 
 

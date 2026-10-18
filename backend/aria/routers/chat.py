@@ -99,12 +99,45 @@ def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> lis
             kept.append((role, text))
             used += len(text)
     kept.reverse()
-    system = SYSTEM_PROMPT
+    # PR-1 (prompt cache): messages[0] — ВСЕГДА дословно SYSTEM_PROMPT, без динамики.
+    # Сводки компрессии и memory_block уходят отдельным system-сообщением перед последним
+    # user-ходом: OpenAI-совместимые провайдеры (DeepSeek) кэшируют по префиксу, и правка
+    # первого сообщения обнуляла кэш на весь запрос.
+    messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)] + [
+        ChatMessage(role=r, content=t) for r, t in head + kept
+    ]
+    return _attach_dynamic(messages, _dynamic_system_block(summaries, memory_block))
+
+
+def _dynamic_system_block(summaries: list[str], memory_block: str) -> str:
+    """Динамическая часть системного контекста: сводки компрессии + релевантная память.
+
+    Вынесена из messages[0] намеренно (PR-1): префикс промпта должен быть бит-в-бит
+    одинаковым между запросами, иначе prompt-кэш провайдера не работает.
+    """
+    parts: list[str] = []
     if summaries:
-        system += "\n\nСводка более ранней части диалога (сжата автоматически):\n" + "\n\n".join(summaries[-3:])
+        parts.append(
+            "Сводка более ранней части диалога (сжата автоматически):\n" + "\n\n".join(summaries[-3:])
+        )
     if memory_block:
-        system += "\n\n" + memory_block
-    return [ChatMessage(role="system", content=system)] + [ChatMessage(role=r, content=t) for r, t in head + kept]
+        parts.append(memory_block)
+    return "\n\n".join(parts)
+
+
+def _attach_dynamic(prompt: list[ChatMessage], dynamic: str) -> list[ChatMessage]:
+    """Вставляет динамический system-блок непосредственно перед последним user-сообщением.
+
+    Пустой/пробельный dynamic — промпт возвращается без изменений (стабильный префикс).
+    """
+    if not dynamic or not dynamic.strip():
+        return prompt
+    insert_at = len(prompt)
+    for i in range(len(prompt) - 1, 0, -1):
+        if prompt[i].role == "user":
+            insert_at = i
+            break
+    return prompt[:insert_at] + [ChatMessage(role="system", content=dynamic)] + prompt[insert_at:]
 
 
 def _explain_llm_error(exc: Exception) -> HTTPException:
@@ -331,8 +364,8 @@ async def chat_send(
     )
     prompt = _build_prompt(history, memory_block)
     hint = runprofile.thinking_hint(profile)
-    if hint:
-        prompt[0] = ChatMessage(role="system", content=prompt[0].content + "\n\n" + hint)
+    # PR-1: thinking_hint больше не дописывается в messages[0] — он тоже ломал кэш.
+    prompt = _attach_dynamic(prompt, hint)
     try:
         result = await request.app.state.router.route_chat(
             chat_class,
