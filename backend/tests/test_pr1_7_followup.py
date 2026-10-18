@@ -165,7 +165,7 @@ def test_crypto_box_legacy_v1_decrypt_and_lazy_migration(monkeypatch):
     assert decrypt(migrated) == raw
 
 
-def test_crypto_box_no_silent_fallback_key(monkeypatch):
+def test_crypto_box_no_silent_fallback_key(monkeypatch, tmp_path):
     """Раунд 2 п.3 (Б): недоступный ключ -> KeyUnavailableError, а не производная от хоста."""
     import sys
     import types
@@ -180,6 +180,10 @@ def test_crypto_box_no_silent_fallback_key(monkeypatch):
     fake_secrets.secret_provider = fake_provider
     monkeypatch.setitem(sys.modules, "aria.secrets", fake_secrets)
     monkeypatch.setattr(crypto_box, "_cached_key", None)
-    monkeypatch.setattr(crypto_box, "_key_path", lambda: Path("/proc/aria-nonexistent/dlp.key"))
+    # Путь «внутри обычного файла»: mkdir/запись падают с OSError на любой ОС
+    # (прежний '/proc/...' на Windows превращался в C:\\proc и успешно создавался).
+    blocker = tmp_path / "not_a_dir"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(crypto_box, "_key_path", lambda: blocker / "dlp.key")
     with pytest.raises(crypto_box.KeyUnavailableError):
         encrypt("sk-no-key-possible-0001")
