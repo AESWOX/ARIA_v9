@@ -161,3 +161,24 @@ def pytest_collection_modifyitems(items):
                         item.add_marker(pytest.mark.anyio)
                 except Exception:
                     pass
+
+@pytest.fixture(autouse=True)
+def _isolate_mcp_tool_registry():
+    """Изоляция утечки состояния MCP между тестами (п.2 ТЗ).
+
+    Тесты MCP-подсистемы (``tests/test_h7_mcp_oauth.py``) заводят серверы и регистрируют
+    свои тулы в глобальном ``TOOL_REGISTRY``, но не всегда убирают их за собой. При
+    случайном порядке запуска (``pytest-randomly``) такие тулы доживали до соседних
+    тестов и роняли ``tests/test_h7_mcp_client.py`` на проверке
+    «тулы MCP не должны оставаться в реестре» (в падении фигурировал чужой
+    ``mcp__up__find_jobs``). Чистим реестр до и после каждого теста.
+    """
+    from aria.tools.registry import TOOL_REGISTRY
+
+    def _drop_mcp_tools() -> None:
+        for name in [n for n in list(TOOL_REGISTRY) if str(n).startswith("mcp__")]:
+            TOOL_REGISTRY.pop(name, None)
+
+    _drop_mcp_tools()
+    yield
+    _drop_mcp_tools()
