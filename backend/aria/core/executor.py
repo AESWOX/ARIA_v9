@@ -23,8 +23,15 @@ from sqlalchemy.orm import Session as OrmSession
 
 from aria.core.integrity import IntegrityFlag, run_integrity_audit
 from aria.core.locking import file_lock
+from aria.core.delegate import run_bounded
 from aria.core.notifiers.protocol import Notifier, NotifierError
-from aria.core.plan_validator import MAX_REPLAN_ATTEMPTS, PlanStep, check_oracle_naebal, validate_plan
+from aria.core.plan_validator import (
+    MAX_REPLAN_ATTEMPTS,
+    PlanStep,
+    check_oracle_naebal,
+    topological_waves,
+    validate_plan,
+)
 from aria.core.secretscanner import ScanResult, assert_no_secrets, scan_changed_files
 from aria.db.enums import PLAN_PHASES, AuditVerdict, IntegrityVerdict, PlanStatus, TaskStatus
 from aria.db.models import IntegrityEvent, Task, TaskPlan, ToolCall
@@ -109,6 +116,13 @@ def _transition(
 PLAN_HISTORY_MAX = 20
 MAX_DB_RETRIES = 3
 MAX_ZABYL_RETRIES = 3
+
+# PR-5: ниже этого объёма свободной RAM параллелизм EXECUTE падает до 1 узла.
+EXECUTE_MIN_FREE_RAM_GB = 1.5
+
+# Oracle и registry используют canonical names (file_write, shell_execute);
+# старые планы могут нести legacy aliases (write_file, terminal).
+_TOOL_ALIASES = {"write_file": "file_write", "terminal": "shell_execute"}
 _DB_RETRY_DELAY_SEC = [0.5, 1.0, 2.0]  # progressive
 
 
@@ -568,183 +582,302 @@ async def _stage2_plan(
     return task_plan, []
 
 
+def _failed_step_payload(step: dict, exc: BaseException) -> dict:
+    """Payload упавшего узла плана — тем же контрактом, что и успешного."""
+    step_id = str(step.get("step_id", ""))
+    return {
+        "id": f"tc-{step_id[:8]}" if step_id else "tc-failed",
+        "tool_name": step.get("tool_ref") or step.get("skill_ref") or "unknown",
+        "input_json": {"objective": step.get("objective", "")},
+        "output_json": {"error": f"{type(exc).__name__}: {exc}"},
+        "status": "error",
+    }
+
+
+def _execute_parallelism() -> int:
+    """Сколько узлов плана исполнять одновременно (PR-5).
+
+    Берётся меньший из двух лимитов (§7.2 delegate_max_parallel и пул TaskRunner),
+    а при свободной памяти меньше EXECUTE_MIN_FREE_RAM_GB всё сводится к 1:
+    дешевле выполнить последовательно, чем попасть в swap или быть убитым OOM.
+    """
+    settings = get_settings()
+    limit = max(1, min(int(settings.runner_max_workers), int(settings.delegate_max_parallel)))
+    try:
+        import psutil
+
+        free_gb = psutil.virtual_memory().available / (1024 ** 3)
+        if free_gb < EXECUTE_MIN_FREE_RAM_GB:
+            logger.warning(
+                "свободной памяти %.2f ГБ < %.1f ГБ — параллелизм EXECUTE снижен до 1 узла",
+                free_gb, EXECUTE_MIN_FREE_RAM_GB,
+            )
+            return 1
+    except Exception:  # noqa: BLE001 — нет psutil/нет данных: работаем по конфигу, а не падаем
+        logger.debug("psutil недоступен — лимит параллелизма EXECUTE берётся из настроек")
+    return limit
+
+
+def _serialize_by_write_scope(steps: list[dict], wave: list[int]) -> list[list[int]]:
+    """Делит волну на группы так, чтобы внутри группы write_scope не пересекались.
+
+    Два узла, пишущие один и тот же путь, обязаны идти последовательно: иначе
+    результат зависит от того, кто из них успел записать последним. Узлы без
+    write_scope конфликтов не создают.
+    """
+    def scope_of(idx: int) -> set[str]:
+        return {str(w) for w in (steps[idx].get("write_scope") or []) if str(w)}
+
+    groups: list[list[int]] = []
+    for idx in wave:
+        scope = scope_of(idx)
+        for group in groups:
+            used: set[str] = set()
+            for other in group:
+                used |= scope_of(other)
+            if not (scope & used):
+                group.append(idx)
+                break
+        else:
+            groups.append([idx])
+    return groups
+
+
+async def _execute_step_isolated(
+    step: dict,
+    *,
+    index: int,
+    task_id: Any,
+    sandbox_root: str,
+    router: ProviderRouter | None,
+) -> dict:
+    """Исполняет один узел плана в собственном коротком session_scope (PR-5).
+
+    Узел не держит сессию БД на время сетевого вызова инструмента: сначала работа
+    (LLM/файл/shell), потом короткая транзакция, которая пишет только ToolCall.
+    Раньше весь прогон шёл в одной sync-сессии, и параллельный EXECUTE был бы для
+    SQLite гонкой за writer-lock.
+
+    Returns:
+        dict того же вида, что элементы tool_calls_raw: id, tool_name, input_json,
+        output_json, status.
+    """
+    from aria.core import toolhooks
+    from aria.db import repository as repo
+    from aria.db.base import session_scope
+    from aria.db.enums import ToolStatus
+    from aria.tools.registry import get_tool
+
+    step_id = step.get("step_id", "")
+    objective = step.get("objective", "")
+    role = step.get("role", "general")
+    raw_tool_ref = step.get("tool_ref") or step.get("skill_ref") or "shell_execute"
+    tool_ref = _TOOL_ALIASES.get(raw_tool_ref, raw_tool_ref)
+    tc_id = f"tc-{str(step_id)[:8]}" if step_id else f"tc-{index}"
+
+    if router is None:
+        # Волна 1 (A9): тихие «успешные» мок-вызовы удалены — без LLM шаг
+        # не исполняется по-настоящему, значит это ошибка, а не ok.
+        raise ProviderUnavailable(f"no LLM provider configured — step {step_id} cannot be executed")
+
+    with session_scope() as db:
+        _task = repo.get_task(db, task_id)
+        session_id = _task.session_id if _task is not None else None
+
+    spec = None
+    handler_input: dict = {}
+    try:
+        if tool_ref == "llm_task":
+            # Шаг, который сам по себе является LLM-задачей (не registry tool)
+            messages = [
+                ChatMessage(role="system", content=f"Ты {role}. {objective}"),
+                ChatMessage(role="user", content=objective),
+            ]
+            result = await router.route_chat(
+                "subagent_execution", messages, tools=[],
+                allow_degrade=True, db=None,
+                resilient=True, fallback_classes=("free_tier_reasoning", "standard_reasoning"),
+            )
+            spec = type("Spec", (), {"tool_name": "llm_task", "risk_level": type("R", (), {"value": "medium"})()})()
+            handler_input = {"objective": objective, "role": role}
+            output_json = {"content": result.response.text or ""}
+        else:
+            try:
+                spec = get_tool(tool_ref)
+            except KeyError:
+                spec = None
+
+            if spec is None:
+                # Неизвестный tool_ref — явный fail (НЕ деградация в текст)
+                logger.warning("Stage 3: unknown tool_ref=%s for step %s", raw_tool_ref, step_id)
+                raise ValueError(f"unknown tool_ref: {raw_tool_ref} (нет в registry §11)")
+
+            if spec.handler is None:
+                # delegate_task и прочие без handler'а — не исполняются в executor
+                raise ValueError(f"tool_ref={tool_ref} не имеет handler'а в registry (только orchestrator loop)")
+
+            if tool_ref == "file_write":
+                content = await _llm_generate_content(router, None, role, objective)
+                handler_input = {"path": step.get("path", f"generated/{tc_id}.txt"), "content": content}
+            elif tool_ref == "shell_execute":
+                command = await _llm_generate_command(router, None, role, objective)
+                handler_input = {"command": command}
+            elif tool_ref == "file_read":
+                handler_input = {"path": step.get("path", ".")}
+            elif tool_ref == "file_search":
+                handler_input = {"glob": step.get("glob", "**/*")}
+            elif tool_ref == "web_search":
+                handler_input = {"query": step.get("query", objective), "max_results": step.get("max_results", 5)}
+            elif tool_ref == "web_fetch":
+                handler_input = {"url": step.get("url", ""), "max_chars": step.get("max_chars", 8000)}
+            else:
+                # Остальные registry-инструменты — input прямо из шага
+                handler_input = step.get("input") or step.get("input_json") or {}
+                if not handler_input:
+                    raise ValueError(f"tool_ref={tool_ref} требует step.input/input_json")
+
+            hook_decision, checkpoint_id = await toolhooks.pre_tool(
+                spec.tool_name, handler_input,
+                session_id=session_id, task_id=task_id, sandbox_root=sandbox_root,
+            )
+            if hook_decision.blocked:
+                raise ValueError(f"hook_blocked: {hook_decision.reason}")
+
+            output_json = await spec.handler(
+                input_json=handler_input,
+                timeout_sec=spec.timeout_sec,
+                sandbox_root=sandbox_root,
+            )
+            await toolhooks.post_tool(
+                spec.tool_name, handler_input, output_json,
+                "error" if isinstance(output_json, dict) and output_json.get("error") else "ok",
+                session_id=session_id, task_id=task_id, sandbox_root=sandbox_root, checkpoint_id=checkpoint_id,
+            )
+    except Exception as e:  # noqa: BLE001 — узел плана не роняет волну целиком
+        logger.warning("Stage 3: шаг %s упал: %s", step_id[:8] if step_id else "?", e)
+        return {
+            "id": tc_id,
+            "tool_name": tool_ref,
+            "input_json": {"objective": objective, "role": role},
+            "output_json": {"error": str(e)},
+            "status": "error",
+        }
+
+    status_ok = not (isinstance(output_json, dict) and output_json.get("error"))
+
+    # Свой короткий session_scope на запись ToolCall: writer-lock держится ровно
+    # на время транзакции, а не на весь сетевой вызов инструмента.
+    with session_scope() as db:
+        task = repo.get_task(db, task_id)
+        agent_session = repo.get_session(db, task.session_id) if task is not None and task.session_id else None
+        if agent_session is not None and task is not None:
+            call = repo.start_tool_call(
+                db=db,
+                session=agent_session,
+                task=task,
+                tool_name=spec.tool_name,
+                role=role,
+                risk_level=spec.risk_level.value,
+                input_json=handler_input,
+                attempt_no=1,
+            )
+            repo.finish_tool_call(
+                db=db,
+                call=call,
+                status=ToolStatus.ok if status_ok else ToolStatus.error,
+                output_json=output_json,
+                error_code=None if status_ok else "handler_error",
+                error_message=None if status_ok else (output_json.get("error") if isinstance(output_json, dict) else None),
+            )
+            tc_id = str(call.id)
+
+    return {
+        "id": tc_id,
+        "tool_name": spec.tool_name,
+        "input_json": handler_input,
+        "output_json": output_json,
+        "status": "ok" if status_ok else "error",
+    }
+
+
 async def _stage3_execute(
     session: OrmSession,
     task: Task,
     task_plan: TaskPlan,
     router: ProviderRouter | None = None,
 ) -> list[dict]:
-    """Stage 3: Execute each plan step через registry handler'ы (§11).
+    """Stage 3: EXECUTE — волны DAG, внутри волны параллельно (PR-5).
 
-    Любой tool_ref обязан быть в tools/registry.py — handler берётся из spec.
-    Legacy aliases write_file/terminal нормализуются в file_write/shell_execute.
-    Для file_write/shell_execute LLM генерирует контент/команду.
-    Для неизвестного tool_ref — явный fail (НЕ деградация в текст).
-    ToolCall персистится в БД через repo.start_tool_call/finish_tool_call.
+    Прежняя версия шла линейным for по шагам. Здесь:
+
+    * план разбирается на волны (topological_waves): внутри волны зависимости уже
+      выполнены, значит узлы можно запускать одновременно;
+    * узлы с пересекающимся write_scope разводятся в последовательные группы —
+      параллельная запись одного и того же пути недопустима;
+    * параллелизм ограничен run_bounded (не отдельный TaskGroup): тот же примитив,
+      что и в агентском цикле, с тем же лимитом delegate_max_parallel;
+    * каждый узел работает в собственном коротком session_scope.
 
     Returns:
-        list of ToolCall dicts с hash_before/hash_after для file_write.
+        list of ToolCall dicts (порядок соответствует порядку шагов плана).
     """
     from aria.config import get_settings as _gs
-    from aria.db import repository as repo
-    from aria.db.enums import ToolStatus
-    from aria.tools.registry import get_tool
 
     settings = _gs()
     sandbox_root = str((Path(__file__).parent.parent.parent / settings.agent_sandbox_root).resolve())
 
+    steps = list(task_plan.plan_json or [])
+    if not steps:
+        return []
+
+    if router is None:
+        # Волна 1 (A9): без LLM шаги не «выполняются» фиктивно. Параллельный путь
+        # не должен глотать это в failed-узел — это отказ прогона, а не ошибка шага.
+        raise ProviderUnavailable(
+            f"no LLM provider configured — plan of {len(steps)} steps cannot be executed"
+        )
+
+    # PR-5: узлы пишут ToolCall своими короткими session_scope. Если вызывающий
+    # держит открытую writer-транзакцию (SQLite), вложенная запись получит
+    # «database is locked» — освобождаем её до волн.
+    session.commit()
+
+    limit = _execute_parallelism()
+    waves = topological_waves(steps)
+    logger.info(
+        "Stage 3: %d шагов, %d волн, лимит параллелизма %d (task %s)",
+        len(steps), len(waves), limit, str(task.id)[:8],
+    )
+
     tool_calls_raw: list[dict] = []
-    steps = task_plan.plan_json or []
-
-    # Oracle и registry используют canonical names (file_write, shell_execute).
-    # Старые планы могут нести legacy aliases (write_file, terminal) — нормализуем.
-    _ALIASES = {"write_file": "file_write", "terminal": "shell_execute"}
-
-    agent_session = repo.get_session(session, task.session_id) if task.session_id else None
-
-    for step in steps:
-        step_id = step.get("step_id", "")
-        objective = step.get("objective", "")
-        role = step.get("role", "general")
-        raw_tool_ref = step.get("tool_ref", "shell_execute")
-        tool_ref = _ALIASES.get(raw_tool_ref, raw_tool_ref)
-        tc_id = f"tc-{str(step_id)[:8]}" if step_id else f"tc-{len(tool_calls_raw)}"
-
-        if router is None:
-            # Волна 1 (A9): тихие «успешные» мок-вызовы удалены — без LLM шаг
-            # не исполняется по-настоящему, значит это ошибка, а не ok.
-            raise ProviderUnavailable(
-                f"no LLM provider configured — step {step_id} cannot be executed"
+    for wave_no, wave in enumerate(waves, start=1):
+        session.commit()  # PR-5: writer-lock отпущен перед параллельной волной
+        for group in _serialize_by_write_scope(steps, wave):
+            logger.info(
+                "Stage 3: волна %d/%d, группа %s — до %d узлов параллельно",
+                wave_no, len(waves), group, min(limit, len(group)),
             )
-
-        # --- Режим: есть router — реальные handler'ы через registry (§11) ---
-        try:
-            if tool_ref == "llm_task":
-                # Шаг, который сам по себе является LLM-задачей (не registry tool)
-                messages = [
-                    ChatMessage(role="system", content=f"Ты {role}. {objective}"),
-                    ChatMessage(role="user", content=objective),
-                ]
-                result = await router.route_chat(
-                    "subagent_execution", messages, tools=[],
-                    allow_degrade=True, db=session,
-                    resilient=True, fallback_classes=("free_tier_reasoning", "standard_reasoning"),
-                )
-                spec = type("Spec", (), {"tool_name": "llm_task", "risk_level": type("R", (), {"value": "medium"})()})()
-                handler_input = {"objective": objective, "role": role}
-                output_json = {"content": result.response.text or ""}
-            else:
-                try:
-                    spec = get_tool(tool_ref)
-                except KeyError:
-                    spec = None
-
-                if spec is None:
-                    # Неизвестный tool_ref — явный fail (НЕ деградация в текст)
-                    logger.warning("Stage 3: unknown tool_ref=%s for step %s", raw_tool_ref, step_id)
-                    raise ValueError(f"unknown tool_ref: {raw_tool_ref} (нет в registry §11)")
-
-                if spec.handler is None:
-                    # delegate_task и прочие без handler'а — не исполняются в executor
-                    raise ValueError(f"tool_ref={tool_ref} не имеет handler'а в registry (только orchestrator loop)")
-
-                # Собираем input_json из полей шага
-                if tool_ref == "file_write":
-                    content = await _llm_generate_content(router, session, role, objective)
-                    handler_input = {
-                        "path": step.get("path", f"generated/{tc_id}.txt"),
-                        "content": content,
-                    }
-                elif tool_ref == "shell_execute":
-                    command = await _llm_generate_command(router, session, role, objective)
-                    handler_input = {"command": command}
-                elif tool_ref == "file_read":
-                    handler_input = {"path": step.get("path", ".")}
-                elif tool_ref == "file_search":
-                    handler_input = {"glob": step.get("glob", "**/*")}
-                elif tool_ref == "web_search":
-                    handler_input = {
-                        "query": step.get("query", objective),
-                        "max_results": step.get("max_results", 5),
-                    }
-                elif tool_ref == "web_fetch":
-                    handler_input = {
-                        "url": step.get("url", ""),
-                        "max_chars": step.get("max_chars", 8000),
-                    }
+            factories = [
+                (lambda i=idx: _execute_step_isolated(
+                    steps[i], index=i, task_id=task.id, sandbox_root=sandbox_root, router=router,
+                ))
+                for idx in group
+            ]
+            outcomes = await run_bounded(factories, limit=min(limit, len(group)))
+            for idx, outcome in zip(group, outcomes):
+                if isinstance(outcome, BaseException):
+                    logger.warning(
+                        "Stage 3: узел %s завершился исключением: %s",
+                        steps[idx].get("step_id"), outcome,
+                    )
+                    outcome = _failed_step_payload(steps[idx], outcome)
+                tool_calls_raw.append(outcome)
+                steps[idx]["status"] = "done" if outcome.get("status") == "ok" else "failed"
+                # tool_call_ids — ТОЛЬКО при ok, чтобы ЗАБЫЛ-детектор срабатывал на failure
+                if outcome.get("status") == "ok":
+                    steps[idx]["tool_call_ids"] = [outcome["id"]]
                 else:
-                    # Остальные registry-инструменты — input прямо из шага
-                    handler_input = step.get("input") or step.get("input_json") or {}
-                    if not handler_input:
-                        raise ValueError(f"tool_ref={tool_ref} требует step.input/input_json")
-
-                from aria.core import toolhooks
-
-                hook_decision, checkpoint_id = await toolhooks.pre_tool(
-                    spec.tool_name, handler_input, session_id=task.session_id, task_id=task.id, sandbox_root=sandbox_root,
-                )
-                if hook_decision.blocked:
-                    raise ValueError(f"hook_blocked: {hook_decision.reason}")
-
-                output_json = await spec.handler(
-                    input_json=handler_input,
-                    timeout_sec=spec.timeout_sec,
-                    sandbox_root=sandbox_root,
-                )
-                await toolhooks.post_tool(
-                    spec.tool_name, handler_input, output_json,
-                    "error" if isinstance(output_json, dict) and output_json.get("error") else "ok",
-                    session_id=task.session_id, task_id=task.id, sandbox_root=sandbox_root, checkpoint_id=checkpoint_id,
-                )
-
-            status_ok = not (isinstance(output_json, dict) and output_json.get("error"))
-            status = "ok" if status_ok else "error"
-
-            # Персистим ToolCall в БД (если есть agent session)
-            if agent_session is not None:
-                call = repo.start_tool_call(
-                    db=session,
-                    session=agent_session,
-                    task=task,
-                    tool_name=spec.tool_name,
-                    role=role,
-                    risk_level=spec.risk_level.value,
-                    input_json=handler_input,
-                    attempt_no=1,
-                )
-                repo.finish_tool_call(
-                    db=session,
-                    call=call,
-                    status=ToolStatus.ok if status_ok else ToolStatus.error,
-                    output_json=output_json,
-                    error_code=None if status_ok else "handler_error",
-                    error_message=None if status_ok else (output_json.get("error") if isinstance(output_json, dict) else None),
-                )
-                tc_id = str(call.id)
-
-            tc = {
-                "id": tc_id,
-                "tool_name": spec.tool_name,
-                "input_json": handler_input,
-                "output_json": output_json,
-                "status": status,
-            }
-
-        except Exception as e:
-            logger.warning("Step %s handler failed: %s", step_id[:8] if step_id else "?", e)
-            tc = {
-                "id": tc_id,
-                "tool_name": tool_ref,
-                "input_json": {"objective": objective, "role": role},
-                "output_json": {"error": str(e)},
-                "status": "error",
-            }
-
-        tool_calls_raw.append(tc)
-        step["status"] = "done" if tc["status"] == "ok" else "failed"
-        # tool_call_ids — ТОЛЬКО при ok, чтобы ЗАБЫЛ-детектор срабатывал на failure
-        if tc["status"] == "ok":
-            step["tool_call_ids"] = [tc["id"]]
+                    steps[idx].pop("tool_call_ids", None)
 
     # Сохраняем обновлённый план
     task_plan.plan_json = steps
@@ -756,7 +889,7 @@ async def _stage3_execute(
 
 async def _llm_generate_content(
     router: ProviderRouter,
-    session: OrmSession,
+    session: OrmSession | None,
     role: str,
     objective: str,
 ) -> str:
@@ -779,7 +912,7 @@ async def _llm_generate_content(
 
 async def _llm_generate_command(
     router: ProviderRouter,
-    session: OrmSession,
+    session: OrmSession | None,
     role: str,
     objective: str,
 ) -> str:
