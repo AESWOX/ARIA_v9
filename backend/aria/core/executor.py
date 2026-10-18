@@ -196,11 +196,44 @@ def _append_plan_history(plan: TaskPlan) -> list[dict]:
 # ═══════════════════════════════════════════════════════════════════
 
 
+def _extra_sections(task_spec: Any | None, criteria_status: dict | None) -> str:
+    """PR-6: критерии приёмки и допущения — часть отчёта, а не деталь гейта."""
+    if task_spec is None:
+        return ""
+    marks = {"pass": "✅", "fail": "❌"}
+    out: list[str] = []
+    criteria = list(getattr(task_spec, "acceptance_criteria", []) or [])
+    if criteria:
+        out.append("## Acceptance criteria\n")
+        for c in criteria:
+            st = (criteria_status or {}).get(str(c.id)) or {}
+            mark = marks.get(str(st.get("status", "")), "❔")
+            note = st.get("note") or ""
+            out.append(f"- {mark} `{c.id}` — {c.statement}" + (f" ({note})" if note else ""))
+        # Критерий мог появиться в отчёте позже правки TaskSpec (новая версия контракта):
+        # он всё равно попадает в заметку, иначе результат аудита терялся бы.
+        known = {str(c.id) for c in criteria}
+        for cid, st in sorted((criteria_status or {}).items()):
+            if cid in known:
+                continue
+            mark = marks.get(str(st.get("status", "")), "❔")
+            note = st.get("note") or ""
+            out.append(f"- {mark} `{cid}`" + (f" — {note}" if note else ""))
+        out.append("")
+    assumptions = list(getattr(task_spec, "assumptions", []) or [])
+    if assumptions:
+        out.append("## Assumptions\n")
+        out.extend(f"- {x}" for x in assumptions)
+        out.append("")
+    return ("\n" + "\n".join(out)) if out else ""
+
+
 def _generate_delivery_note(
     task: Task,
     plan: TaskPlan,
     integrity_flags: list[IntegrityFlag],
     task_spec: Any | None = None,
+    criteria_status: dict | None = None,
 ) -> str:
     """Генерирует vault-заметку целиком из plan_json + final_result_json.
 
@@ -236,7 +269,22 @@ def _generate_delivery_note(
     assumptions = list(getattr(task_spec, "assumptions", []) or [])
     assumptions_lines = "\n".join(f"- {a}" for a in assumptions)
 
-    return (
+    # PR-6: отчёт собирается из TaskSpec, статусов критериев, допущений и проверок.
+    criteria_status = criteria_status or {}
+    criteria_lines = []
+    for criterion in (getattr(task_spec, "acceptance_criteria", None) or []):
+        data = criteria_status.get(criterion.id) or {}
+        criteria_lines.append(
+            f"- `{criterion.id}` **{data.get('status', 'unknown')}** — {criterion.statement}"
+            + (f" ({data['note']})" if data.get("note") else "")
+        )
+    for cid, data in sorted(criteria_status.items()):
+        if cid in {c.id for c in (getattr(task_spec, "acceptance_criteria", None) or [])}:
+            continue
+        criteria_lines.append(f"- `{cid}` **{data.get('status')}**" + (f" ({data['note']})" if data.get("note") else ""))
+    criteria_block = "\n".join(criteria_lines)
+
+    return _extra_sections(task_spec, criteria_status) + (
         f"---\n"
         f"task_id: {task.id}\n"
         f"status: {task.status.value}\n"
@@ -251,6 +299,7 @@ def _generate_delivery_note(
         f"## Integrity Verdict\n\n"
         f"**{iv}**\n\n"
         + ("\n".join(integrity_lines) + "\n\n" if integrity_lines else "")
+        + (f"## Acceptance criteria\n\n{criteria_block}\n\n" if criteria_block else "")
         + (f"## Assumptions\n\n{assumptions_lines}\n\n" if assumptions_lines else "")
         + (
             f"## Result\n\n"
@@ -976,8 +1025,15 @@ async def _stage4_audit(
     if router is not None and getattr(task, "session_id", None) is not None:
         agent_session = repo.get_session(session, task.session_id)
         if agent_session is not None:
+            from aria.core import clarifier as _clarifier
+
+            spec = _clarifier.load_spec(session, task.id)
             try:
-                report = await run_audit(session, agent_session, task, router)
+                report = await run_audit(
+                    session, agent_session, task, router,
+                    criteria=[c.model_dump(mode="json") for c in spec.acceptance_criteria] if spec else None,
+                    assumptions=list(spec.assumptions) if spec else None,
+                )
             except Exception:  # noqa: BLE001
                 logger.exception("Correctness audit crashed — integrity verdict stands")
                 task_plan.integrity_verdict = IntegrityVerdict.pass_.value
@@ -1044,12 +1100,18 @@ async def _stage7_delivery(
 
     task_spec = _clarifier.load_spec(session, task.id)
 
+    # PR-6: статусы критериев берём из последнего отчёта аудита (его пишет _stage4_audit).
+    reports = repo.list_audit_reports(session, task.id)
+    criteria_status = {}
+    if reports:
+        criteria_status = dict((reports[-1].plan_vs_fact or {}).get("criteria_status") or {})
+
     # Delivery-контракт: проверяем, что есть результат для записи
     if task_plan.final_result_json is None:
-        content = _generate_delivery_note(task, task_plan, integrity_flags, task_spec)
+        content = _generate_delivery_note(task, task_plan, integrity_flags, task_spec, criteria_status)
         content = content.replace("# Status\n\n**done**", "# Status\n\n**unfinished**\n\nЗадача не завершена. Причина: final_result_json не заполнен (возможно escalation).")
     else:
-        content = _generate_delivery_note(task, task_plan, integrity_flags, task_spec)
+        content = _generate_delivery_note(task, task_plan, integrity_flags, task_spec, criteria_status)
 
     # Проверка delivery-контракта
     required_fields = [
