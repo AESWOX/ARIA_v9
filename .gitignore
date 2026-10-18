@@ -74,3 +74,6 @@ aria_full_delivery_audit.ps1
 
 # rebuild_and_smoke.py logs
 reports/
+
+# артефакт сборки (выносим в GitHub Releases)
+aria_release__5dvg4nh/
