@@ -62,7 +62,14 @@ class EntityAnonymizer:
         for kind, pattern in _PATTERNS:
             out = pattern.sub(lambda m, k=kind: self._placeholder(k, m.group(0)), out)
         for name in self.names:
-            out = re.sub(rf"(?<!\w){re.escape(name)}(?!\w)", self._placeholder("NAME", name), out, flags=re.IGNORECASE)
+            # П.5.4 ТЗ: в плейсхолдер идёт НАПИСАНИЕ ИЗ ТЕКСТА пользователя (m.group(0)),
+            # а не значение из настроек — иначе IGNORECASE-поиск возвращал чужое написание.
+            out = re.sub(
+                rf"(?<!\w){re.escape(name)}(?!\w)",
+                lambda m: self._placeholder("NAME", m.group(0)),
+                out,
+                flags=re.IGNORECASE,
+            )
         return out
 
     def anonymize_messages(self, messages: list) -> list:

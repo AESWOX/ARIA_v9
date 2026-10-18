@@ -435,6 +435,31 @@ def list_audit_reports_by_session(db: OrmSession, session_id: uuid.UUID) -> list
 
 # ---------- agent_state ----------
 
+def get_shadow_map(db: OrmSession, session_id: uuid.UUID) -> dict[str, str]:
+    """П.5.4 ТЗ: карта DLP сессии с расшифровкой значений (enc:v1: -> plain)."""
+    from aria.core import crypto_box
+
+    row = db.get(m.PrivacyShadowMap, session_id)
+    if row is None:
+        return {}
+    return {str(k): crypto_box.decrypt(v) for k, v in dict(row.map_json or {}).items()}
+
+
+def save_shadow_map(db: OrmSession, session_id: uuid.UUID, mapping: dict) -> m.PrivacyShadowMap:
+    """П.5.4 ТЗ: в БД ложатся только ЗАШИФРОВАННЫЕ значения (открытый текст не персистится)."""
+    from aria.core import crypto_box
+
+    encrypted = {str(k): crypto_box.encrypt(str(v)) for k, v in dict(mapping or {}).items()}
+    row = db.get(m.PrivacyShadowMap, session_id)
+    if row is None:
+        row = m.PrivacyShadowMap(session_id=session_id, map_json=encrypted)
+        db.add(row)
+    else:
+        row.map_json = encrypted
+    db.flush()
+    return row
+
+
 def get_agent_state(db: OrmSession, key: str) -> dict | None:
     row = db.get(m.AgentState, key)
     return row.value_json if row else None

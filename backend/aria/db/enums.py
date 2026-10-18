@@ -53,6 +53,8 @@ TASK_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.done,
         TaskStatus.done_unaudited,
         TaskStatus.needs_rework,
+        # П.5.1 ТЗ: вердикт needs_info — аудитор просит данных, задача уходит на уточнение.
+        TaskStatus.awaiting_clarification,
         TaskStatus.failed,
         TaskStatus.cancelled,
     },
@@ -94,6 +96,8 @@ class AuditVerdict(str, enum.Enum):
     needs_rework = "needs_rework"
     fail_after_max_attempts = "fail_after_max_attempts"
     unaudited = "unaudited"
+    # П.5.1 ТЗ: аудитор просит ДАННЫХ (уточнения контракта), а не переделки кода.
+    needs_info = "needs_info"
 
 
 class ToolStatus(str, enum.Enum):

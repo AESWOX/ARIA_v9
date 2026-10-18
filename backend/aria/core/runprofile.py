@@ -158,11 +158,40 @@ def resolve_for_task(profile: dict | None, role_default_class: str, delegation_d
     return _target(main, role_default_class, router)
 
 
-def audit_settings(profile: dict | None, router: Any) -> tuple[str, str, str | None]:
-    """(уровень аудита, класс модели аудитора, желаемая модель)."""
+# П.5.3 ТЗ: аудитор по умолчанию не повторяет класс исполнителя.
+_AUDITOR_ALTERNATIVES: tuple[str, ...] = ("standard_reasoning", "free_tier_reasoning", "premium_reasoning")
+
+
+def executor_class_from_profile(profile: dict | None, fallback: str | None = None) -> str | None:
+    """Класс основной модели из профиля (место ``main``): по нему выбирается аудитор."""
+    main = (profile or {}).get("main") or {}
+    tier = main.get("tier")
+    if tier in TIERS:
+        return TIERS[tier]
+    return fallback
+
+
+def audit_settings(
+    profile: dict | None,
+    router: Any,
+    executor_class: str | None = None,
+) -> tuple[str, str, str | None]:
+    """(уровень аудита, класс модели аудитора, желаемая модель).
+
+    П.5.3 ТЗ: по умолчанию класс аудитора выбирается ОТЛИЧНЫМ от класса исполнителя,
+    где это возможно. Явный выбор владельца (``auditor.tier``/``auditor.model``)
+    всегда главнее и не подменяется.
+    """
     if not profile:
         return "strict", "standard_reasoning", None
     cls, prefer = _target(profile.get("auditor") or {}, "standard_reasoning", router)
+    exec_class = executor_class or executor_class_from_profile(profile)
+    auditor_configured = bool((profile.get("auditor") or {}).get("tier") or (profile.get("auditor") or {}).get("model"))
+    if not auditor_configured and exec_class and cls == exec_class:
+        for candidate in _AUDITOR_ALTERNATIVES:
+            if candidate != exec_class:
+                cls = candidate
+                break
     return str(profile.get("audit") or "strict"), cls, prefer
 
 

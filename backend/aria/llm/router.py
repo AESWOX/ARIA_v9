@@ -108,6 +108,8 @@ class ProviderRouter:
     # provider_id -> момент (по self.clock), до которого провайдер откладывается в конец очереди
     cooldown_until: dict[str, float] = field(default_factory=dict)
     clock: callable = time.monotonic
+    # П.5.2 ТЗ: семафоры по классам провайдеров (квоты Gemini free-tier / Groq).
+    semaphores: dict[str, object] = field(default_factory=dict)
 
     def _cooling(self, provider: LlmProvider) -> bool:
         return self.cooldown_until.get(provider.provider_id, 0.0) > self.clock()
@@ -185,7 +187,66 @@ class ProviderRouter:
                     return provider
         return None
 
+    def provider_concurrency_limits(self) -> dict[str, int]:
+        """П.5.2 ТЗ: лимиты из provider_max_concurrency ("класс=лимит,класс=лимит")."""
+        settings = get_settings()
+        return dict(getattr(settings, "provider_concurrency_limits", {}) or {})
+
+    def provider_slot(self, provider_class: str):
+        """Асинхронный контекст-менеджер семафора класса провайдера (П.5.2 ТЗ)."""
+        import asyncio
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _slot():
+            settings = get_settings()
+            limits = dict(getattr(settings, "provider_concurrency_limits", {}) or {})
+            limit = max(1, int(limits.get(provider_class, getattr(settings, "delegate_max_parallel", 5) or 5)))
+            holder = self.semaphores.get(provider_class)
+            if holder is None or getattr(holder, "aria_limit", None) != limit:
+                holder = asyncio.Semaphore(limit)
+                try:
+                    holder.aria_limit = limit
+                except Exception:  # noqa: BLE001
+                    pass
+                self.semaphores[provider_class] = holder
+            async with holder:
+                yield
+
+        return _slot()
+
     async def route_chat(
+        self,
+        provider_class: str,
+        messages: list[ChatMessage],
+        tools: list[dict],
+        timeout_sec: float = 60,
+        allow_degrade: bool = True,
+        db: OrmSession | None = None,
+        resilient: bool = False,
+        fallback_classes: tuple[str, ...] = (),
+        retry_backoff_sec: float = RETRY_BACKOFF_SEC,
+        prefer_provider_id: str | None = None,
+        reject_empty: bool = False,
+    ) -> RoutingResult:
+        """П.5.2 ТЗ: запрос держит слот класса провайдера — параллельные волны EXECUTE
+        и делегирование не выбивают квоты free-tier одним залпом."""
+        async with self.provider_slot(provider_class):
+            return await self._route_chat_impl(
+                provider_class,
+                messages,
+                tools,
+                timeout_sec=timeout_sec,
+                allow_degrade=allow_degrade,
+                db=db,
+                resilient=resilient,
+                fallback_classes=fallback_classes,
+                retry_backoff_sec=retry_backoff_sec,
+                prefer_provider_id=prefer_provider_id,
+                reject_empty=reject_empty,
+            )
+
+    async def _route_chat_impl(
         self,
         provider_class: str,
         messages: list[ChatMessage],

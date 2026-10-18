@@ -96,6 +96,9 @@ def _parse_audit_verdict(text: str) -> tuple[AuditVerdict, list[str]]:
         if verdict_raw in ("pass", "ok", "yes", "success"):
             # pass с замечаниями — противоречие, трактуем как needs_rework
             return (AuditVerdict.needs_rework, issues) if issues else (AuditVerdict.pass_, [])
+        if verdict_raw in ("needs_info", "need_info", "needs_more_info", "info", "more_info"):
+            # П.5.1 ТЗ: нехватка данных — это запрос уточнения, а не переделка.
+            return AuditVerdict.needs_info, issues
         if verdict_raw in ("fail", "needs_rework", "rework", "no", "not_ok", "error"):
             return AuditVerdict.needs_rework, issues
         break  # JSON распознан, но verdict неизвестен — уходим в эвристику
@@ -267,7 +270,7 @@ async def run_audit(
                         content=(
                             "Ты qa_auditor. Проверь, соответствует ли результат objective задачи и её критериям приёмки.\n"
                             "Ответь строго в формате JSON: "
-                            "{\"verdict\": \"pass\" | \"needs_rework\", \"issues\": [\"недостаток 1\", \"...\"], "
+                            "{\"verdict\": \"pass\" | \"needs_rework\" | \"needs_info\", \"issues\": [\"недостаток 1\", \"...\"], "
                             "\"criteria\": [{\"id\": \"ac-1\", \"status\": \"pass\" | \"fail\", \"note\": \"коротко\"}]}. "
                             "pass — только если результат полностью соответствует objective, все критерии выполнены и замечаний нет."
                         ),
@@ -285,6 +288,7 @@ async def run_audit(
                 result = await router.route_chat(
                     auditor_class, messages, tools=[], allow_degrade=True, db=db, prefer_provider_id=auditor_prefer,
                     resilient=True, fallback_classes=("standard_reasoning", "free_tier_reasoning"),
+                    reject_empty=True,
                 )
                 auditor_model = result.provider_id
                 budget_degraded = result.degraded_to_free
