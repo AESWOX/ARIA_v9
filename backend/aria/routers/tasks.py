@@ -134,6 +134,8 @@ async def cancel_task(task_id: uuid.UUID, request: Request, _: str = Depends(req
 @router.get("/tasks/{task_id}/audit-reports")
 async def get_audit_reports(task_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> list[dict[str, Any]]:
     with session_scope() as db:
+        if repo.get_task(db, task_id) is None:
+            raise HTTPException(status_code=404, detail="task not found")
         return [serialize_audit(row) for row in repo.list_audit_reports(db, task_id)]
 
 
@@ -143,10 +145,28 @@ async def clarify_task(
     payload: dict[str, Any] | None = None,
     _: str = Depends(require_runtime_token),
 ) -> dict[str, Any]:
-    """П.3.2 ТЗ: ответы владельца на карточку уточнений -> TaskSpec -> повторная валидация гейта."""
-    from aria.core import taskspec
+    """Раунд 2 (п.1.1–1.3): ответы владельца на карточку уточнений.
 
-    answers = (payload or {}).get("answers") or []
+    * ответ на вопрос с полем по умолчанию (``clarification``) сохраняется структурной
+      записью в TaskSpec.clarifications — цель больше не затирается;
+    * цель заменяется ТОЛЬКО явным ответом на вопрос с field="goal", прошедшим
+      MIN_GOAL_CHARS; короткий ответ дописывается к цели, а не заменяет её;
+    * пустой answers без accept_assumptions=true -> 400; accept_assumptions=true ->
+      неотвеченные вопросы фиксируются как допущения (слот критерия приёмки —
+      детерминированным критерием по умолчанию, как в гейте); пустую цель принять
+      как допущение нельзя — такой вопрос остаётся;
+    * задача принимается только в awaiting_clarification, иначе 409;
+    * после применения ответов валидность пересчитывается: если спецификация всё ещё
+      невалидна, open_questions НЕ очищаются — остаются неотвеченные вопросы и
+      добавляются недостающие слоты из missing_fields(). Инвариант: состояния
+      «awaiting_clarification без вопросов» быть не может.
+    """
+    from aria.core import taskspec
+    from aria.core.taskspec import MAX_CLARIFY_ROUNDS, MIN_GOAL_CHARS
+
+    body = payload or {}
+    answers = body.get("answers") or []
+    accept_assumptions = bool(body.get("accept_assumptions"))
     if not isinstance(answers, list):
         raise HTTPException(status_code=400, detail="answers must be a list of {id|field, value}")
 
@@ -154,48 +174,161 @@ async def clarify_task(
         task = repo.get_task(db, task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="task not found")
+        # п.1.3: явная проверка состояния — не полагаемся на assert_transition_allowed.
+        if task.status != TaskStatus.awaiting_clarification:
+            raise HTTPException(
+                status_code=409,
+                detail=f"task is not awaiting clarification (current status: {task.status.value})",
+            )
         spec = clarifier.load_spec(db, task_id) or taskspec.derive_spec(task.objective or "")
-        for item in answers:
-            if not isinstance(item, dict):
-                continue
-            value = str(item.get("value") or "").strip()
-            if not value:
-                continue
-            field = str(item.get("field") or item.get("id") or "goal").strip()
-            if field in ("goal", "objective"):
-                spec.goal = value[:400]
-            elif field in ("acceptance_criteria", "criterion"):
-                try:
-                    spec.acceptance_criteria.append(
-                        taskspec.AcceptanceCriterion(
-                            id=f"ac-{len(spec.acceptance_criteria) + 1}", statement=value[:300]
+        # Старые данные (до раунда 2): вопросы без id — восстанавливаем id из текстов.
+        if not spec.clarify_questions and spec.open_questions:
+            spec.clarify_questions = [
+                {"id": clarifier.question_id(str(q)), "text": str(q), "blocking": True, "field": "clarification"}
+                for q in spec.open_questions
+                if str(q).strip()
+            ]
+
+        # п.1.2.1: пустой запрос без accept_assumptions — 400.
+        if not answers and not accept_assumptions:
+            raise HTTPException(
+                status_code=400,
+                detail="empty answers require accept_assumptions=true (кнопка «Принять допущения»)",
+            )
+
+        # п.1.2.3: счётчик растёт на каждый вызов; лимит -> поведение гейта (допущения).
+        spec.clarify_rounds = int(spec.clarify_rounds or 0) + 1
+        limit_reached = spec.clarify_rounds >= MAX_CLARIFY_ROUNDS
+
+        answered_ids = {
+            str((a or {}).get("id") or "").strip()
+            for a in answers
+            if isinstance(a, dict) and str(a.get("value") or "").strip()
+        }
+        unanswered = [q for q in spec.clarify_questions if str(q.get("id") or "") not in answered_ids]
+
+        if accept_assumptions or limit_reached:
+            # п.1.2.2: неотвеченные вопросы -> допущения. Слот критерия приёмки закрывается
+            # детерминированным критерием по умолчанию (правила гейта/автономного режима).
+            # Пустую цель нельзя «принять как допущение» — такой вопрос остаётся (blocking).
+            kept_questions: list[dict] = []
+            for q in unanswered:
+                field = str(q.get("field") or "clarification")
+                if field in ("acceptance_criteria", "criterion"):
+                    if not spec.acceptance_criteria:
+                        spec.acceptance_criteria.append(taskspec.default_criterion(spec.goal or task.objective or ""))
+                        spec.assumptions.append(
+                            "Критерий приёмки не задан: принят детерминированный критерий по умолчанию."
                         )
+                    continue
+                if field in ("goal", "objective"):
+                    if len((spec.goal or "").strip()) >= MIN_GOAL_CHARS:
+                        # Цель уже валидна: неотвеченное уточнение цели — как допущение.
+                        text = str(q.get("text") or "").strip()
+                        if text:
+                            spec.assumptions.append(f"Допущение (ответ не получен): {text}")
+                        continue
+                    # Цель короче MIN_GOAL_CHARS: fallback на objective задачи (как в гейте);
+                    # если и он не помогает — вопрос ОСТАЁТСЯ: пустую цель не допускаем.
+                    spec.goal = (task.objective or "").strip()[:400]
+                    if len((spec.goal or "").strip()) >= MIN_GOAL_CHARS:
+                        spec.assumptions.append("Цель взята из формулировки задачи (ответ владельца не получен).")
+                    else:
+                        kept_questions.append(q)
+                    continue
+                text = str(q.get("text") or "").strip()
+                if text:
+                    spec.assumptions.append(f"Допущение (ответ не получен): {text}")
+            spec.assumptions = clarifier._dedupe(list(spec.assumptions))
+            if limit_reached:
+                # Поведение гейта при исчерпанном лимите: остаток неопределённости —
+                # допущения, недостающий критерий — детерминированный по умолчанию.
+                if not spec.acceptance_criteria:
+                    spec.acceptance_criteria.append(taskspec.default_criterion(spec.goal or task.objective or ""))
+            # Остаются только вопросы, которые нельзя закрыть допущением (блокирующий пустой goal);
+            # инвариант п.1.1.5 добирает недостающие слоты из missing_fields().
+            spec.clarify_questions = kept_questions
+            spec.sync_questions()
+            if not spec.is_valid and not spec.clarify_questions:
+                existing_texts = {str(q.get("text") or "") for q in spec.clarify_questions}
+                for slot in spec.missing_fields():
+                    qtext = taskspec.slot_question(slot)
+                    if qtext and qtext not in existing_texts:
+                        spec.clarify_questions.append(
+                            {"id": clarifier.question_id(qtext), "text": qtext, "blocking": True, "field": slot}
+                        )
+                spec.sync_questions()
+        else:
+            # п.1.1.2–3: применение ответов.
+            for item in answers:
+                if not isinstance(item, dict):
+                    continue
+                value = str(item.get("value") or "").strip()
+                if not value:
+                    continue
+                qid = str(item.get("id") or item.get("field") or "").strip()
+                q = next((x for x in spec.clarify_questions if str(x.get("id") or "") == qid), None)
+                field = str(item.get("field") or (q or {}).get("field") or "clarification").strip()
+                if field in ("goal", "objective"):
+                    if len(value) >= MIN_GOAL_CHARS:
+                        spec.goal = value[:400]
+                    else:
+                        # Короткий ответ не заменяет цель — дописывается к ней.
+                        spec.goal = ((spec.goal or "") + " " + value).strip()[:400]
+                elif field in ("acceptance_criteria", "criterion"):
+                    try:
+                        spec.acceptance_criteria.append(
+                            taskspec.AcceptanceCriterion(
+                                id=f"ac-{len(spec.acceptance_criteria) + 1}", statement=value[:300]
+                            )
+                        )
+                    except Exception:  # noqa: BLE001 — непроверяемая формулировка
+                        spec.constraints.append(f"Критерий (не проверяем): {value}")
+                else:
+                    # п.1.1.2: структурная запись вместо «q1: да» в constraints.
+                    spec.clarifications.append(
+                        {"question_id": qid or field, "question": str((q or {}).get("text") or field), "answer": value}
                     )
-                except Exception:  # noqa: BLE001 — непроверяемая формулировка
-                    spec.constraints.append(f"Критерий (не проверяем): {value}")
-            else:
-                spec.constraints.append(f"{field}: {value}")
-        spec.open_questions = []
-        # П.4.4 ТЗ: исходная цель задачи остаётся; ответы живут в TaskSpec.
+
+            # п.1.1.5: пересчёт валидности. Невалидно -> вопросы НЕ очищаются.
+            spec.clarify_questions = [q for q in spec.clarify_questions if str(q.get("id") or "") not in answered_ids]
+            if not spec.is_valid:
+                existing_texts = {str(q.get("text") or "") for q in spec.clarify_questions}
+                for slot in spec.missing_fields():
+                    qtext = taskspec.slot_question(slot)
+                    if qtext and qtext not in existing_texts:
+                        spec.clarify_questions.append(
+                            {"id": clarifier.question_id(qtext), "text": qtext, "blocking": True, "field": slot}
+                        )
+            spec.sync_questions()
+
+        # п.4.4 ТЗ (раунд 1): исходная цель задачи остаётся; ответы живут в TaskSpec.
         session = repo.get_session(db, task.session_id)
         repo.upsert_task_spec(
             db, task, spec.model_dump(mode="json"), valid=spec.is_valid, clarify_rounds=spec.clarify_rounds
         )
         if spec.is_valid:
             repo.set_task_status(db, task, TaskStatus.approved)
+        # Инвариант п.1.1.5: awaiting_clarification без вопросов невозможен.
+        if not spec.is_valid and not spec.clarify_questions:
+            raise HTTPException(status_code=500, detail="invariant violated: awaiting_clarification without questions")
         if session is not None:
             # Запасной путь П.3.2: ответы остаются текстом в чате.
             repo.append_message(
                 db, session, role="user",
                 content="Уточнения: " + "; ".join(
-                    f"{a.get('field') or a.get('id')}: {a.get('value')}"
-                    for a in answers if isinstance(a, dict)
+                    f"{a.get('field') or a.get('id')}: {a.get('value')}" for a in answers if isinstance(a, dict)
                 ),
             )
-        status = task.status.value
         return {
-            "ok": True, "task_id": str(task_id), "status": status,
-            "valid": bool(spec.is_valid), "questions": list(spec.open_questions),
+            "ok": True,
+            "task_id": str(task_id),
+            "status": task.status.value,
+            "valid": bool(spec.is_valid),
+            "clarify_rounds": spec.clarify_rounds,
+            "questions": [
+                {"id": q.get("id"), "text": q.get("text"), "field": q.get("field")} for q in spec.clarify_questions
+            ],
         }
 
 
@@ -263,15 +396,3 @@ async def request_plan_approval(
         body = spec.to_markdown() if spec is not None else (task.draft_tz_md or task.objective or "")
         item = approvals.request_task_tz_approval(db, session, task, body)
         return {"ok": True, "attention_item": serialize_attention(item)}
-
-
-@router.get("/tasks/{task_id}/audit-reports")
-async def list_task_audit_reports(
-    task_id: uuid.UUID, _: str = Depends(require_runtime_token)
-) -> list[dict[str, Any]]:
-    """П.3.5 ТЗ: статусы критериев приёмки из отчётов аудита."""
-    with session_scope() as db:
-        task = repo.get_task(db, task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail="task not found")
-        return [serialize_audit(r) for r in repo.list_audit_reports(db, task_id)]
