@@ -1,4 +1,12 @@
 # Changelog
+## 2026-10-16 — fix/clarify-round2
+
+- **P0, /clarify**: ответ на уточнение больше не затирает цель (стабильные `id` вопросов, поле по умолчанию `clarification`, структурные ответы в `TaskSpec.clarifications`); пустой запрос без `accept_assumptions` -> 400; `accept_assumptions` записывает неотвеченные вопросы как допущения (пустую цель допустить нельзя); `clarify_rounds` растёт на каждый вызов; статус только `awaiting_clarification`, иначе 409; инвариант «awaiting_clarification без вопросов» невозможен.
+- **Дубли маршрутов**: `GET /tasks/{id}/audit-reports` объявлен один раз (с 404).
+- **Крипто (DLP at-rest)**: вариант Б — encrypt-then-MAC (HMAC-SHA256) поверх CTR, `enc:v2:`, подмена шифртекста отклоняется; молчаливый предсказуемый запасной ключ удалён (`KeyUnavailableError` + отключение DLP); легаси `enc:v1:` читается и лениво перешифровывается.
+- **Качество уточнений**: английские маркеры измеримости в `derive_criteria`; метрики на фикстуре 52 (CI): recall 0.92, лишние вопросы 0.42 -> 0.00, пропуски слотов 0.46 -> 0.00; пороги теста 0.92/0.10/0.15; `clarify_eval.py --detailed` — разбор лишних вопросов и пропусков.
+- **Тесты**: `tests/test_pr2_1_task_endpoints.py` (12 сценариев), 6 тестов crypto; регрессия п.1.1 падает на коде раунда 1 (проверено на стенде старого /clarify).
+
 ## 2026-10-16 — PR1–7 follow-up (`fix/pr1-7-followup`)
 
 - **P0 регрессия плана**: план без `depends_on` исполняется строго по порядку шагов; параллель включается только явным `depends_on: []` или явными зависимостями; шаги `shell_execute`/`file_write` без `write_scope` не делят волну; выключатель `plan_dag_parallel_enabled` (default `True`). Тесты `tests/test_pr1_1_plan_order.py`; `test_executor_stage3.py` — 30 прогонов подряд.
