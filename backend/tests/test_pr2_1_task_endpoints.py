@@ -303,3 +303,84 @@ def test_audit_reports_route_declared_once():
         if getattr(r, "path", "").endswith("/audit-reports") and "GET" in getattr(r, "methods", set())
     ]
     assert len(routes) == 1
+
+
+# ─────────────── после approved задача обязана попасть в очередь (зависание «approved / none yet») ───────────────
+
+class _FakeRunner:
+    def __init__(self):
+        self.calls = []
+
+    def submit(self, task_id, mode="plan", source="ui", approval_item_id=None):
+        self.calls.append({"task_id": task_id, "mode": mode, "source": source})
+        return {"ok": True, "queued": True}
+
+
+def _two_open_questions_spec():
+    spec = TaskSpec(
+        goal=GOAL,
+        clarify_questions=[
+            {"id": clarifier.question_id("Формат?"), "text": "Формат?", "blocking": True, "field": "clarification"},
+            {"id": clarifier.question_id("Критерий?"), "text": "Критерий?", "blocking": True, "field": "acceptance_criteria"},
+        ],
+    )
+    spec.sync_questions()
+    return spec
+
+
+def test_clarify_that_approves_the_task_submits_it_to_the_runner(client):
+    store = FakeStore(task_status=TaskStatus.awaiting_clarification, spec=_two_open_questions_spec())
+    c = client(store)
+    runner = _FakeRunner()
+    c.app.state.task_runner = runner
+    r = c.post(f"/tasks/{store.task.id}/clarify", json={"answers": [], "accept_assumptions": True})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "approved" and body["queued"] is True and body["mode"] == "plan"
+    assert len(runner.calls) == 1
+    assert runner.calls[0]["source"] == "clarify" and runner.calls[0]["mode"] == "plan"
+
+
+def test_clarify_passes_requested_mode_to_runner(client):
+    store = FakeStore(task_status=TaskStatus.awaiting_clarification, spec=_two_open_questions_spec())
+    c = client(store)
+    runner = _FakeRunner()
+    c.app.state.task_runner = runner
+    r = c.post(f"/tasks/{store.task.id}/clarify", json={"answers": [], "accept_assumptions": True, "mode": "agent"})
+    assert r.status_code == 200, r.text
+    assert runner.calls[0]["mode"] == "agent"
+
+
+def test_clarify_that_leaves_questions_does_not_submit(client):
+    q1 = clarifier.question_id("В каком формате?")
+    q2 = clarifier.question_id("Какой период?")
+    spec = TaskSpec(
+        goal=GOAL,
+        clarify_questions=[
+            {"id": q1, "text": "В каком формате?", "blocking": True, "field": "clarification"},
+            {"id": q2, "text": "Какой период?", "blocking": True, "field": "clarification"},
+        ],
+    )
+    spec.sync_questions()
+    store = FakeStore(task_status=TaskStatus.awaiting_clarification, spec=spec)
+    c = client(store)
+    runner = _FakeRunner()
+    c.app.state.task_runner = runner
+    r = c.post(f"/tasks/{store.task.id}/clarify", json={"answers": [{"id": q1, "field": "clarification", "value": "PDF"}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "awaiting_clarification"
+    assert runner.calls == []
+
+
+def test_clarify_without_runner_does_not_crash_and_reports_not_queued(client):
+    store = FakeStore(task_status=TaskStatus.awaiting_clarification, spec=_two_open_questions_spec())
+    c = client(store)
+    r = c.post(f"/tasks/{store.task.id}/clarify", json={"answers": [], "accept_assumptions": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["queued"] is False
+
+
+def test_clarify_rejects_unknown_mode(client):
+    store = FakeStore(task_status=TaskStatus.awaiting_clarification, spec=_two_open_questions_spec())
+    r = client(store).post(f"/tasks/{store.task.id}/clarify", json={"answers": [], "accept_assumptions": True, "mode": "bogus"})
+    assert r.status_code == 400
