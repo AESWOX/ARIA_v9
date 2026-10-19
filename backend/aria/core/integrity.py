@@ -65,7 +65,8 @@ def assert_file_changed(tc_input: dict, tc_output: dict) -> bool:
     """True только если hash_before != hash_after. Иначе НАЕБАЛ.
 
     Проверяет поле hash_before / hash_after в input_json и output_json
-    tool_call. Если hash_before отсутствует — считаем, что проверка
+    tool_call. hash_before=None при наличии hash_after — файл создан, это изменение.
+    Если ключа hash_before нет вообще или нет hash_after — проверка
     невозможна, возвращаем False (НАЕБАЛ по умолчанию).
 
     Fallback: executor кладёт hash_before/hash_after только в output_json
@@ -79,11 +80,16 @@ def assert_file_changed(tc_input: dict, tc_output: dict) -> bool:
     Returns:
         False — если файл не изменился или хеш недоступен.
     """
-    h_before = tc_input.get("hash_before") or tc_output.get("hash_before")
     h_after = tc_output.get("hash_after")
-    if not h_before or not h_after:
-        return False
-    return h_before != h_after
+    if not h_after:
+        return False  # результат записи не подтверждён хешем
+    h_before = tc_input.get("hash_before") or tc_output.get("hash_before")
+    if h_before:
+        return h_before != h_after
+    # file_write кладёт hash_before=None, когда файла ещё не было: ключ есть, значения нет.
+    # Создание нового файла — это изменение (раньше оно ошибочно считалось НАЕБАЛ, и любая
+    # задача, создающая файлы, падала с integrity_naebal). Нет самого ключа — проверить нельзя.
+    return "hash_before" in tc_output or "hash_before" in tc_input
 
 
 def get_exit_code(tc_output: dict) -> int | None:
@@ -198,7 +204,7 @@ def detect_naebal(tool_calls: list[dict]) -> list[IntegrityFlag]:
         if tool_name in ("write_file", "file_write", "patch"):
             if not assert_file_changed(inp, out):
                 flags.append(IntegrityFlag.NAEBAL(
-                    reason="write_file/file_write/patch выполнен, но hash_before == hash_after",
+                    reason="write_file/file_write/patch выполнен, но файл не изменился (hash_before == hash_after) или хеш результата недоступен",
                     tool_call_id=str(tc_id) if tc_id else None,
                 ))
 
