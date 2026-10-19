@@ -541,6 +541,12 @@ async def _run_delegate_batch(
 
 async def _execute_tool(spec, arguments: dict, sandbox_root: str, *, approved: bool = False):
     settings = get_settings()
+    # Аргументы приходят от модели: сверяем с input_schema ДО handler'а. Ошибка уходит модели понятным
+    # текстом (какой аргумент и что не так), а не «KeyError: 'path'» и не молчаливым «ok» на пустой вызов.
+    from aria.tools.validators import validate_tool_input
+    arg_errors = validate_tool_input(spec.input_schema, arguments)
+    if arg_errors:
+        return None, ToolStatus.error, "invalid_arguments", f"{spec.tool_name}: " + "; ".join(arg_errors)
     try:
         import asyncio
 

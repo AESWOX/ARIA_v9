@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -13,7 +15,14 @@ from aria.db.base import session_scope
 from aria.db.enums import TaskStatus
 from aria.llm.router import ProviderRouter
 from aria.routers import sessions as sessions_mod
+from aria.config import get_settings
 from tests.test_wave1_runner_and_policy import _RecordingRunner
+
+
+@pytest.fixture(autouse=True)
+def _gate_off(monkeypatch):
+    """Эти тесты проверяют «одну дверь» и очередь, а не гейт уточнения (он покрыт test_pr3/test_always_ask)."""
+    monkeypatch.setattr(get_settings(), "clarifier_gate_enabled", False)
 
 
 def _client() -> tuple[TestClient, _RecordingRunner]:

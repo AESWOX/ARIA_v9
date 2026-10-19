@@ -28,7 +28,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         role_id="general",
         description="Базовая роль общего назначения, диспетчеризация простых задач.",
         system_prompt_asset="prompts/general.md",
-        tool_whitelist=("read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "file_read", "file_search", "memory_search", "notebook_query", "skill_lookup", "web_search", "web_fetch"),
+        tool_whitelist=("read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "file_read", "file_search", "memory_search", "notebook_query", "skill_lookup", "skill_read", "web_search", "web_fetch"),
         default_model_policy="standard_reasoning",
     ),
     "oracle": RoleDefinition(
@@ -62,7 +62,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         role_id="orchestrator",
         description="Строит план, выбирает роль/модель/tool-стратегию, может делегировать.",
         system_prompt_asset="prompts/orchestrator.md",
-        tool_whitelist=("delegate_task", "file_read", "file_search", "read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "web_search", "web_fetch"),
+        tool_whitelist=("delegate_task", "skill_lookup", "skill_read", "file_read", "file_search", "read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "web_search", "web_fetch"),
         default_model_policy="premium_reasoning",
         can_delegate=True,
         max_subagents=5,
@@ -71,7 +71,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         role_id="coder",
         description="Пишет и правит код, работает с shell и файловой системой.",
         system_prompt_asset="prompts/coder.md",
-        tool_whitelist=("shell_execute", "file_read", "file_write", "file_search"),
+        tool_whitelist=("shell_execute", "file_read", "file_write", "file_search", "skill_lookup", "skill_read"),
         default_model_policy="subagent_execution",
     ),
     "devops_infra": RoleDefinition(

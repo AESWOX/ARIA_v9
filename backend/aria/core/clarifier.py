@@ -98,10 +98,9 @@ def gate_required(content: str, mode: str = "plan") -> bool:
 
     if not bool(getattr(get_settings(), "clarifier_gate_enabled", True)):
         return False
-    text = (content or "").strip()
-    if mode == "plan":
-        return True
-    return any(_verb_pattern(v).search(text) for v in configured_task_verbs())
+    # Решение владельца (19.10): структурированный запрос и вопросы формируются на ЛЮБОЙ непустой
+    # запрос в plan и agent. Режим больше не влияет; список глаголов оставлен только для совместимости.
+    return bool((content or "").strip())
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -160,37 +159,86 @@ def question_id(text: str) -> str:
     return "q-" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
 
 
+MAX_QUESTIONS = 7
+MAX_OPTIONS = 5
+
+
+def _clean_options(raw) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for o in raw:
+        text = str(o).strip()
+        if text and text not in out:
+            out.append(text[:160])
+    return out[:MAX_OPTIONS]
+
+
 def _normalise_questions(raw) -> list[dict]:
-    """Раунд 2 (п.1.1.1–1.1.2): каждый вопрос получает стабильный id, а поле по
-    умолчанию — ``clarification`` (не ``goal``): ответ на такой вопрос больше не
-    затирает цель, а сохраняется структурной записью в TaskSpec.clarifications."""
+    """Каждый вопрос: стабильный id, до 5 вариантов ответа, рекомендованный вариант (default_value).
+
+    Решение владельца: вопросы блокирующие по умолчанию — задача не стартует без ответа или
+    явного «Принять допущения». Ответ можно дать и текстом (поле свободного ввода в UI)."""
     out: list[dict] = []
     seen_ids: set[str] = set()
     if not isinstance(raw, list):
         return out
     for item in raw:
+        if len(out) >= MAX_QUESTIONS:
+            break
         if isinstance(item, str) and item.strip():
-            text = item.strip()
-            qid = question_id(text)
-            if qid in seen_ids:
-                continue
-            seen_ids.add(qid)
-            out.append({"id": qid, "text": text, "blocking": True, "field": "clarification"})
+            text, extra = item.strip(), {}
         elif isinstance(item, dict):
             text = str(item.get("text") or item.get("question") or "").strip()
-            if not text:
-                continue
-            qid = str(item.get("id") or "").strip() or question_id(text)
-            if qid in seen_ids:
-                continue
-            seen_ids.add(qid)
-            out.append({
-                "id": qid,
-                "text": text,
-                "blocking": bool(item.get("blocking", True)),
-                "field": str(item.get("field") or "clarification"),
-            })
+            extra = item
+        else:
+            continue
+        if not text:
+            continue
+        qid = str(extra.get("id") or "").strip() or question_id(text)
+        if qid in seen_ids:
+            continue
+        seen_ids.add(qid)
+        options = _clean_options(extra.get("options"))
+        rec = str(extra.get("recommended") or extra.get("default_value") or "").strip()
+        entry = {
+            "id": qid,
+            "text": text,
+            "blocking": bool(extra.get("blocking", True)),
+            "field": str(extra.get("field") or "clarification"),
+        }
+        if options:
+            entry["options"] = options
+            entry["default_value"] = rec if rec in options else options[0]
+        out.append(entry)
     return out
+
+
+# Набор на случай, когда модель вопросов не вернула или недоступна: спрашиваем всё равно.
+_FALLBACK_QUESTIONS: tuple[dict, ...] = (
+    {
+        "text": "В каком виде нужен результат?",
+        "field": "clarification",
+        "options": ["Текст прямо в чате", "Файл Markdown (.md)", "Таблица", "Краткое резюме и файл с деталями", "Свой вариант"],
+        "recommended": "Текст прямо в чате",
+    },
+    {
+        "text": "Насколько подробно?",
+        "field": "clarification",
+        "options": ["Коротко (5–10 строк)", "Средне (1–2 страницы)", "Подробно, с обоснованиями", "Максимально полно, по разделам", "Свой вариант"],
+        "recommended": "Подробно, с обоснованиями",
+    },
+    {
+        "text": "Есть ограничения или то, чего делать нельзя?",
+        "field": "constraints",
+        "options": ["Нет ограничений", "Не запускать внешние программы", "Только бесплатные инструменты", "Только офлайн, без интернета", "Свой вариант"],
+        "recommended": "Нет ограничений",
+    },
+)
+
+
+def _fallback_questions() -> list[dict]:
+    return _normalise_questions([dict(q) for q in _FALLBACK_QUESTIONS])
 
 
 def _merge_payload(spec: TaskSpec, payload: dict) -> list[str]:
@@ -265,9 +313,12 @@ def _load_or_derive(task_id: uuid.UUID, content: str) -> TaskSpec:
 def _question_message(questions: list[dict]) -> str:
     lines = ["Чтобы выполнить и проверить задачу, нужны ответы:"]
     for i, q in enumerate(questions, start=1):
-        lines.append(f"{i}. {q['text']} (поле: {q.get('field', 'goal')})")
+        lines.append(f"{i}. {q['text']}")
+        for letter, opt in zip("ABCDE", q.get("options") or []):
+            mark = " (рекомендую)" if opt == q.get("default_value") else ""
+            lines.append(f"   {letter}) {opt}{mark}")
     lines.append("")
-    lines.append("Ответьте в этом же чате — задача продолжится с уточнённым контрактом.")
+    lines.append("Выберите варианты в карточке или ответьте текстом в этом же чате; можно нажать «Принять допущения».")
     return "\n".join(lines)
 
 
@@ -325,6 +376,11 @@ async def run_gate(
         questions = []
 
     blocking = [q for q in questions if q.get("blocking")]
+
+    if not autonomous and not blocking and rounds == 0:
+        # Решение владельца: вопросы задаются ВСЕГДА, даже если модель решила, что запрос ясен
+        # (или clarifier недоступен). Дальше раунды идут только по неснятым пробелам контракта.
+        blocking = _fallback_questions()
 
     if not autonomous and not blocking and not spec.acceptance_criteria and rounds < MAX_CLARIFY_ROUNDS:
         # Контракт неполный, а модель вопросов не задала: спрашиваем детерминированно,

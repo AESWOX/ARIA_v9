@@ -388,8 +388,8 @@ export default function NativeChatPage() {
   return (
     <div
       className={cn(
-        "grid min-h-[420px] gap-3",
-        focus ? "h-[calc(100vh-6rem)] grid-cols-1" : "h-[calc(100vh-9rem)] md:grid-cols-[240px_1fr]",
+        "grid min-h-[420px] min-w-0 gap-3",
+        focus ? "h-[calc(100vh-6rem)] grid-cols-1" : "h-[calc(100vh-9rem)] md:grid-cols-[240px_minmax(0,1fr)]",
       )}
     >
       {/* ---------------- sessions ---------------- */}
@@ -445,7 +445,7 @@ export default function NativeChatPage() {
       </div>
 
       {/* ---------------- conversation ---------------- */}
-      <div className="flex min-h-0 flex-col border border-border bg-background/40">
+      <div className="flex min-h-0 min-w-0 flex-col border border-border bg-background/40">
         <ChatTopBar
           title={sessions.find((x) => x.id === activeId)?.title ?? ""}
           mode={MODES.find((md) => md.id === mode)?.label ?? mode}
@@ -581,6 +581,7 @@ export default function NativeChatPage() {
 
         <TaskSpecPanel
           taskId={run?.task_id ?? null}
+          taskStatus={run?.status ?? null}
           sessionId={activeId}
           questions={taskQuestions}
           onAnswered={async () => {

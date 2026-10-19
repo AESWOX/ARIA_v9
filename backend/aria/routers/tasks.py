@@ -142,6 +142,7 @@ async def get_audit_reports(task_id: uuid.UUID, _: str = Depends(require_runtime
 @router.post("/tasks/{task_id}/clarify")
 async def clarify_task(
     task_id: uuid.UUID,
+    request: Request,
     payload: dict[str, Any] | None = None,
     _: str = Depends(require_runtime_token),
 ) -> dict[str, Any]:
@@ -165,6 +166,7 @@ async def clarify_task(
     from aria.core.taskspec import MAX_CLARIFY_ROUNDS, MIN_GOAL_CHARS
 
     body = payload or {}
+    mode = _normalize_mode(body)
     answers = body.get("answers") or []
     accept_assumptions = bool(body.get("accept_assumptions"))
     if not isinstance(answers, list):
@@ -320,16 +322,33 @@ async def clarify_task(
                     f"{a.get('field') or a.get('id')}: {a.get('value')}" for a in answers if isinstance(a, dict)
                 ),
             )
-        return {
+        result = {
             "ok": True,
             "task_id": str(task_id),
             "status": task.status.value,
             "valid": bool(spec.is_valid),
             "clarify_rounds": spec.clarify_rounds,
             "questions": [
-                {"id": q.get("id"), "text": q.get("text"), "field": q.get("field")} for q in spec.clarify_questions
+                {k: v for k, v in {
+                    "id": q.get("id"), "text": q.get("text"), "field": q.get("field"),
+                    "options": q.get("options"), "default_value": q.get("default_value"),
+                }.items() if v is not None}
+                for q in spec.clarify_questions
             ],
         }
+
+    # Контракт стал валидным и задача approved: её надо ПОСТАВИТЬ В ОЧЕРЕДЬ. Раньше этого не
+    # происходило: статус менялся, а исполнитель о задаче не знал, и она висела в «approved /
+    # working / Subtasks: none yet» бесконечно. Постановка вне DB-scope, как в sessions.py.
+    if result["status"] == TaskStatus.approved.value:
+        runner = getattr(request.app.state, "task_runner", None)
+        if runner is not None:
+            result["queued"] = bool(runner.submit(task_id, mode=mode, source="clarify").get("queued"))
+            result["mode"] = mode
+        else:
+            logger.warning("clarify: task %s approved but task runner is not running", str(task_id)[:8])
+            result["queued"] = False
+    return result
 
 
 @router.get("/tasks/{task_id}/plan")
@@ -392,6 +411,16 @@ async def request_plan_approval(
         session = repo.get_session(db, task.session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="session not found")
+        # Раньше из done/failed это падало InvalidTransition -> 500: кнопка была видна всегда.
+        from aria.core.state_machine import InvalidTransition, assert_transition_allowed
+
+        try:
+            assert_transition_allowed(task.status, TaskStatus.awaiting_approval)
+        except InvalidTransition:
+            raise HTTPException(
+                status_code=409,
+                detail=f"plan approval is not available in task status {task.status.value}",
+            )
         spec = _clarifier.load_spec(db, task_id)
         body = spec.to_markdown() if spec is not None else (task.draft_tz_md or task.objective or "")
         item = approvals.request_task_tz_approval(db, session, task, body)

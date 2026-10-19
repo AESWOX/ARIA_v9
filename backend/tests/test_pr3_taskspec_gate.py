@@ -60,9 +60,11 @@ def test_high_risk_detection():
 
 # ─────────────────────────── gate_required ───────────────────────────
 
-def test_plain_chat_skips_the_gate():
-    assert clarifier.gate_required("привет", "agent") is False
-    assert clarifier.gate_required("как дела?", "agent") is False
+def test_every_nonempty_request_goes_through_the_gate():
+    """Решение владельца 19.10: структурированный запрос и вопросы — на ЛЮБОЙ непустой запрос."""
+    assert clarifier.gate_required("привет", "agent") is True
+    assert clarifier.gate_required("как дела?", "agent") is True
+    assert clarifier.gate_required("   ", "agent") is False
 
 
 def test_task_like_message_goes_through_the_gate():
@@ -79,7 +81,9 @@ async def test_gate_asks_a_deterministic_question_when_no_criteria(monkeypatch):
         task_id = t.id
     outcome = await clarifier.run_gate(task_id, "приведи дела в порядок", router=None)
     assert outcome.status == "awaiting_clarification"
-    assert outcome.questions and outcome.questions[0]["field"] == "acceptance_criteria"
+    # модель недоступна (router=None) — всё равно спрашиваем: детерминированный набор с 5 вариантами
+    assert len(outcome.questions) >= 3
+    assert all(len(q["options"]) == 5 and q["default_value"] in q["options"] for q in outcome.questions)
     with session_scope() as db:
         task = repo.get_task(db, task_id)
         row = repo.get_task_spec(db, task_id)
@@ -105,7 +109,10 @@ async def test_gate_approves_when_model_returns_the_contract(monkeypatch):
     with session_scope() as db:
         _s, t = _task(db)
         task_id = t.id
-    outcome = await clarifier.run_gate(task_id, GOOD, router=object())
+    first = await clarifier.run_gate(task_id, GOOD, router=object())
+    # модель сочла запрос ясным, но вопросы задаются всегда (решение владельца)
+    assert first.status == "awaiting_clarification" and len(first.questions) >= 3
+    outcome = await clarifier.run_gate(task_id, GOOD, router=object())  # раунд 2: ответы получены
     assert outcome.status == "approved" and outcome.spec.is_valid
     with session_scope() as db:
         task = repo.get_task(db, task_id)
@@ -191,6 +198,8 @@ async def test_high_risk_task_goes_to_tz_approval(monkeypatch):
     with session_scope() as db:
         _s, t = _task(db, "задеплой сервис в prod")
         task_id = t.id
+    first = await clarifier.run_gate(task_id, "задеплой сервис в prod", router=object())
+    assert first.status == "awaiting_clarification"
     outcome = await clarifier.run_gate(task_id, "задеплой сервис в prod", router=object())
     assert outcome.status == "awaiting_approval"
     with session_scope() as db:

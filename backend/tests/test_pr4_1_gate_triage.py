@@ -24,13 +24,11 @@ def test_gate_is_on_by_default(monkeypatch):
 
 # ─────────────────────────── п.4.2: границы слов ───────────────────────────
 
-def test_latin_verbs_match_whole_words_only(monkeypatch):
-    """«fix» не срабатывает на «prefix», «build» — на «building»."""
+def test_latin_text_is_gated_regardless_of_verbs(monkeypatch):
+    """Глаголы-маркеры больше не ограничивают гейт: любой непустой запрос проходит уточнение."""
     monkeypatch.setattr(get_settings(), "clarifier_gate_enabled", True)
-    assert clarifier.gate_required("handle the prefix parsing", "agent") is False
-    assert clarifier.gate_required("we are building a house", "agent") is False
-    assert clarifier.gate_required("fix the parser bug", "agent") is True
-    assert clarifier.gate_required("build the release artefact", "agent") is True
+    assert clarifier.gate_required("handle the prefix parsing", "agent") is True
+    assert clarifier.gate_required("we are building a house", "agent") is True
 
 
 def test_russian_stems_match_their_inflections(monkeypatch):
@@ -40,10 +38,10 @@ def test_russian_stems_match_their_inflections(monkeypatch):
         assert clarifier.gate_required(text, "agent") is True, text
 
 
-def test_plain_chatter_is_not_a_task(monkeypatch):
+def test_plain_chatter_is_gated_too(monkeypatch):
     monkeypatch.setattr(get_settings(), "clarifier_gate_enabled", True)
     for text in ("привет, как дела?", "спасибо", "расскажи анекдот"):
-        assert clarifier.gate_required(text, "agent") is False, text
+        assert clarifier.gate_required(text, "agent") is True, text
 
 
 def test_punctuation_and_case_do_not_break_matching(monkeypatch):
@@ -54,14 +52,10 @@ def test_punctuation_and_case_do_not_break_matching(monkeypatch):
 
 # ─────────────────────────── п.4.2: конфиг глаголов ───────────────────────────
 
-def test_verb_list_is_configurable(monkeypatch):
-    """clarifier_task_verbs переопределяет встроенный список."""
+def test_verb_list_does_not_limit_the_gate(monkeypatch):
     monkeypatch.setattr(get_settings(), "clarifier_gate_enabled", True)
     monkeypatch.setattr(get_settings(), "clarifier_task_verbs", "переведи,суммируй")
-    assert clarifier.gate_required("переведи этот текст", "agent") is True
-    assert clarifier.gate_required("суммируй вчерашние логи", "agent") is True
-    # встроенные глаголы выключены вместе со списком по умолчанию
-    assert clarifier.gate_required("сделай отчёт", "agent") is False
+    assert clarifier.gate_required("сделай отчёт", "agent") is True
 
 
 def test_configured_task_verbs_falls_back_to_defaults(monkeypatch):

@@ -20,7 +20,7 @@ from typing import Any, Mapping
 IDEMPOTENT_TOOL_NAMES = frozenset({
     "read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions",
     "file_read", "file_search", "web_search", "web_fetch", "vision_analyze", "notebook_query",
-    "skill_lookup", "task_status", "memory_search", "friend_memory_read",
+    "skill_lookup", "skill_read", "task_status", "memory_search", "friend_memory_read",
 })
 
 # Тулы, меняющие состояние: успешный вызов сбрасывает счётчики no-progress у read-only тулов

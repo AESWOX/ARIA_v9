@@ -153,7 +153,10 @@ def test_new_cron_job_does_not_fire_before_its_time():
 
 
 # ── POST /sessions/{id}/messages идёт через TaskRunner ───────────────────
-def test_post_message_goes_through_runner_not_http_request():
+def test_post_message_goes_through_runner_not_http_request(monkeypatch):
+    from aria.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "clarifier_gate_enabled", False)  # тест про очередь, не про гейт
     app = FastAPI()
     app.include_router(sessions_mod.router)
     app.dependency_overrides[require_runtime_token] = lambda: "t"

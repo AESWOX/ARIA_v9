@@ -192,3 +192,84 @@ def assert_retry_policy(idempotency_class: IdempotencyClass, is_retry: bool) -> 
         raise ToolValidationError(
             f"auto-retry запрещён для idempotency_class={idempotency_class.value} без approval (§11)"
         )
+
+
+# ── Входная валидация аргументов тула по input_schema ────────────────────
+# Раньше схема была только подсказкой для модели: handler получал что угодно и либо падал
+# с невнятным ``KeyError: 'path'``, либо молча «успешно» отрабатывал пустой вызов.
+
+_JSON_TYPES: dict[str, tuple[type, ...]] = {
+    "string": (str,),
+    "integer": (int,),
+    "number": (int, float),
+    "boolean": (bool,),
+    "array": (list, tuple),
+    "object": (dict,),
+}
+
+
+# «approved» модели игнорируется самим shell-handler'ом (доверять ему нельзя), поэтому не ошибка.
+_TOLERATED_EXTRA_KEYS = frozenset({"approved"})
+
+
+def _type_ok(value, type_name: str) -> bool:
+    if type_name == "null":
+        return value is None
+    allowed = _JSON_TYPES.get(type_name)
+    if allowed is None:
+        return True
+    if isinstance(value, bool) and type_name in ("integer", "number"):
+        return False  # True/False — не число
+    return isinstance(value, allowed)
+
+
+def _is_blank(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def validate_tool_input(schema: dict, arguments) -> list[str]:
+    """Список человекочитаемых ошибок; пустой список = аргументы годны.
+
+    Поддержано ровно то, что используется в TOOL_REGISTRY: type, required, properties.type/enum,
+    array.items.type, oneOf из ``required``-вариантов. Лишние ключи не запрещаются.
+    Обязательная строка не может быть пустой/из пробелов («обязательный» ≠ «присутствует»).
+    """
+    if not isinstance(arguments, dict):
+        return [f"аргументы должны быть JSON-объектом, получено {type(arguments).__name__}"]
+    errors: list[str] = []
+    props: dict = schema.get("properties", {}) or {}
+    for name in schema.get("required", []) or []:
+        if name not in arguments or _is_blank(arguments[name]):
+            errors.append(f"обязательный аргумент «{name}» не передан или пуст")
+    one_of = schema.get("oneOf")
+    if one_of:
+        variants = [v.get("required", []) for v in one_of]
+        if not any(all(not _is_blank(arguments.get(n)) for n in req) for req in variants):
+            names = " или ".join("+".join(req) for req in variants)
+            errors.append(f"нужен один из аргументов: {names}")
+    if props:
+        unknown = sorted(k for k in arguments if k not in props and k not in _TOLERATED_EXTRA_KEYS)
+        if unknown:
+            errors.append(
+                f"неизвестные аргументы {unknown}; допустимые: {sorted(props)} "
+                "(опечатка в имени аргумента иначе молча дала бы результат по умолчанию)"
+            )
+    for name, value in arguments.items():
+        spec = props.get(name)
+        if not spec or value is None:
+            continue
+        types = spec.get("type")
+        if types:
+            tlist = types if isinstance(types, list) else [types]
+            if not any(_type_ok(value, t) for t in tlist):
+                errors.append(f"аргумент «{name}» должен быть {'/'.join(tlist)}, получено {type(value).__name__}")
+                continue
+        if "enum" in spec and value not in spec["enum"]:
+            errors.append(f"аргумент «{name}» должен быть одним из {spec['enum']}, получено {value!r}")
+        item_type = (spec.get("items") or {}).get("type")
+        if item_type and isinstance(value, (list, tuple)):
+            for i, item in enumerate(value):
+                if not _type_ok(item, item_type):
+                    errors.append(f"элемент {i} аргумента «{name}» должен быть {item_type}")
+                    break
+    return errors

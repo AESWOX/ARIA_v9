@@ -382,6 +382,9 @@ async def _run_task_impl(
     logger.info("Stage 3: Execute for task %s", task_id[:8])
     _set_phase(session, task, "execute")
     tool_calls_raw = await _stage3_execute(session, task, task_plan, router)
+    blocked_cmds = _approval_blocked_commands(tool_calls_raw)
+    if blocked_cmds:
+        return await _fail_approval_required(session, task, task_plan, blocked_cmds)
 
     # ── Stage 4: Audit ────────────────────────────────────────────
     logger.info("Stage 4: Audit for task %s", task_id[:8])
@@ -461,6 +464,7 @@ async def _run_task_impl(
         # ЗАБЫЛ/ПРОЕБАЛ + есть попытки → replan с feedback и повторный прогон
         task_plan.iteration_count += 1
         feedback = _build_replan_feedback(retryable_flags, tool_calls_raw)
+        reuse = _reusable_calls([dict(st) for st in (task_plan.plan_json or [])], tool_calls_raw)
         logger.info(
             "Stage 6: %s retry %d/%d for task %s",
             "ЗАБЫЛ/PROEBAL" if proebal_flags else "ЗАБЫЛ",
@@ -480,7 +484,10 @@ async def _run_task_impl(
                 "note_path": None,
             }
 
-        tool_calls_raw = await _stage3_execute(session, task, task_plan, router)
+        tool_calls_raw = await _stage3_execute(session, task, task_plan, router, reuse=reuse)
+        blocked_cmds = _approval_blocked_commands(tool_calls_raw)
+        if blocked_cmds:
+            return await _fail_approval_required(session, task, task_plan, blocked_cmds)
         _transition(session, task, TaskStatus.under_audit)
         integrity_flags = await _stage4_audit(session, task, task_plan, tool_calls_raw, router)
         await _log_integrity_events(session, task_id, integrity_flags, tool_calls_raw)
@@ -497,6 +504,7 @@ async def _run_task_impl(
     _transition(session, task, TaskStatus.under_audit)
     _transition(session, task, TaskStatus.done)
     session.flush()
+    _post_result_message(session, task, task_plan, tool_calls_raw, note_path)
 
     logger.info("Executor: task %s completed — status=done", task_id[:8])
     return {
@@ -724,11 +732,15 @@ async def _execute_step_isolated(
     from aria.db.base import session_scope
     from aria.db.enums import ToolStatus
     from aria.tools.registry import get_tool
+    from aria.tools.validators import validate_tool_input
 
     step_id = step.get("step_id", "")
     objective = step.get("objective", "")
     role = step.get("role", "general")
-    raw_tool_ref = step.get("tool_ref") or step.get("skill_ref") or "shell_execute"
+    skill_ref = step.get("skill_ref") if not step.get("tool_ref") else None
+    # Шаг со skill_ref раньше искался в реестре тулов и падал «unknown tool_ref»: навыки не исполнялись никогда.
+    # Теперь это LLM-шаг, в промпт которого подставлено тело навыка (SKILL.md).
+    raw_tool_ref = "llm_task" if skill_ref else (step.get("tool_ref") or "shell_execute")
     tool_ref = _TOOL_ALIASES.get(raw_tool_ref, raw_tool_ref)
     tc_id = f"tc-{str(step_id)[:8]}" if step_id else f"tc-{index}"
 
@@ -746,8 +758,16 @@ async def _execute_step_isolated(
     try:
         if tool_ref == "llm_task":
             # Шаг, который сам по себе является LLM-задачей (не registry tool)
+            skill_text = ""
+            if skill_ref:
+                from aria.tools.handlers.skills import read_skill_body
+
+                body = read_skill_body(str(skill_ref))
+                if body is None:
+                    raise ValueError(f"skill_ref «{skill_ref}» не найден (навык добавляется во вкладке SKILLS или POST /skills)")
+                skill_text = f"\n\nСледуй инструкциям навыка «{skill_ref}»:\n{body}"
             messages = [
-                ChatMessage(role="system", content=f"Ты {role}. {objective}"),
+                ChatMessage(role="system", content=f"Ты {role}. {objective}{skill_text}"),
                 ChatMessage(role="user", content=objective),
             ]
             result = await router.route_chat(
@@ -774,7 +794,10 @@ async def _execute_step_isolated(
                 raise ValueError(f"tool_ref={tool_ref} не имеет handler'а в registry (только orchestrator loop)")
 
             if tool_ref == "file_write":
-                content = await _llm_generate_content(router, None, role, objective)
+                content = _strip_code_fence(await _llm_generate_content(router, None, role, objective))
+                if not content.strip():
+                    # Пустой ответ модели раньше молча превращался в пустой файл со status=ok.
+                    raise ValueError(f"LLM вернул пустое содержимое для файла (шаг {step_id[:8] or index}) — файл не создан")
                 handler_input = {"path": step.get("path", f"generated/{tc_id}.txt"), "content": content}
             elif tool_ref == "shell_execute":
                 command = await _llm_generate_command(router, None, role, objective)
@@ -792,6 +815,12 @@ async def _execute_step_isolated(
                 handler_input = step.get("input") or step.get("input_json") or {}
                 if not handler_input:
                     raise ValueError(f"tool_ref={tool_ref} требует step.input/input_json")
+
+            # Тот же барьер аргументов, что в loop._execute_tool: Plan-режим ходит в handler напрямую,
+            # и без этого пустой url/path/glob давал бы «успех» или невнятный KeyError.
+            arg_errors = validate_tool_input(spec.input_schema, handler_input)
+            if arg_errors:
+                raise ValueError(f"invalid_arguments ({spec.tool_name}): " + "; ".join(arg_errors))
 
             hook_decision, checkpoint_id = await toolhooks.pre_tool(
                 spec.tool_name, handler_input,
@@ -862,6 +891,7 @@ async def _stage3_execute(
     task: Task,
     task_plan: TaskPlan,
     router: ProviderRouter | None = None,
+    reuse: dict[tuple, dict] | None = None,
 ) -> list[dict]:
     """Stage 3: EXECUTE — волны DAG, внутри волны параллельно (PR-5).
 
@@ -920,14 +950,19 @@ async def _stage3_execute(
                 "Stage 3: волна %d/%d, группа %s — до %d узлов параллельно",
                 wave_no, len(waves), group, min(limit, len(group)),
             )
+            reuse_map = reuse or {}
+            run_idx = [i for i in group if _step_signature(steps[i]) not in reuse_map]
             factories = [
                 (lambda i=idx: _execute_step_isolated(
                     steps[i], index=i, task_id=task.id, sandbox_root=sandbox_root, router=router,
                 ))
-                for idx in group
+                for idx in run_idx
             ]
-            outcomes = await run_bounded(factories, limit=min(limit, len(group)))
-            for idx, outcome in zip(group, outcomes):
+            outcomes = await run_bounded(factories, limit=min(limit, len(run_idx))) if factories else []
+            pairs = list(zip(run_idx, outcomes))
+            # шаги, уже выполненные в прошлой итерации, не гоняем заново (см. _reusable_calls)
+            pairs += [(i, reuse_map[_step_signature(steps[i])]) for i in group if i not in run_idx]
+            for idx, outcome in pairs:
                 if isinstance(outcome, BaseException):
                     logger.warning(
                         "Stage 3: узел %s завершился исключением: %s",
@@ -948,6 +983,146 @@ async def _stage3_execute(
     session.flush()
 
     return tool_calls_raw
+
+
+MAX_RESULT_CHARS = 6000
+
+
+def _result_files(tool_calls: list[dict], sandbox_root: str) -> list[tuple[str, str]]:
+    """(путь, текст) файлов, записанных успешными file_write; только внутри песочницы."""
+    root = Path(sandbox_root).resolve()
+    out: list[tuple[str, str]] = []
+    for c in tool_calls:
+        o = c.get("output_json")
+        if c.get("tool_name") != "file_write" or c.get("status") != "ok" or not isinstance(o, dict) or not o.get("path"):
+            continue
+        rel = str(o["path"])
+        try:
+            full = (root / rel).resolve()
+            if root not in full.parents and full != root:
+                continue
+            if full.is_file():
+                out.append((rel, full.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            continue
+    return out
+
+
+def build_result_message(task: Task, files: list[tuple[str, str]], spec: Any | None,
+                         criteria_status: dict | None, note_path: str | None) -> str:
+    """Сообщение ассистента для чата: сам результат, статус критериев, допущения, пути файлов."""
+    lines = ["Задача выполнена."]
+    if files:
+        shown = 0
+        for rel, text in files:
+            room = MAX_RESULT_CHARS - shown
+            if room <= 0:
+                lines.append(f"\n(файл `{rel}` не показан целиком — открой его по пути ниже)")
+                continue
+            body = text.strip()
+            cut = body[:room]
+            lines += ["", f"**Результат — `{rel}`**", "", cut + ("\n…(обрезано, полный текст в файле)" if len(body) > room else "")]
+            shown += len(cut)
+    else:
+        lines.append("Файлов с результатом шаги не создали; ход выполнения — в карточке задачи.")
+    if criteria_status:
+        lines += ["", "**Критерии приёмки:**"]
+        lines += [f"- {cid}: {st}" for cid, st in criteria_status.items()]
+    assumptions = list(getattr(spec, "assumptions", None) or [])
+    if assumptions:
+        lines += ["", "**Допущения:**"] + [f"- {a}" for a in assumptions]
+    where = [f"`{rel}` (песочница)" for rel, _ in files]
+    if note_path:
+        where.append(f"`{note_path}` (vault)")
+    if where:
+        lines += ["", "Файлы: " + ", ".join(where)]
+    return "\n".join(lines)
+
+
+def _post_result_message(session: OrmSession, task: Task, task_plan: TaskPlan,
+                         tool_calls: list[dict], note_path: str | None) -> None:
+    """Кладёт результат в чат сессии. Сбой доставки в чат не должен ронять уже выполненную задачу."""
+    try:
+        from aria.config import get_settings
+        from aria.core import clarifier as _clarifier
+        from aria.core.events import event_bus
+        from aria.db import repository as repo
+        from aria.http_utils import serialize_message
+
+        agent_session = repo.get_session(session, task.session_id)
+        if agent_session is None:
+            return
+        spec = _clarifier.load_spec(session, task.id)
+        reports = repo.list_audit_reports(session, task.id)
+        criteria = dict((reports[-1].plan_vs_fact or {}).get("criteria_status") or {}) if reports else {}
+        files = _result_files(tool_calls, get_settings().agent_sandbox_root)
+        msg = repo.append_message(session, agent_session, role="assistant",
+                                  content=build_result_message(task, files, spec, criteria, note_path))
+        session.flush()
+        event_bus.emit("message.created", serialize_message(msg), session_id=task.session_id, task_id=task.id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Result message for task %s not posted: %s", str(task.id)[:8], exc)
+
+
+def _approval_blocked_commands(tool_calls: list[dict]) -> list[str]:
+    """Команды, которые shell-политика не запустила (approval_required) — шаг не выполнен, а не «упал»."""
+    out: list[str] = []
+    for c in tool_calls:
+        o = c.get("output_json")
+        if isinstance(o, dict) and o.get("status") == "approval_required":
+            out.append(str(o.get("command", "?"))[:200])
+    return out
+
+
+def _step_signature(step: dict) -> tuple:
+    return (
+        str(step.get("step_id", "")),
+        str(step.get("tool_ref") or step.get("skill_ref") or ""),
+        str(step.get("objective", "")),
+        str(step.get("path", "")),
+    )
+
+
+def _reusable_calls(prev_steps: list[dict], tool_calls: list[dict]) -> dict[tuple, dict]:
+    """Успешно выполненные шаги прошлой итерации: сигнатура шага -> его tool_call.
+
+    Повторный прогон ЗАБЫЛ-retry не должен заново писать уже записанные файлы: идентичная перезапись давала
+    hash_before == hash_after и валила всю задачу как НАЕБАЛ, хотя виноват был упавший соседний шаг.
+    """
+    by_id = {str(c.get("id")): c for c in tool_calls if c.get("status") == "ok"}
+    reuse: dict[tuple, dict] = {}
+    for st in prev_steps:
+        ids = st.get("tool_call_ids") or []
+        if st.get("status") == "done" and ids and str(ids[0]) in by_id:
+            reuse[_step_signature(st)] = by_id[str(ids[0])]
+    return reuse
+
+
+async def _fail_approval_required(session: OrmSession, task: Task, task_plan: TaskPlan, commands: list[str]) -> dict[str, Any]:
+    """Plan-режим не умеет ждать Approve посреди плана: честный отказ с причиной вместо ЗАБЫЛ-ретраев и ложного НАЕБАЛ."""
+    task_plan.status = PlanStatus.escalated.value
+    shown = "; ".join(commands[:3])
+    _transition(
+        session, task, TaskStatus.failed,
+        error_code="approval_required",
+        error_message=(f"Шаги плана требуют подтверждения владельца (shell-политика default-deny), исполнение не начато: "
+                       f"{shown}. Запусти команду вручную либо выполни задачу в режиме Agent, где есть Approve."),
+    )
+    session.flush()
+    return {"status": "blocked", "plan_id": str(task_plan.id), "integrity_flags": [], "note_path": None}
+
+
+def _strip_code_fence(text: str) -> str:
+    """Модель часто оборачивает файл в ```lang ... ``` вопреки промпту — в файл это попадать не должно."""
+    t = (text or "").strip()
+    if not t.startswith("```"):
+        return text or ""  # без обёртки содержимое не трогаем
+    first_nl = t.find("\n")
+    t = t[first_nl + 1:] if first_nl != -1 else ""
+    if t.rstrip().endswith("```"):
+        t = t.rstrip()[:-3]
+    t = t.strip("\n")
+    return t + "\n" if t.strip() else ""
 
 
 async def _llm_generate_content(
@@ -1115,6 +1290,8 @@ async def _stage7_delivery(
     task_spec = _clarifier.load_spec(session, task.id)
 
     # PR-6: статусы критериев берём из последнего отчёта аудита (его пишет _stage4_audit).
+    from aria.db import repository as repo  # раньше не был импортирован: Stage 7 падал NameError на ЛЮБОЙ задаче
+
     reports = repo.list_audit_reports(session, task.id)
     criteria_status = {}
     if reports:
