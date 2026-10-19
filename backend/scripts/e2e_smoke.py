@@ -345,6 +345,36 @@ def _pending(ctx: Ctx, sid: str) -> dict:
     return ctx.api.ok("GET", f"/sessions/{sid}/run")
 
 
+MAX_CLARIFY_ROUNDS_SMOKE = 4
+
+
+def _answer_clarifications(ctx: Ctx, queued: dict) -> dict:
+    """Кларифайер спрашивает всегда: задача встаёт в awaiting_clarification с queued=False.
+    Отвечаем рекомендованными значениями (default_value); вопросы без рекомендации закрываем допущениями.
+    POST /tasks/{id}/clarify с mode=agent сам ставит задачу в очередь, когда контракт валиден,
+    поэтому отдельный /start не нужен (он вернул бы duplicate)."""
+    api = ctx.api
+    task_id = queued.get("task_id")
+    assert task_id, f"awaiting_clarification without task_id: {queued}"
+    questions = queued.get("questions") or []
+    res: dict = {}
+    for _ in range(MAX_CLARIFY_ROUNDS_SMOKE):
+        answers = [
+            {"id": q["id"], "value": q["default_value"]}
+            for q in questions
+            if isinstance(q, dict) and q.get("id") and str(q.get("default_value") or "").strip()
+        ]
+        body = {"answers": answers, "mode": "agent",
+                "accept_assumptions": len(answers) < len(questions) or not answers}
+        res = api.ok("POST", f"/tasks/{task_id}/clarify", body, timeout=60)
+        if res.get("valid"):
+            break
+        questions = res.get("questions") or []
+    else:
+        raise AssertionError(f"clarification did not converge in {MAX_CLARIFY_ROUNDS_SMOKE} rounds: {res}")
+    return res
+
+
 def _run_agent(ctx: Ctx, title: str, prompt: str, expect_type: str, profile: dict | None = None):
     api = ctx.api
     sid = ctx.new_task_session(title)
@@ -352,6 +382,8 @@ def _run_agent(ctx: Ctx, title: str, prompt: str, expect_type: str, profile: dic
         # профиль живёт на уровне чат-сессии: PUT /chat/sessions/{id}/profile
         api.ok("PUT", f"/chat/sessions/{sid}/profile", profile)
     queued = api.ok("POST", f"/sessions/{sid}/messages", {"content": prompt, "mode": "agent"}, timeout=60)
+    if queued.get("status") == "awaiting_clarification":
+        queued = _answer_clarifications(ctx, queued)
     assert queued.get("queued") is True, f"agent run was not queued (A10): {queued}"
     last = {"status": None}
 
