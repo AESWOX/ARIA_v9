@@ -1,12 +1,13 @@
 """Stub routers (§WORK_NOTES stubs phase).
 
-Minimal but contract-faithful implementations for feature areas that the
-local build does not fully wire up (OAuth, gateway, MCP, ops, dashboard
-plugins, messaging, pairing, webhooks, credential pool, memory provider,
-curator, portal, aria update). Every response shape matches the frontend
-contract in desktop/src/lib/api.ts so the UI roundtrips without 4xx/5xx.
-CRUD areas that have cheap local persistence (mcp, webhooks, hooks,
-credentials) persist to data/*.json instead of returning empty lists.
+Feature areas the local build does not wire up (OAuth, gateway, ops, dashboard
+plugins, messaging, pairing, credential pool, curator, portal, aria update).
+
+Rules (enforced by tests/test_stubs_honesty.py):
+* GET routes return the contract-shaped empty/disabled structure.
+* A mutating route either does the real thing, answers ok:false with a reason
+  (HONEST_MUTATORS), or raises 501 via _not_implemented(). It never returns a
+  success that did not happen.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ import json
 import os
 import platform
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -49,6 +50,23 @@ def _save_json(name: str, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, ensure_ascii=False)
+
+
+def _not_implemented(feature: str) -> NoReturn:
+    """Honest answer for a stub that has no real backend behind it.
+
+    The UI used to show "saved" / "added" for these calls although nothing
+    happened (and, for the credential pool, the API key was thrown away).
+    501 makes fetchJSON throw, so the existing catch-blocks show a real error.
+    """
+    raise HTTPException(
+        status_code=501,
+        detail={
+            "code": "not_implemented",
+            "feature": feature,
+            "message": f"{feature} is not implemented in this build",
+        },
+    )
 
 
 def _action(name: str, ok: bool = True, message: str | None = None) -> dict[str, Any]:
@@ -97,35 +115,12 @@ async def oauth_providers(_: str = Depends(require_runtime_token)) -> dict[str, 
 
 @router.delete("/providers/oauth/{provider_id}")
 async def oauth_disconnect(provider_id: str, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    if provider_id not in {p["id"] for p in _OAUTH_CATALOG}:
-        raise HTTPException(status_code=404, detail="unknown provider")
-    return {"ok": True, "provider": provider_id}
+    _not_implemented("OAuth disconnect")
 
 
 @router.post("/providers/oauth/{provider_id}/start")
 async def oauth_start(provider_id: str, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    entry = next((p for p in _OAUTH_CATALOG if p["id"] == provider_id), None)
-    if not entry:
-        raise HTTPException(status_code=404, detail="unknown provider")
-    import uuid
-
-    session_id = str(uuid.uuid4())
-    _OAUTH_SESSIONS[session_id] = "pending"
-    if entry["flow"] == "device_code":
-        return {
-            "session_id": session_id,
-            "flow": "device_code",
-            "user_code": "ABCD-1234",
-            "verification_url": "https://example.com/device",
-            "expires_in": 900,
-            "poll_interval": 5,
-        }
-    return {
-        "session_id": session_id,
-        "flow": "pkce",
-        "auth_url": "https://example.com/oauth/authorize",
-        "expires_in": 900,
-    }
+    _not_implemented("OAuth login")
 
 
 @router.post("/providers/oauth/{provider_id}/submit")
@@ -173,19 +168,12 @@ async def gateway_restart(_: str = Depends(require_runtime_token)) -> dict[str, 
 
 @router.post("/ops/config-migrate")
 async def ops_config_migrate(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return _action("ops-config-migrate", True, "config already at latest version")
+    _not_implemented("config migration")
 
 
 @router.post("/ops/debug-share")
 async def ops_debug_share(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    redact = bool(payload.get("redact", True))
-    return {
-        "ok": True,
-        "urls": {},
-        "failures": [],
-        "redacted": redact,
-        "auto_delete_seconds": 0,
-    }
+    _not_implemented("debug share")
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +183,7 @@ async def ops_debug_share(payload: dict[str, Any], _: str = Depends(require_runt
 
 @router.post("/dashboard/plugins/rescan")
 async def plugins_rescan(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {"ok": True, "count": 0}
+    _not_implemented("dashboard plugin rescan")
 
 
 @router.get("/dashboard/plugins/hub")
@@ -219,12 +207,12 @@ async def agent_plugins_install(payload: dict[str, Any], _: str = Depends(requir
 
 @router.post("/dashboard/agent-plugins/{name}/enable")
 async def agent_plugins_enable(name: str, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {"ok": True, "name": name}
+    _not_implemented("agent plugin enable")
 
 
 @router.post("/dashboard/agent-plugins/{name}/disable")
 async def agent_plugins_disable(name: str, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {"ok": True, "name": name, "unchanged": True}
+    _not_implemented("agent plugin disable")
 
 
 @router.post("/dashboard/agent-plugins/{name}/update")
@@ -234,19 +222,17 @@ async def agent_plugins_update(name: str, _: str = Depends(require_runtime_token
 
 @router.delete("/dashboard/agent-plugins/{name}")
 async def agent_plugins_remove(name: str, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {"ok": True, "name": name}
+    _not_implemented("agent plugin remove")
 
 
 @router.put("/dashboard/plugin-providers")
 async def plugin_providers_put(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    _save_json("plugin_providers.json", payload)
-    return {"ok": True}
+    _not_implemented("plugin provider selection")
 
 
 @router.post("/dashboard/plugins/{name}/visibility")
 async def plugins_visibility(name: str, payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    hidden = bool(payload.get("hidden", False))
-    return {"ok": True, "name": name, "hidden": hidden}
+    _not_implemented("plugin visibility")
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +251,7 @@ async def messaging_platforms(_: str = Depends(require_runtime_token)) -> dict[s
 
 @router.put("/messaging/platforms/{platform_id}")
 async def messaging_platform_update(platform_id: str, payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {"ok": True, "platform": platform_id}
+    _not_implemented("messaging platform settings")
 
 
 @router.post("/messaging/platforms/{platform_id}/test")
@@ -275,19 +261,7 @@ async def messaging_platform_test(platform_id: str, _: str = Depends(require_run
 
 @router.post("/messaging/telegram/onboarding/start")
 async def telegram_onboarding_start(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    import datetime
-
-    import uuid
-
-    pairing_id = str(uuid.uuid4())
-    bot_name = str(payload.get("bot_name", "aria_bot") or "aria_bot")
-    return {
-        "pairing_id": pairing_id,
-        "suggested_username": bot_name,
-        "deep_link": f"https://t.me/{bot_name}",
-        "qr_payload": f"tg://resolve?domain={bot_name}",
-        "expires_at": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15)).isoformat(),
-    }
+    _not_implemented("Telegram onboarding")
 
 
 @router.get("/messaging/telegram/onboarding/{pairing_id}")
@@ -322,19 +296,17 @@ async def pairing_get(_: str = Depends(require_runtime_token)) -> dict[str, Any]
 
 @router.post("/pairing/approve")
 async def pairing_approve(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    platform = str(payload.get("platform", ""))
-    code = str(payload.get("code", ""))
-    return {"ok": False, "user": {"platform": platform, "user_id": code}}
+    _not_implemented("pairing approve")
 
 
 @router.post("/pairing/revoke")
 async def pairing_revoke(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {"ok": True}
+    _not_implemented("pairing revoke")
 
 
 @router.post("/pairing/clear-pending")
 async def pairing_clear(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    return {"ok": True, "cleared": 0}
+    _not_implemented("pairing clear")
 
 
 # ---------------------------------------------------------------------------
@@ -373,31 +345,12 @@ async def credentials_pool_get(_: str = Depends(require_runtime_token)) -> dict[
 
 @router.post("/credentials/pool")
 async def credentials_pool_add(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    provider = str(payload.get("provider", "")).strip()
-    api_key = str(payload.get("api_key", "")).strip()
-    if not provider or not api_key:
-        raise HTTPException(status_code=400, detail="provider and api_key required")
-    store = _pool_store()
-    store.setdefault(provider, []).append(
-        {
-            "label": payload.get("label"),
-            "token_preview": (api_key[:4] + "****") if len(api_key) > 4 else "****",
-            "priority": 0,
-        }
-    )
-    _save_json("credentials_pool.json", store)
-    return {"ok": True, "provider": provider, "count": len(store[provider])}
+    _not_implemented("credential pool add")
 
 
 @router.delete("/credentials/pool/{provider}/{index}")
 async def credentials_pool_remove(provider: str, index: int, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    store = _pool_store()
-    entries = store.get(provider, [])
-    if index < 0 or index >= len(entries):
-        raise HTTPException(status_code=404, detail="entry not found")
-    store[provider] = entries[:index] + entries[index + 1:]
-    _save_json("credentials_pool.json", store)
-    return {"ok": True, "provider": provider, "count": len(store[provider])}
+    _not_implemented("credential pool remove")
 
 
 # ---------------------------------------------------------------------------
@@ -420,8 +373,7 @@ async def curator_get(_: str = Depends(require_runtime_token)) -> dict[str, Any]
 
 @router.put("/curator/paused")
 async def curator_paused(payload: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    paused = bool(payload.get("paused", False))
-    return {"ok": True, "paused": paused}
+    _not_implemented("curator pause")
 
 
 @router.post("/curator/run")
