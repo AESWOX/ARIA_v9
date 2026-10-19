@@ -16,6 +16,7 @@ from aria.tools.handlers import files as files_handler
 from aria.tools.handlers import shell as shell_handler
 from aria.tools.handlers import web as web_handler
 from aria.tools.handlers import vision as vision_handler
+from aria.tools.handlers import skills as skills_handler
 from aria.integrations.notebooklm.tool import notebook_query
 
 
@@ -120,7 +121,8 @@ async def _skill_lookup(input_json: dict, **_ctx) -> dict:
     category = input_json.get("category", "")
     limit = min(input_json.get("limit", 10), 100)
     with session_scope() as session:
-        q = select(SkillMeta)
+        from aria.db.enums import SkillStatus
+        q = select(SkillMeta).where(SkillMeta.status.notin_([SkillStatus.archived, SkillStatus.rejected]))
         if pattern:
             q = q.where(SkillMeta.skill_name.ilike(f"%{pattern}%"))
         if category:
@@ -588,6 +590,23 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         allowed_roles=("general", "orchestrator", "research", "obsidian_keeper", "coder"),
         idempotency_class=IdempotencyClass.safe_read,
         handler=_skill_lookup,
+    ),
+    "skill_read": ToolSpec(
+        tool_name="skill_read",
+        description="Читает тело навыка (SKILL.md) по точному имени из skill_lookup: инструкции, как выполнять работу. Read-only.",
+        input_schema={
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "Точное имя навыка (из skill_lookup)"}},
+            "required": ["name"],
+        },
+        output_schema={"type": "object", "properties": {"found": {"type": "boolean"}, "content": {"type": ["string", "null"]}}},
+        timeout_sec=10,
+        risk_level=RiskLevel.low,
+        null_output_allowed=True,
+        requires_approval=False,
+        allowed_roles=("general", "orchestrator", "research", "obsidian_keeper", "coder"),
+        idempotency_class=IdempotencyClass.safe_read,
+        handler=skills_handler.skill_read,
     ),
     "task_status": ToolSpec(
         tool_name="task_status",

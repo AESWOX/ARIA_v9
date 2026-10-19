@@ -97,8 +97,8 @@ def _uid() -> str:
 HANDLER_TOOLS = sorted(n for n, s in TOOL_REGISTRY.items() if s.handler is not None)
 
 
-def test_registry_has_22_tools_and_delegate_is_special_case():
-    assert len(TOOL_REGISTRY) == 22, f"в реестре {len(TOOL_REGISTRY)} тулов, DOD.md нужно обновить"
+def test_registry_has_23_tools_and_delegate_is_special_case():
+    assert len(TOOL_REGISTRY) == 23, f"в реестре {len(TOOL_REGISTRY)} тулов, DOD.md нужно обновить"
     assert [n for n, s in TOOL_REGISTRY.items() if s.handler is None] == ["delegate_task"]
 
 
@@ -127,6 +127,7 @@ CASES = {
     "vision_analyze": (lambda sb: {"image_base64": _img_b64(), "prompt": "what is it"}, lambda o: isinstance(o, dict) and "error" in o),
     "notebook_query": (lambda sb: {"prompt": "hi"}, lambda o: isinstance(o, dict) and o.get("success") is False),
     "skill_lookup": (lambda sb: {"pattern": "web"}, lambda o: o.get("total", 0) >= 1),
+    "skill_read": (lambda sb: {"name": "code-review"}, lambda o: o.get("found") is False or "content" in o),
     "task_status": (lambda sb: {"task_id": str(uuid.uuid4())}, lambda o: o.get("status") == "not_found"),
     "memory_search": (lambda sb: {"query": "лампа"}, lambda o: "items" in o and "total" in o),
     "memory_save": (lambda sb: {"content": f"b5 fact {_uid()}", "layer": "fact"}, lambda o: o.get("saved") is True),
@@ -181,7 +182,10 @@ def test_tool_bad_args_do_not_hang_or_crash_the_loop(tool, variant, sandbox):
     assert status != ToolStatus.timeout, f"{tool} завис на {variant}-аргументах"
     if status == ToolStatus.ok:
         has_err = isinstance(out, dict) and bool(out.get("error"))
-        verdict = "ok+error-поле" if has_err else "ПРИНЯЛ молча"
+        # {} законен, если в схеме нет обязательных аргументов (дефолтное поведение: «покажи всё»)
+        optional_only = variant == "empty" and not TOOL_REGISTRY[tool].input_schema.get("required") \
+            and not TOOL_REGISTRY[tool].input_schema.get("oneOf")
+        verdict = "ok+error-поле" if has_err else ("ok (аргументы необязательны)" if optional_only else "ПРИНЯЛ молча")
     elif status == ToolStatus.blocked_policy:
         verdict = "блок (policy)"
     else:
