@@ -504,6 +504,7 @@ async def _run_task_impl(
     _transition(session, task, TaskStatus.under_audit)
     _transition(session, task, TaskStatus.done)
     session.flush()
+    _post_result_message(session, task, task_plan, tool_calls_raw, note_path)
 
     logger.info("Executor: task %s completed — status=done", task_id[:8])
     return {
@@ -982,6 +983,85 @@ async def _stage3_execute(
     session.flush()
 
     return tool_calls_raw
+
+
+MAX_RESULT_CHARS = 6000
+
+
+def _result_files(tool_calls: list[dict], sandbox_root: str) -> list[tuple[str, str]]:
+    """(путь, текст) файлов, записанных успешными file_write; только внутри песочницы."""
+    root = Path(sandbox_root).resolve()
+    out: list[tuple[str, str]] = []
+    for c in tool_calls:
+        o = c.get("output_json")
+        if c.get("tool_name") != "file_write" or c.get("status") != "ok" or not isinstance(o, dict) or not o.get("path"):
+            continue
+        rel = str(o["path"])
+        try:
+            full = (root / rel).resolve()
+            if root not in full.parents and full != root:
+                continue
+            if full.is_file():
+                out.append((rel, full.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            continue
+    return out
+
+
+def build_result_message(task: Task, files: list[tuple[str, str]], spec: Any | None,
+                         criteria_status: dict | None, note_path: str | None) -> str:
+    """Сообщение ассистента для чата: сам результат, статус критериев, допущения, пути файлов."""
+    lines = ["Задача выполнена."]
+    if files:
+        shown = 0
+        for rel, text in files:
+            room = MAX_RESULT_CHARS - shown
+            if room <= 0:
+                lines.append(f"\n(файл `{rel}` не показан целиком — открой его по пути ниже)")
+                continue
+            body = text.strip()
+            cut = body[:room]
+            lines += ["", f"**Результат — `{rel}`**", "", cut + ("\n…(обрезано, полный текст в файле)" if len(body) > room else "")]
+            shown += len(cut)
+    else:
+        lines.append("Файлов с результатом шаги не создали; ход выполнения — в карточке задачи.")
+    if criteria_status:
+        lines += ["", "**Критерии приёмки:**"]
+        lines += [f"- {cid}: {st}" for cid, st in criteria_status.items()]
+    assumptions = list(getattr(spec, "assumptions", None) or [])
+    if assumptions:
+        lines += ["", "**Допущения:**"] + [f"- {a}" for a in assumptions]
+    where = [f"`{rel}` (песочница)" for rel, _ in files]
+    if note_path:
+        where.append(f"`{note_path}` (vault)")
+    if where:
+        lines += ["", "Файлы: " + ", ".join(where)]
+    return "\n".join(lines)
+
+
+def _post_result_message(session: OrmSession, task: Task, task_plan: TaskPlan,
+                         tool_calls: list[dict], note_path: str | None) -> None:
+    """Кладёт результат в чат сессии. Сбой доставки в чат не должен ронять уже выполненную задачу."""
+    try:
+        from aria.config import get_settings
+        from aria.core import clarifier as _clarifier
+        from aria.core.events import event_bus
+        from aria.db import repository as repo
+        from aria.http_utils import serialize_message
+
+        agent_session = repo.get_session(session, task.session_id)
+        if agent_session is None:
+            return
+        spec = _clarifier.load_spec(session, task.id)
+        reports = repo.list_audit_reports(session, task.id)
+        criteria = dict((reports[-1].plan_vs_fact or {}).get("criteria_status") or {}) if reports else {}
+        files = _result_files(tool_calls, get_settings().agent_sandbox_root)
+        msg = repo.append_message(session, agent_session, role="assistant",
+                                  content=build_result_message(task, files, spec, criteria, note_path))
+        session.flush()
+        event_bus.emit("message.created", serialize_message(msg), session_id=task.session_id, task_id=task.id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Result message for task %s not posted: %s", str(task.id)[:8], exc)
 
 
 def _approval_blocked_commands(tool_calls: list[dict]) -> list[str]:

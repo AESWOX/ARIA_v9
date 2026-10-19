@@ -581,6 +581,7 @@ export default function NativeChatPage() {
 
         <TaskSpecPanel
           taskId={run?.task_id ?? null}
+          taskStatus={run?.status ?? null}
           sessionId={activeId}
           questions={taskQuestions}
           onAnswered={async () => {

@@ -42,9 +42,10 @@ function depsText(step: PlanStepView, L: Labels): string {
 }
 
 export function TaskSpecPanel({
-  taskId, questions, labels, onAnswered, onError,
+  taskId, taskStatus, questions, labels, onAnswered, onError,
 }: {
   taskId: string | null;
+  taskStatus?: string | null;
   sessionId: string | null;
   questions: ClarifyQuestion[] | null;
   labels?: Labels;
@@ -80,7 +81,15 @@ export function TaskSpecPanel({
     try {
       const payload = accept
         ? { answers: [], accept_assumptions: true }
-        : { answers: Object.entries(answers).filter(([, v]) => v.trim()).map(([k, v]) => ({ id: k, field: k, value: v })) };
+        : {
+            // Чек-лист: неотвеченный вопрос уходит с рекомендованным вариантом (default_value), владелец только правит.
+            answers: (questions ?? [])
+              .map((q, i) => {
+                const k = q.id || `q${i}`;
+                return { id: k, field: q.field ?? k, value: (answers[k] ?? q.default_value ?? "").trim() };
+              })
+              .filter((a) => a.value),
+          };
       await api.taskClarify(taskId, payload);
       setAnswers({});
       onAnswered?.();
@@ -175,9 +184,11 @@ export function TaskSpecPanel({
                 <span className="text-muted-foreground">
                   {L.planWaves ?? "waves"}: {plan.waves.length} · {String(plan.phase ?? "")}
                 </span>
-                <Button ghost size="sm" className="ml-auto" disabled={busy} onClick={() => void requestApproval()}>
-                  {L.planRequest ?? "Request approval"}
-                </Button>
+                {(!taskStatus || ["draft", "awaiting_clarification"].includes(taskStatus)) && (
+                  <Button ghost size="sm" className="ml-auto" disabled={busy} onClick={() => void requestApproval()}>
+                    {L.planRequest ?? "Request approval"}
+                  </Button>
+                )}
               </div>
               {plan.waves.map((wave, wi) => (
                 <div key={`w${wi}`} className="text-muted-foreground">

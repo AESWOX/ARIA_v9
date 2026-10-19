@@ -329,7 +329,11 @@ async def clarify_task(
             "valid": bool(spec.is_valid),
             "clarify_rounds": spec.clarify_rounds,
             "questions": [
-                {"id": q.get("id"), "text": q.get("text"), "field": q.get("field")} for q in spec.clarify_questions
+                {k: v for k, v in {
+                    "id": q.get("id"), "text": q.get("text"), "field": q.get("field"),
+                    "options": q.get("options"), "default_value": q.get("default_value"),
+                }.items() if v is not None}
+                for q in spec.clarify_questions
             ],
         }
 
@@ -407,6 +411,16 @@ async def request_plan_approval(
         session = repo.get_session(db, task.session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="session not found")
+        # Раньше из done/failed это падало InvalidTransition -> 500: кнопка была видна всегда.
+        from aria.core.state_machine import InvalidTransition, assert_transition_allowed
+
+        try:
+            assert_transition_allowed(task.status, TaskStatus.awaiting_approval)
+        except InvalidTransition:
+            raise HTTPException(
+                status_code=409,
+                detail=f"plan approval is not available in task status {task.status.value}",
+            )
         spec = _clarifier.load_spec(db, task_id)
         body = spec.to_markdown() if spec is not None else (task.draft_tz_md or task.objective or "")
         item = approvals.request_task_tz_approval(db, session, task, body)
