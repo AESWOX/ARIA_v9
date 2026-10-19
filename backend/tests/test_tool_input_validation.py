@@ -22,11 +22,12 @@ def _run(tool, args, root):
     return asyncio.run(_execute_tool(TOOL_REGISTRY[tool], args, str(root)))
 
 
-@pytest.mark.parametrize("tool", HANDLER_TOOLS)
+REQUIRED_TOOLS = sorted(n for n in HANDLER_TOOLS if TOOL_REGISTRY[n].input_schema.get("required"))
+
+
+@pytest.mark.parametrize("tool", REQUIRED_TOOLS)
 def test_every_schema_required_arg_is_enforced(tool, tmp_path):
-    required = TOOL_REGISTRY[tool].input_schema.get("required") or []
-    if not required:
-        pytest.skip("нет обязательных аргументов")
+    required = TOOL_REGISTRY[tool].input_schema["required"]
     out, st, code, msg = _run(tool, {}, tmp_path)
     assert st == ToolStatus.error and code == "invalid_arguments", (st, code, msg)
     assert all(name in msg for name in required), msg
