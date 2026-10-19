@@ -187,7 +187,9 @@ def _normalise_questions(raw) -> list[dict]:
             out.append({
                 "id": qid,
                 "text": text,
-                "blocking": bool(item.get("blocking", True)),
+                # Prompt: blocking:true — только если без ответа задачу нельзя ни выполнить, ни проверить.
+                # Модель, не указавшая флаг, не должна превращать любой вопрос в блокирующий.
+                "blocking": bool(item.get("blocking", False)),
                 "field": str(item.get("field") or "clarification"),
             })
     return out
@@ -265,7 +267,8 @@ def _load_or_derive(task_id: uuid.UUID, content: str) -> TaskSpec:
 def _question_message(questions: list[dict]) -> str:
     lines = ["Чтобы выполнить и проверить задачу, нужны ответы:"]
     for i, q in enumerate(questions, start=1):
-        lines.append(f"{i}. {q['text']} (поле: {q.get('field', 'goal')})")
+        # Имя поля контракта (acceptance_criteria и т.п.) — внутреннее, пользователю оно не нужно.
+        lines.append(f"{i}. {q['text']}")
     lines.append("")
     lines.append("Ответьте в этом же чате — задача продолжится с уточнённым контрактом.")
     return "\n".join(lines)
