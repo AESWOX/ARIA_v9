@@ -17,10 +17,30 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 from pathlib import Path
 
 from aria.tools.validators import classify_shell_command
+
+
+# Дочерний процесс получает ТОЛЬКО эти переменные (default-deny, как и сама политика команд).
+# Раньше он наследовал весь os.environ родителя: ключи провайдеров, runtime-токен и PIN.
+_ENV_ALLOWLIST = frozenset(
+    {
+        "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR",
+        "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+        "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMDATA", "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE", "OS", "USER", "USERNAME", "LOGNAME", "SHELL", "TERM", "TZ",
+        "LANG", "LANGUAGE", "PYTHONIOENCODING", "PYTHONUTF8",
+    }
+)
+
+
+def build_shell_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Окружение для дочернего процесса: только allowlist (+ ``LC_*``), без секретов."""
+    source = os.environ if base is None else base
+    return {k: v for k, v in source.items() if k.upper() in _ENV_ALLOWLIST or k.upper().startswith("LC_")}
 
 
 async def shell_execute(input_json: dict, timeout_sec: int, cwd: str | None = None, *, approved: bool = False) -> dict:
@@ -50,6 +70,7 @@ async def shell_execute(input_json: dict, timeout_sec: int, cwd: str | None = No
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
+        env=build_shell_env(),
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)

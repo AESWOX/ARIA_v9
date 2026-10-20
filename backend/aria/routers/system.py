@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -346,6 +347,11 @@ async def system_feedback(body: FeedbackBody, _: str = Depends(require_runtime_t
         return {"ok": True, "feedback_saved": True, "skill_created": skill_created or False}
 
 
+_LOCAL_ORIGIN = re.compile(
+    r"^(?:https?://(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?|tauri://localhost|https?://tauri\.localhost)$"
+)
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -355,11 +361,15 @@ async def websocket_endpoint(
 ) -> None:
     settings = get_settings()
     server_mode = os.getenv("ARIA_SERVER_MODE", "0") == "1" or settings.http_host not in ("127.0.0.1", "localhost")
+    # Cross-site WebSocket hijacking: любая веб-страница может открыть ws://127.0.0.1, поэтому в loopback
+    # Origin обязан быть локальным, а доступ без токена/тикета закрыт всегда (раньше loopback пускал без него).
+    origin = websocket.headers.get("origin")
+    if origin is not None and not server_mode and not _LOCAL_ORIGIN.match(origin):
+        await websocket.close(code=1008, reason="forbidden origin")
+        return
     authorized = bool(ticket and ticket_store.consume(ticket))
     if not authorized and token:
         authorized = token_store.verify_token(token)
-    if not authorized and not server_mode:
-        authorized = True
     if not authorized:
         await websocket.close(code=1008, reason="unauthorized")
         return

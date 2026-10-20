@@ -42,8 +42,7 @@ MUST_DENY = [
     "echo x | sh", "bash -c ls", "c^url x", "(curl x)", "ls\r\ncurl evil", "del /s x",
 ]
 MUST_ALLOW = [
-    "ls", "ls -la", "git status", "git log --oneline", "pytest -q", "pytest -q 2>&1", "python x.py",
-    "python -m pytest", "npm test", "npm run build", "grep -r foo src", "cat a.txt | head -5",
+    "ls", "ls -la", "git status", "git log --oneline", "python -m py_compile x.py", "python --version", "grep -r foo src", "cat a.txt | head -5",
     "mkdir out && touch out/a", "rm file.txt", "rm -f a.txt", "echo hello > out.txt", "pip list",
     "find . -name '*.py'", "sort < in.txt > out.txt",
 ]
@@ -56,6 +55,18 @@ def test_shell_bypass_requires_approval(cmd):
 
 @pytest.mark.parametrize("cmd", MUST_ALLOW)
 def test_shell_ordinary_work_still_allowed(cmd):
+    assert classify_shell_command(cmd) == "allow", cmd
+
+
+# Запускальщики кода исполняют то, что агент мог записать сам (C1): по умолчанию подтверждение, opt-in через env.
+CODE_RUNNERS = ["pytest -q", "pytest -q 2>&1", "python x.py", "python -m pytest", "npm test", "npm run build"]
+
+
+@pytest.mark.parametrize("cmd", CODE_RUNNERS)
+def test_code_runners_allowed_only_with_owner_opt_in(cmd, monkeypatch):
+    monkeypatch.delenv("ARIA_SHELL_TRUST_CODE_RUNNERS", raising=False)
+    assert classify_shell_command(cmd) == "approval", cmd
+    monkeypatch.setenv("ARIA_SHELL_TRUST_CODE_RUNNERS", "1")
     assert classify_shell_command(cmd) == "allow", cmd
 
 

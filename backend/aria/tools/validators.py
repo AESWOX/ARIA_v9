@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import shlex
 
@@ -57,6 +58,20 @@ _INTERPRETERS = frozenset({"python", "python3", "node"})
 _INLINE_CODE_FLAGS = frozenset({"-c", "-e", "-p", "--eval", "--print", "-"})
 _FIND_DANGEROUS = frozenset({"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls"})
 _DELETERS = frozenset({"rm", "del"})
+# Запускальщики кода: python файл.py / pytest (conftest) / npm run|test (scripts из package.json) исполняют то,
+# что агент мог сам записать файловым тулом. Без подтверждения разрешены только пробы версии.
+_CODE_RUNNERS = frozenset({"python", "python3", "node", "pytest"})
+_NPM_CODE_SUBCOMMANDS = frozenset({"test", "run"})
+_VERSION_PROBES = frozenset({"--version", "-V", "-v"})
+# `python -m py_compile x.py` / `-m compileall` только компилируют в байткод и ничего не импортируют и не запускают.
+_COMPILE_ONLY_MODULES = frozenset({"py_compile", "compileall"})
+# .git/hooks, .git/config: исполнение кода при ближайшем git-вызове. Не путать с .gitignore/.github.
+_TOUCHES_GIT = re.compile(r"(?:^|[\\/])\.git(?:[\\/]|$)", re.IGNORECASE)
+
+
+def _trust_code_runners() -> bool:
+    """Явное решение владельца: ``ARIA_SHELL_TRUST_CODE_RUNNERS=1`` возвращает автозапуск python/pytest/npm run."""
+    return os.getenv("ARIA_SHELL_TRUST_CODE_RUNNERS", "0") == "1"
 
 # Разделители составных команд: каждую часть проверяем отдельно.
 # Одиночный «&» — разделитель в cmd.exe и фон в POSIX: тоже режем по нему.
@@ -110,6 +125,14 @@ def _segment_allowed(segment: str) -> bool:
     # Любой путь вне корня песочницы / с расширением переменных — подтверждение.
     if any(_PATH_ESCAPE.search(a) for a in positional):
         return False
+    if any(_TOUCHES_GIT.search(a.strip("\"'")) for a in positional):
+        return False
+    if not _trust_code_runners():
+        compile_only = head in _INTERPRETERS and len(args) >= 2 and args[0] == "-m" and args[1] in _COMPILE_ONLY_MODULES
+        if head in _CODE_RUNNERS and not compile_only and not (len(args) == 1 and args[0] in _VERSION_PROBES):
+            return False
+        if head == "npm" and next((a for a in args if not a.startswith("-")), "") in _NPM_CODE_SUBCOMMANDS:
+            return False
     if head in SUBCOMMAND_ALLOW:
         sub = next((a for a in args if not a.startswith("-")), "")
         if args and args[0].startswith("-"):  # `git -c …`, `npm --prefix …` — до подкоманды
@@ -150,7 +173,7 @@ def classify_shell_command(command: str) -> str:
     # Перенаправление в относительный путь внутри песочницы — обычная работа;
     # наружу (~, абсолютный, .., $VAR) — только с подтверждением.
     for target in _REDIRECT_TARGET.findall(stripped):
-        if _PATH_ESCAPE.search(target.strip("\"'")):
+        if _PATH_ESCAPE.search(target.strip("\"'")) or _TOUCHES_GIT.search(target.strip("\"'")):
             return "approval"
     stripped = _REDIRECT_TARGET_FULL.sub(" ", stripped)
     if re.search(r"[<>]", stripped):
