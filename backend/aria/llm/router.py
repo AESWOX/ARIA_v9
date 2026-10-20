@@ -64,6 +64,15 @@ ACCOUNT_COOLDOWN_SEC = 600.0
 # Любой другой отказ провайдера (400/401/413/422..., битый ответ): идём дальше по цепочке, а провайдера на
 # две минуты уводим в конец очереди: если он не тянет эту модель/схему тулов, не тратим на него первый запрос.
 OTHER_ERROR_COOLDOWN_SEC = 120.0
+# Предохранитель: после 429 / исчерпанных 5xx / нет ключей / таймаута провайдер уходит в КОНЕЦ очереди на короткое
+# время (порядок, а не отказ: единственного провайдера всё равно пробуем). Без этого каждый запрос заново платил
+# за заведомо провальную попытку: 2 повтора после 503 с паузой или до 60 с на таймаут.
+RATE_LIMIT_COOLDOWN_SEC = 30.0
+TRANSIENT_COOLDOWN_SEC = 30.0
+TIMEOUT_COOLDOWN_SEC = 60.0
+NO_KEYS_COOLDOWN_SEC = 60.0          # если пул ключей не сообщил, когда освободится первый
+NO_KEYS_COOLDOWN_MIN_SEC = 15.0
+NO_KEYS_COOLDOWN_MAX_SEC = 300.0
 RETRY_ATTEMPTS_PER_PROVIDER = 2      # same provider, on 5xx only
 RETRY_BACKOFF_SEC = 1.0              # 1s, then 2s
 
@@ -113,6 +122,24 @@ class ProviderRouter:
 
     def _cooling(self, provider: LlmProvider) -> bool:
         return self.cooldown_until.get(provider.provider_id, 0.0) > self.clock()
+
+    def _cool(self, provider: LlmProvider, seconds: float) -> None:
+        """Отложить провайдера в конец очереди; более длинный уже действующий карантин не укорачиваем."""
+        until = self.clock() + seconds
+        if until > self.cooldown_until.get(provider.provider_id, 0.0):
+            self.cooldown_until[provider.provider_id] = until
+
+    @staticmethod
+    def _no_keys_cooldown(provider: LlmProvider) -> float:
+        pool = getattr(provider, "key_pool", None)
+        if pool is not None:
+            try:
+                wait = pool.status().get("retry_in_sec")
+            except Exception:
+                wait = None
+            if wait is not None:
+                return min(max(float(wait), NO_KEYS_COOLDOWN_MIN_SEC), NO_KEYS_COOLDOWN_MAX_SEC)
+        return NO_KEYS_COOLDOWN_SEC
 
     def _ordered(self, providers: list[LlmProvider]) -> list[LlmProvider]:
         """Здоровые провайдеры вперёд, «на карантине» (402/403) в конец: последняя попытка, а не отказ."""
@@ -407,6 +434,7 @@ class ProviderRouter:
                             await asyncio.sleep(backoff_sec * (2 ** attempt))
                             continue
                         if status == 429 or status in RETRYABLE_STATUS:
+                            self._cool(provider, RATE_LIMIT_COOLDOWN_SEC if status == 429 else TRANSIENT_COOLDOWN_SEC)
                             logger.warning("%s: HTTP %s, switching provider", provider.provider_id, status)
                             break
                         # 400/401/413/422...: этот провайдер не обслужил запрос (схема тулов, параметры, все ключи
@@ -415,6 +443,10 @@ class ProviderRouter:
                         logger.warning("%s: HTTP %s, trying the next provider", provider.provider_id, status)
                         break
                     except (NoAvailableKeys, httpx.TimeoutException, httpx.TransportError) as exc:
+                        self._cool(
+                            provider,
+                            self._no_keys_cooldown(provider) if isinstance(exc, NoAvailableKeys) else TIMEOUT_COOLDOWN_SEC,
+                        )
                         logger.warning("%s: %s, switching provider", provider.provider_id, type(exc).__name__)
                         last_exc = exc
                         attempts.append(f"{provider.provider_id} {type(exc).__name__}")
@@ -434,6 +466,7 @@ class ProviderRouter:
                             last_exc = ProviderUnavailable(f"{provider.provider_id} returned an empty reply")
                             break
                         log_cache_usage(provider.provider_id, response)
+                        self.cooldown_until.pop(provider.provider_id, None)  # живой ответ снимает карантин
                         return RoutingResult(
                             response=response,
                             provider_id=provider.provider_id,
