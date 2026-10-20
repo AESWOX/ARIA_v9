@@ -226,7 +226,7 @@ def test_cron_not_due_job_is_not_executed():
         "ls -la",
         "cat README.md",
         "echo hello > out.txt",
-        "python3 -m pytest -q",
+        "python3 -m py_compile app.py",
         "git status",
         "rm file.txt",
         "rm -f a.txt",

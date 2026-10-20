@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -16,6 +17,10 @@ def _resolve_within(base: Path, relative: str) -> Path:
     return target
 
 
+def _has_git_component(rel: Path) -> bool:
+    return any(part.lower() == ".git" for part in rel.parts)
+
+
 async def file_read(input_json: dict, sandbox_root: str) -> dict:
     path = _resolve_within(Path(sandbox_root), input_json["path"])
     if not path.exists():
@@ -28,6 +33,9 @@ async def file_read(input_json: dict, sandbox_root: str) -> dict:
 
 async def file_write(input_json: dict, sandbox_root: str) -> dict:
     path = _resolve_within(Path(sandbox_root), input_json["path"])
+    # .git/hooks и .git/config — это исполнение кода при ближайшем `git commit`: запись туда только вручную
+    if _has_git_component(path.relative_to(Path(sandbox_root).resolve())):
+        raise PathEscapeError("запись внутрь .git запрещена (хуки и конфиг git исполняют код)")
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = input_json.get("mode", "overwrite")
     content = input_json.get("content", "")
@@ -58,5 +66,12 @@ async def file_write(input_json: dict, sandbox_root: str) -> dict:
 async def file_search(input_json: dict, sandbox_root: str) -> dict:
     root = Path(sandbox_root).resolve()
     pattern = input_json.get("glob", "**/*")
-    matches = [str(p.relative_to(root)) for p in root.glob(pattern) if p.is_file()]
+    norm = str(pattern).replace("\\", "/")
+    if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
+        raise PathEscapeError(f"glob {pattern!r} выходит за корень песочницы {root}")
+    matches = []
+    for p in root.glob(pattern):
+        # симлинк внутри песочницы не должен вести наружу
+        if p.is_file() and p.resolve().is_relative_to(root):
+            matches.append(str(p.relative_to(root)))
     return {"matches": matches[:500], "truncated": len(matches) > 500}
