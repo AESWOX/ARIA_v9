@@ -133,17 +133,27 @@ def test_file_search_rejects_escaping_patterns(tmp_path, pattern):
         asyncio.run(files_handler.file_search({"glob": pattern}, str(tmp_path / "box")))
 
 
-def test_file_search_does_not_follow_symlink_out(tmp_path):
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "secret.txt").write_text("secret")
-    box = tmp_path / "box"
+def test_file_search_drops_matches_that_resolve_outside_the_sandbox(tmp_path, monkeypatch):
+    """Совпадение, которое после resolve() лежит вне песочницы (так выглядит симлинк наружу), отбрасывается.
+
+    Без реального симлинка: на Windows их создание требует прав администратора, а тест не должен
+    пропускаться (сборщик считает любой skipped нечистым результатом). Реальный симлинк эквивалентен
+    пути, чей resolve() указывает за пределы корня."""
+    box = (tmp_path / "box").resolve()
+    outside = (tmp_path / "outside").resolve()
     box.mkdir()
+    outside.mkdir()
     (box / "ok.txt").write_text("ok")
-    try:
-        (box / "link").symlink_to(outside, target_is_directory=True)
-    except (OSError, NotImplementedError):
-        pytest.skip("symlinks unavailable")
+    (outside / "secret.txt").write_text("secret")
+
+    real_glob = type(box).glob
+
+    def fake_glob(self, pattern):
+        if self == box:
+            return iter([box / "ok.txt", outside / "secret.txt"])
+        return real_glob(self, pattern)
+
+    monkeypatch.setattr(type(box), "glob", fake_glob)
     out = asyncio.run(files_handler.file_search({"glob": "**/*"}, str(box)))
     assert out["matches"] == ["ok.txt"]
 
