@@ -17,6 +17,7 @@ import re
 from sqlalchemy.orm import Session as OrmSession
 
 from aria.config import get_settings
+from aria.core import timing
 from aria.db import models as m
 from aria.db import repository as repo
 from aria.core.criteria_audit import (
@@ -149,6 +150,7 @@ def _parse_criteria_statuses(text: str) -> dict[str, dict]:
     return out
 
 
+@timing.timed("audit")
 async def run_audit(
     db: OrmSession,
     session: m.Session,

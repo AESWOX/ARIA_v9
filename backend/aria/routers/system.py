@@ -218,6 +218,15 @@ async def system_self_test(_: str = Depends(require_runtime_token)) -> dict[str,
     }
 
 
+@router.get("/system/timings")
+async def system_timings(window_sec: float | None = Query(default=None, gt=0), _: str = Depends(require_runtime_token)) -> dict[str, Any]:
+    """p50/p95/max по этапам ответа (ожидание слота, проверка связи, вызов модели, сжатие, аудит).
+    ``window_sec`` — только последние N секунд; буфер в памяти, сбрасывается при перезапуске."""
+    from aria.core import timing
+
+    return {"window_sec": window_sec, "stages": timing.summary(window_sec)}
+
+
 @router.get("/system/stats")
 async def system_stats(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
     """§0: системная статистика (SystemStats) — platform + psutil при наличии."""
