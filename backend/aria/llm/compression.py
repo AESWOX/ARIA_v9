@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import httpx
 from sqlalchemy import func, select
 
 from aria.config import get_settings
+from aria.core import timing
 from aria.db import models as m
 from aria.db import repository as repo
 from aria.db.enums import TaskStatus
@@ -165,7 +167,7 @@ async def _summarize(text_block: str) -> str:
     raise last_error or NoAvailableKeys("compression pool exhausted")
 
 
-async def maybe_compress(session_id) -> bool:
+async def _maybe_compress_impl(session_id) -> bool:
     """Возвращает True если сжатие реально произошло в этом вызове.
 
     ВАЖНО: не держит db-транзакцию открытой во время сетевого запроса —
@@ -235,3 +237,22 @@ async def maybe_compress(session_id) -> bool:
 
     logger.info("session %s: compressed %d messages into 1 summary", session_id, middle_count)
     return True
+
+
+async def maybe_compress(session_id) -> bool:
+    """Обёртка с замером: ``compression_check`` — каждый вызов (включая «сжимать нечего»),
+    ``compression_run`` — только когда сжатие реально произошло и дорого стоило."""
+    t0 = time.monotonic()
+    did = False
+    ok = True
+    try:
+        did = await _maybe_compress_impl(session_id)
+        return did
+    except BaseException:
+        ok = False
+        raise
+    finally:
+        ms = (time.monotonic() - t0) * 1000.0
+        timing.record("compression_check", ms, ok)
+        if did:
+            timing.record("compression_run", ms, ok)

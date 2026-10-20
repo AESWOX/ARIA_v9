@@ -23,10 +23,17 @@ from aria.config import get_settings
 from aria.db import repository as repo
 from aria.db.base import session_scope
 from aria.db.enums import ProviderStatus
+from aria.core import timing
 from aria.llm.key_pool import NoAvailableKeys
 from aria.llm.providers.base import ChatMessage, LlmProvider, LlmResponse
 
 logger = logging.getLogger("local_agent.router")
+
+
+async def _timed_chat(provider, messages, tools, timeout_sec):
+    """Один вызов модели с замером (этап ``provider_call``): сеть и ответ провайдера без очереди и повторов."""
+    with timing.stage("provider_call"):
+        return await provider.chat(messages, tools, timeout_sec)
 
 
 class ProviderUnavailable(Exception):
@@ -258,20 +265,23 @@ class ProviderRouter:
     ) -> RoutingResult:
         """П.5.2 ТЗ: запрос держит слот класса провайдера — параллельные волны EXECUTE
         и делегирование не выбивают квоты free-tier одним залпом."""
+        t_wait = time.monotonic()
         async with self.provider_slot(provider_class):
-            return await self._route_chat_impl(
-                provider_class,
-                messages,
-                tools,
-                timeout_sec=timeout_sec,
-                allow_degrade=allow_degrade,
-                db=db,
-                resilient=resilient,
-                fallback_classes=fallback_classes,
-                retry_backoff_sec=retry_backoff_sec,
-                prefer_provider_id=prefer_provider_id,
-                reject_empty=reject_empty,
-            )
+            timing.record("provider_slot_wait", (time.monotonic() - t_wait) * 1000.0)
+            with timing.stage("route_chat"):
+                return await self._route_chat_impl(
+                    provider_class,
+                    messages,
+                    tools,
+                    timeout_sec=timeout_sec,
+                    allow_degrade=allow_degrade,
+                    db=db,
+                    resilient=resilient,
+                    fallback_classes=fallback_classes,
+                    retry_backoff_sec=retry_backoff_sec,
+                    prefer_provider_id=prefer_provider_id,
+                    reject_empty=reject_empty,
+                )
 
     async def _route_chat_impl(
         self,
@@ -298,7 +308,7 @@ class ProviderRouter:
             if preferred is not None and self.budget_gate(preferred.provider_class)[0]:
                 try:
                     if await self._connectivity_ok(preferred, db):
-                        response = await preferred.chat(messages, tools, timeout_sec)
+                        response = await _timed_chat(preferred, messages, tools, timeout_sec)
                         if reject_empty and _is_empty_reply(response):
                             logger.warning("preferred model %s returned an empty reply; using the class chain", prefer_provider_id)
                         else:
@@ -352,7 +362,7 @@ class ProviderRouter:
         if provider is None:
             raise ProviderUnavailable(f"no available provider for class={target_class} (§12.3)")
 
-        response = await provider.chat(messages, tools, timeout_sec)
+        response = await _timed_chat(provider, messages, tools, timeout_sec)
         log_cache_usage(provider.provider_id, response)
         return RoutingResult(response=response, provider_id=provider.provider_id, degraded_to_free=degraded)
 
@@ -361,9 +371,10 @@ class ProviderRouter:
 
     async def _connectivity_ok(self, provider: LlmProvider, db: OrmSession | None) -> bool:
         settings = get_settings()
-        ok = await provider.check_connectivity(settings.providers_connectivity_timeout_sec)
-        if not ok:
+        with timing.stage("connectivity_check"):
             ok = await provider.check_connectivity(settings.providers_connectivity_timeout_sec)
+            if not ok:
+                ok = await provider.check_connectivity(settings.providers_connectivity_timeout_sec)
         self._record_provider_status(provider, ProviderStatus.active if ok else ProviderStatus.offline, db=db)
         return ok
 
@@ -419,7 +430,7 @@ class ProviderRouter:
                 for attempt in range(RETRY_ATTEMPTS_PER_PROVIDER):
                     tried += 1
                     try:
-                        response = await provider.chat(messages, tools, timeout_sec)
+                        response = await _timed_chat(provider, messages, tools, timeout_sec)
                     except httpx.HTTPStatusError as exc:
                         status = exc.response.status_code
                         last_exc = exc
