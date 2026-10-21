@@ -40,6 +40,9 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.ico"],
-    "externalBin": ["bin/backend"]
+    "externalBin": ["bin/backend"],
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper" }
+    }
   }
 }
