@@ -125,7 +125,7 @@ export function TaskSpecPanel({
       </button>
 
       {open && (
-        <div className="mt-2 space-y-2">
+        <div className="mt-2 max-h-[40vh] space-y-2 overflow-y-auto pr-1">
           {hasQuestions && (
             <div className="space-y-1 border border-amber-500/40 bg-amber-500/10 p-2">
               <div className="flex items-center gap-1 font-medium">
@@ -165,7 +165,7 @@ export function TaskSpecPanel({
                   </div>
                 );
               })}
-              <div className="flex gap-2 pt-1">
+              <div className="sticky bottom-0 -mx-2 -mb-2 flex gap-2 border-t border-amber-500/40 bg-background px-2 py-2">
                 <Button size="sm" disabled={busy} onClick={() => void submit(false)}>
                   {busy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Check className="mr-1 h-3 w-3" />}
                   {L.clarifySend ?? "Send answers"}
