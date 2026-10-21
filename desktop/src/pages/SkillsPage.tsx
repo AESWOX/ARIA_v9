@@ -399,7 +399,7 @@ export default function SkillsPage() {
                     <div className="px-3 pt-2 pb-1 font-mondwest text-display text-xs tracking-[0.12em] text-text-tertiary">
                       {t.skills.categories}
                     </div>
-                    <div className="flex flex-col p-2 pt-1 gap-px max-h-[calc(100vh-340px)] overflow-y-auto">
+                    <div className="flex flex-col p-2 pt-1 gap-px max-h-[calc(var(--vh-avail,100vh)_-_340px)] overflow-y-auto">
                       {allCategories.map(({ key, name, count }) => {
                         const isActive = activeCategory === key;
 

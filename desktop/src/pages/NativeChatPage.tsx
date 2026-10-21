@@ -389,7 +389,7 @@ export default function NativeChatPage() {
     <div
       className={cn(
         "grid min-h-[420px] min-w-0 gap-3",
-        focus ? "h-[calc(100vh-6rem)] grid-cols-1" : "h-[calc(100vh-9rem)] md:grid-cols-[240px_minmax(0,1fr)]",
+        focus ? "h-[calc(var(--vh-avail,100vh)_-_6rem)] grid-cols-1" : "h-[calc(var(--vh-avail,100vh)_-_9rem)] md:grid-cols-[240px_minmax(0,1fr)]",
       )}
     >
       {/* ---------------- sessions ---------------- */}

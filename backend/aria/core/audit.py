@@ -287,11 +287,12 @@ async def run_audit(
                         ),
                     ),
                 ]
-                result = await router.route_chat(
-                    auditor_class, messages, tools=[], allow_degrade=True, db=db, prefer_provider_id=auditor_prefer,
-                    resilient=True, fallback_classes=("standard_reasoning", "free_tier_reasoning"),
-                    reject_empty=True,
-                )
+                with timing.stage("audit_model_call"):  # вторая модель отдельно от структурной проверки
+                    result = await router.route_chat(
+                        auditor_class, messages, tools=[], allow_degrade=True, db=db, prefer_provider_id=auditor_prefer,
+                        resilient=True, fallback_classes=("standard_reasoning", "free_tier_reasoning"),
+                        reject_empty=True,
+                    )
                 auditor_model = result.provider_id
                 budget_degraded = result.degraded_to_free
                 verdict, parsed_issues = _parse_audit_verdict(result.response.text)

@@ -13,6 +13,7 @@ behind POST /sessions/{id}/messages for real tasks.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -23,7 +24,7 @@ from sqlalchemy import func, select
 
 from aria.api.auth import require_runtime_token
 from aria.config import get_settings
-from aria.core import runprofile
+from aria.core import runprofile, timing
 from aria.db import models as m
 from aria.db import repository as repo
 from aria.db.base import session_scope
@@ -338,6 +339,14 @@ async def chat_send(
     request: Request,
     _: str = Depends(require_runtime_token),
 ) -> dict[str, Any]:
+    # chat_total: весь хендлер, от запроса до сохранённого ответа (4xx/5xx считаются как errors).
+    # Не декоратор: при ``from __future__ import annotations`` FastAPI разбирает аннотации в globals обёртки.
+    with timing.stage("chat_total"):
+        return await _chat_send(session_id, payload, request)
+
+
+async def _chat_send(session_id: uuid.UUID, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    t_start = time.monotonic()
     content = str(payload.get("content") or "").strip()
     retry = bool(payload.get("retry"))  # re-ask using the last stored user message (no duplicate)
     if not content and not retry:
@@ -402,6 +411,8 @@ async def chat_send(
     # PR-7: DLP применяется к исходящему промпту и снимается с ответа. Только чат —
     # агентский цикл не трогаем: плейсхолдеры сломали бы пути и команды в tool calls.
     prompt, dlp_applied = _dlp_mask(prompt, session_id)
+    # всё до вызова модели (запись сообщения, сжатие, память, сборка промпта): то, что пользователь ждёт зря
+    timing.record("chat_prepare", (time.monotonic() - t_start) * 1000.0)
     try:
         result = await request.app.state.router.route_chat(
             chat_class,
@@ -425,7 +436,7 @@ async def chat_send(
         raise HTTPException(status_code=503, detail=NOT_CONFIGURED_HINT)
 
     # 3) store the assistant message
-    with session_scope() as db:
+    with timing.stage("chat_store"), session_scope() as db:
         session = repo.get_session(db, session_id)
         if session is None:  # deleted while the model was thinking
             raise HTTPException(status_code=404, detail="session was deleted")

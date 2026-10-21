@@ -343,6 +343,15 @@ BOOTSTRAP_TASK_PREFIX = "Проверить backend-owned bootstrap"
 
 
 def seed_database() -> None:
+    """Demo content (bootstrap session, draft task, ``stub-local`` provider row) is opt-in.
+
+    A fresh install must start empty: no fake "Backend initialised" conversation or
+    demo task for a real user. Smoke/dev runs that want it set ``ARIA_SEED_DEMO=1``.
+    """
+    import os
+
+    if os.environ.get("ARIA_SEED_DEMO", "").strip().lower() not in {"1", "true", "yes"}:
+        return
     with session_scope() as db:
         sessions = repo.list_sessions(db)
         if sessions:
