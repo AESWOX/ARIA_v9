@@ -553,7 +553,7 @@ export default function ConfigPage() {
                   {t.config.sections}
                 </div>
 
-                <div className="flex sm:flex-col gap-1 sm:gap-px p-2 sm:pt-1 overflow-x-auto sm:overflow-x-visible scrollbar-none sm:max-h-[calc(100vh-260px)] sm:overflow-y-auto">
+                <div className="flex sm:flex-col gap-1 sm:gap-px p-2 sm:pt-1 overflow-x-auto sm:overflow-x-visible scrollbar-none sm:max-h-[calc(var(--vh-avail,100vh)_-_260px)] sm:overflow-y-auto">
                   {categories.map((cat) => {
                     const isActive = !isSearching && activeCategory === cat;
 

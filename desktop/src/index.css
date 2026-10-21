@@ -106,11 +106,92 @@ code, kbd, pre, samp, .font-mono, .font-mono-ui {
   --font-mono: var(--theme-font-mono);
 }
 
+/* Custom window chrome (frameless Tauri window): WindowChrome sets --chrome-h on <html>.
+   In a plain browser it stays 0px and the layout is unchanged. --vh-avail is the viewport
+   height minus the chrome; use it instead of 100vh/100dvh for full-height layouts. */
+:root {
+  --chrome-h: 0px;
+  --vh-avail: calc(100dvh - var(--chrome-h));
+}
+
+.h-app {
+  height: var(--vh-avail, 100dvh);
+  max-height: var(--vh-avail, 100dvh);
+}
+
 #root {
   min-height: 0;
-  height: 100%;
-  max-height: 100%;
+  margin-top: var(--chrome-h, 0px);
+  height: calc(100% - var(--chrome-h, 0px));
+  max-height: calc(100% - var(--chrome-h, 0px));
   overflow: hidden;
+}
+
+.window-chrome {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--chrome-h, 36px);
+  z-index: 2147483000;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  background: var(--background-base);
+  border-bottom: 1px solid color-mix(in srgb, var(--midground-base) 14%, transparent);
+  color: var(--midground-base);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.window-chrome__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+  flex: 1;
+  font-family: var(--theme-font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.22em;
+  opacity: 0.75;
+}
+
+.window-chrome__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.window-chrome__buttons {
+  display: flex;
+}
+
+.window-chrome__btn {
+  width: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.window-chrome__btn:hover {
+  background: color-mix(in srgb, var(--midground-base) 14%, transparent);
+}
+
+.window-chrome__btn:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+.window-chrome__btn--close:hover {
+  background: #e5484d;
+  color: #fff;
 }
 
 /* P2.2: the mobile @media (max-width: 768px) block was removed — the

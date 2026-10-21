@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote-window",
+  "description": "Window controls for the page served by the local backend (same-origin SPA mode): custom title bar of the frameless window. Window and event APIs only.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
+  },
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-close"
+  ]
+}

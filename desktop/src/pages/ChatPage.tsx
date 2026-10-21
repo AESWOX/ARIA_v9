@@ -904,7 +904,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           role="complementary"
           aria-label={modelToolsLabel}
           className={cn(
-            "font-mondwest fixed top-0 right-0 z-[60] flex h-dvh max-h-dvh w-64 min-w-0 flex-col antialiased",
+            "font-mondwest fixed top-[var(--chrome-h,0px)] right-0 z-[60] flex h-app w-64 min-w-0 flex-col antialiased",
             "border-l border-current/20 text-midground",
             "bg-background-base/95 backdrop-blur-sm",
             "transition-transform duration-200 ease-out",

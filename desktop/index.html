@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#041c1c">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
@@ -8,8 +8,71 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <title>ARIA - Dashboard</title>
+    <!-- Boot splash: pure HTML + CSS (CSP forbids inline scripts), painted from the first frame so the
+         window is never white. main.tsx removes it once the app has mounted. -->
+    <style>
+      html, body { margin: 0; background: #041c1c; }
+      #boot-splash {
+        position: fixed; inset: 0; z-index: 2147483001;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px;
+        background: radial-gradient(ellipse at 50% 38%, #0b3b37 0%, #041c1c 62%);
+        color: #bffbe6;
+        font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+        transition: opacity 0.4s ease;
+      }
+      #boot-splash .bs-ring { width: 120px; height: 120px; }
+      #boot-splash .bs-ring circle { fill: none; stroke-width: 3; stroke-linecap: round; }
+      #boot-splash .bs-ring .bs-track { stroke: rgba(191, 251, 230, 0.12); }
+      #boot-splash .bs-ring .bs-arc {
+        stroke: #5cf2c4; stroke-dasharray: 90 270; transform-origin: 60px 60px;
+        animation: bs-spin 1.4s linear infinite;
+        filter: drop-shadow(0 0 6px rgba(92, 242, 196, 0.8));
+      }
+      #boot-splash .bs-ring text {
+        fill: #bffbe6; font-size: 26px; font-weight: 700; letter-spacing: 3px;
+        text-anchor: middle; dominant-baseline: central;
+      }
+      #boot-splash .bs-phrases { position: relative; width: min(86vw, 560px); height: 1.6em; text-align: center; font-size: 15px; letter-spacing: 0.14em; }
+      #boot-splash .bs-phrases span {
+        position: absolute; inset: 0; opacity: 0; animation: bs-phrase 12s infinite backwards;
+      }
+      #boot-splash .bs-phrases span:nth-child(2) { animation-delay: 3s; }
+      #boot-splash .bs-phrases span:nth-child(3) { animation-delay: 6s; }
+      #boot-splash .bs-phrases span:nth-child(4) { animation-delay: 9s; }
+      #boot-splash .bs-bar { width: 180px; height: 2px; overflow: hidden; background: rgba(191, 251, 230, 0.12); border-radius: 2px; }
+      #boot-splash .bs-bar i {
+        display: block; width: 40%; height: 100%; background: #5cf2c4; border-radius: 2px;
+        box-shadow: 0 0 8px rgba(92, 242, 196, 0.9); animation: bs-slide 1.3s ease-in-out infinite;
+      }
+      @keyframes bs-spin { to { transform: rotate(360deg); } }
+      @keyframes bs-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(260%); } }
+      @keyframes bs-phrase {
+        0% { opacity: 0; transform: translateY(6px); }
+        4%, 22% { opacity: 1; transform: none; }
+        26%, 100% { opacity: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-splash .bs-ring .bs-arc, #boot-splash .bs-bar i { animation: none; }
+        #boot-splash .bs-phrases span { animation: none; opacity: 0; }
+        #boot-splash .bs-phrases span:first-child { opacity: 1; }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot-splash" role="status" aria-live="polite">
+      <svg class="bs-ring" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="bs-track" cx="60" cy="60" r="54" />
+        <circle class="bs-arc" cx="60" cy="60" r="54" />
+        <text x="60" y="61">ARIA</text>
+      </svg>
+      <div class="bs-phrases">
+        <span>WAIT A SEC… поднимаю агентов</span>
+        <span>BOOSTING YOUR PROJECT… греем нейроны</span>
+        <span>ПОЧТИ ГОТОВО… расставляю мысли по полочкам</span>
+        <span>SYSTEMS ONLINE… ещё мгновение</span>
+      </div>
+      <div class="bs-bar" aria-hidden="true"><i></i></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
