@@ -21,6 +21,7 @@ import shutil
 from typing import Any, Callable
 
 import httpx
+from aria.core.winproc import NO_WINDOW
 
 logger = logging.getLogger("local_agent.mcp")
 
@@ -86,7 +87,7 @@ class StdioTransport:
             self._proc = await asyncio.create_subprocess_exec(
                 exe, *self.args,
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                env={**os.environ, **self.env}, cwd=self.cwd, limit=16 * 1024 * 1024,
+                env={**os.environ, **self.env}, cwd=self.cwd, limit=16 * 1024 * 1024, **NO_WINDOW,
             )
         except (OSError, ValueError) as exc:
             raise McpError(f"cannot start '{self.command}': {exc}") from exc

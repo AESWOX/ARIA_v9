@@ -22,6 +22,7 @@ import shlex
 from pathlib import Path
 
 from aria.tools.validators import classify_shell_command
+from aria.core.winproc import NO_WINDOW
 
 
 # Дочерний процесс получает ТОЛЬКО эти переменные (default-deny, как и сама политика команд).
@@ -71,6 +72,7 @@ async def shell_execute(input_json: dict, timeout_sec: int, cwd: str | None = No
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
         env=build_shell_env(),
+        **NO_WINDOW,
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)

@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from aria import paths
+from aria.core.winproc import NO_WINDOW
 
 logger = logging.getLogger("local_agent.hooks")
 
@@ -140,6 +141,7 @@ async def _run_one(hook: dict[str, Any], event: str, payload_json: str, cwd: str
             env=_clean_env(event, payload_json),
             cwd=cwd if cwd and os.path.isdir(cwd) else None,
             start_new_session=(os.name != "nt"),  # своя группа процессов → можно убить дерево целиком
+            **NO_WINDOW,
         )
     except Exception as exc:  # noqa: BLE001
         run.error = f"spawn failed: {exc}"

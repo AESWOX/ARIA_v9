@@ -32,6 +32,7 @@ from aria.db import models as m
 from aria.db import repository as repo
 from aria.db.base import session_scope
 from aria.db.enums import SourceTrust, TaskStatus, ToolStatus
+from aria.core.winproc import NO_WINDOW
 
 
 async def run_codex_task(task_id: uuid.UUID, model: str | None = None) -> None:
@@ -84,6 +85,7 @@ async def run_codex_task(task_id: uuid.UUID, model: str | None = None) -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            **NO_WINDOW,
         )
     except FileNotFoundError:
         await _fail_task(
