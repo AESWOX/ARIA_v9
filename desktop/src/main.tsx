@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import "./index.css";
+import "./lib/externalLinks";
 import App from "./App";
 import { WindowChrome } from "./components/WindowChrome";
 import { SystemActionsProvider } from "./contexts/SystemActions";

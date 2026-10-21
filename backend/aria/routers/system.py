@@ -62,6 +62,42 @@ async def shutdown_backend(_: str = Depends(require_runtime_token)) -> dict[str,
     return {'ok': True}
 
 
+def _external_url_ok(url: str) -> bool:
+    """Только обычные веб-ссылки: никаких file:, javascript:, custom-схем и UNC-путей."""
+    from urllib.parse import urlsplit
+
+    if not isinstance(url, str) or not url or len(url) > 4096 or any(c in url for c in "\r\n\x00"):
+        return False
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.hostname)
+
+
+@router.post("/system/open-external")
+async def open_external(body: dict[str, Any], _: str = Depends(require_runtime_token)) -> dict[str, Any]:
+    """Открыть ссылку в браузере по умолчанию.
+
+    WebView2 внутри Tauri молча игнорирует window.open и target=_blank (плагина opener нет), поэтому
+    кнопки «Authorize» в MCP, биллинг в Models и ссылки в тексте ничего не делали. Бэкенд — локальный
+    процесс на машине пользователя, он и открывает браузер. На сервере (не loopback) браузера нет.
+    """
+    settings = get_settings()
+    server_mode = os.getenv("ARIA_SERVER_MODE", "0") == "1" or settings.http_host not in ("127.0.0.1", "localhost")
+    if server_mode:
+        raise HTTPException(status_code=409, detail="no local browser in server mode")
+    url = body.get("url")
+    if not _external_url_ok(url):
+        raise HTTPException(status_code=400, detail="only http(s) urls are allowed")
+    import webbrowser
+
+    opened = await asyncio.to_thread(webbrowser.open, url, 2)
+    if not opened:
+        raise HTTPException(status_code=502, detail="could not launch the default browser")
+    return {"ok": True}
+
+
 @router.get("/system/self-test")
 async def system_self_test(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
     """§0: живой эндпоинт целостности — проверяет БД, модели, репо, роутер, скиллы."""
