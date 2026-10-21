@@ -13,7 +13,7 @@ import fillerBgUrl from "@vendor/ui/assets/filler-bg0.webp";
  *
  *   z-1   bg = `var(--background-base)`, mix-blend-mode driven by
  *         `--component-backdrop-bg-blend-mode` (default `difference`).
- *         Both LENS_0-style dark themes and the LENS_5I-style Nous Blue
+ *         Both LENS_0-style dark themes and the LENS_5I-style ARIA Blue
  *         light theme keep `difference` here — the canvas is flipped by
  *         the z-200 FG inversion layer, not by changing this blend mode.
  *         The CSS var is exposed as a hook so future presets can override

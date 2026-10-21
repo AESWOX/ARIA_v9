@@ -126,10 +126,10 @@ export interface ThemeComponentStyles {
  *  omit either field to inherit the default token defined in
  *  `index.css` (ARIA-teal `#ffe6cb` for input, `#34d399` for output).
  *
- *  Inverted-lens themes (e.g. Nous Blue) must pre-invert these hex
+ *  Inverted-lens themes (e.g. ARIA Blue) must pre-invert these hex
  *  values so they read as their intended visual color after the FG
  *  difference layer flips them (`out = 255 − channel`). E.g. to make
- *  output paint as Nous-blue `#0053FD` on screen, set
+ *  output paint as ARIA-blue `#0053FD` on screen, set
  *  `outputTokenAccent: "#FFAC02"` — the difference math reverses it. */
 export interface ThemeSeriesColors {
   /** Input-tokens series accent (Analytics chart bars + table values). */

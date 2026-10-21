@@ -125,11 +125,11 @@ def generate_manifest(data: dict, elapsed: float | None) -> str:
             if ck.get("modules"):
                 lines[-1] = lines[-1].replace(st, f"{st} ({ck['modules']} modules)")
 
-    # Hermes refs
-    hr = checks.get("hermes_references", {})
+    # Legacy-name refs
+    hr = checks.get("legacy_name_references", {})
     if isinstance(hr, dict):
-        cnt = hr.get("files_with_hermes", -1)
-        lines.append(f"- {'✅' if cnt == 0 else '❌'} **Hermes refs in src/**: {cnt} files")
+        cnt = hr.get("files_with_legacy_name", -1)
+        lines.append(f"- {'✅' if cnt == 0 else '❌'} **Legacy-name refs in src/**: {cnt} files")
 
     # Database summary
     db = checks.get("database", {})
@@ -152,13 +152,13 @@ def generate_manifest(data: dict, elapsed: float | None) -> str:
         "",
         "## Архитектурные решения",
         "",
-        "- **state.db (1.3GB Hermes legacy)**: A — archived as read-only",
-        "  ARIA has its own schema (15 tables), Hermes state schema is different.",
+        "- **state.db (1.3GB legacy)**: A — archived as read-only",
+        "  ARIA has its own schema (15 tables), the legacy state schema is different.",
         "  Migration would not provide value proportional to effort.",
         "- **Database profile**: A — dev-only (SQLite)",
         "  Local budget agent, no production deployment target.",
         "  Not production-ready for multi-user / HA scenarios.",
-        "- **Frontend @nous-research/ui**: React 19 upgrade (from 18)",
+        "- **Frontend UI kit**: React 19 upgrade (from 18)",
         "  Peer dependency satisfied, npm ci now works without --legacy-peer-deps.",
     ])
 
@@ -202,7 +202,7 @@ def ci_gate() -> bool:
         checks_new = fresh.get("checks", {})
 
         issues = []
-        for key in ["vault", "backend_tests", "hermes_references"]:
+        for key in ["vault", "backend_tests", "legacy_name_references"]:
             v_old = checks_old.get(key, {})
             v_new = checks_new.get(key, {})
             if isinstance(v_old, dict) and isinstance(v_new, dict):

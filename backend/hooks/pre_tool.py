@@ -5,7 +5,7 @@ PreToolUse hook — enforcement gate requiring HUMAN approval for each edit.
 HOW IT WORKS:
   1. Agent calls pre_tool.py <op> <path>
   2. pre_tool.py generates a random APPROVAL CODE and writes
-     `.hermes/approval/<basename>.pending` with the diff + code
+     `.aria/approval/<basename>.pending` with the diff + code
   3. pre_tool.py exits BLOCKED with the code in stdout
   4. Agent REPORTS to user: "BLOCKED. Run: python backend/hooks/approve.py <basename> <CODE>"
   5. USER runs approve.py → consumes `.pending`, writes `.approved`
@@ -14,7 +14,7 @@ HOW IT WORKS:
 ENFORCEMENT:
   - Agent CANNOT call approve.py itself (system prompt enforces: "You MUST NOT")
   - .pending file consumed on use — one-shot approval
-  - All approvals logged in backend/.hermes/approval/ with timestamp
+  - All approvals logged in backend/.aria/approval/ with timestamp
 """
 
 import sys
@@ -27,9 +27,9 @@ import difflib
 
 # ARIA root — relative to this script location (backend/hooks/ -> backend/)
 ARIA_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-HERMES_DIR = os.path.join(ARIA_ROOT, ".hermes")
-APPROVAL_DIR = os.path.join(HERMES_DIR, "approval")
-BAK_DIR = os.path.join(HERMES_DIR, "bak")
+STATE_DIR = os.path.join(ARIA_ROOT, ".aria")
+APPROVAL_DIR = os.path.join(STATE_DIR, "approval")
+BAK_DIR = os.path.join(STATE_DIR, "bak")
 
 PROTECTED = [
     "backend/aria/core/loop.py",

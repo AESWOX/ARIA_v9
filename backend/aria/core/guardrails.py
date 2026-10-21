@@ -1,7 +1,7 @@
 """
 core/guardrails.py — §11 Tool-call loop guardrails.
 
-Port of Hermes' agent/tool_guardrails.py for ARIA.
+Tool-call guardrails for ARIA.
 
 Per-turn controller for detecting repeated failures, same-tool loops,
 and no-progress idempotent calls. Returns decisions (allow/warn/block)

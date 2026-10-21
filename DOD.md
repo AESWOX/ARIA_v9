@@ -98,7 +98,7 @@
 | D3 | Главный JS-чанк < 500 КБ (сейчас `vendor-*.js` ≈ 580 КБ) | `check_bundle_budget` | OPEN — разбить vendor или поднять лимит осознанно |
 | D4 | Есть vitest для страниц Chat, Notes, Sessions | `npm test` | OPEN |
 | D5 | `npm audit`: 0 high, 0 critical | `check_npm_audit` | OPEN |
-| D6 | 0 упоминаний «hermes» в `desktop/src/` | `check_hermes_references` | DONE по коду 09.10: `grep -ri hermes desktop/src` пуст (клон репо) |
+| D6 | 0 упоминаний наследованных названий в `desktop/src/` | `check_legacy_name_references` | DONE по коду 09.10: поиск наследованных названий в `desktop/src` пуст (клон репо) |
 
 ---
 

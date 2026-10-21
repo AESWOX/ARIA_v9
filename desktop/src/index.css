@@ -1,16 +1,16 @@
 @import 'tailwindcss';
-/* `fonts.css` must come BEFORE `globals.css`: as of @nous-research/ui 0.14.x,
+/* `fonts.css` must come BEFORE `globals.css`: as of the vendored UI kit,
    `globals.css` only declares the `--font-*` CSS variables (Collapse, Rules
    Compressed/Expanded, Mondwest). The `@font-face` registrations live in
    `fonts.css`, so without this import the DS variables resolve to font
    families the browser never loads and components fall back to a system
    stack (Tabs, Segmented, Typography, Buttons, etc. all look unstyled). */
-@import '../src/components/vendor/nous-ui/ui/fonts.css';
-@import '../src/components/vendor/nous-ui/ui/globals.css';
+@import '../src/components/vendor/ui-kit/ui/fonts.css';
+@import '../src/components/vendor/ui-kit/ui/globals.css';
 
 /* Scan the published design-system bundle so its utility classes survive
    Tailwind's JIT purge. */
-@source '../src/components/vendor/nous-ui';
+@source '../src/components/vendor/ui-kit';
 
 /* ------------------------------------------------------------------ */
 /* Terminal font — P1.3: the JetBrains Mono @font-face rules were      */
@@ -21,7 +21,7 @@
 /* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
-/* ARIA — Nous DS with the LENS_0 (ARIA teal) lens applied   */
+/* ARIA — design system with the LENS_0 (ARIA teal) lens applied   */
 /* statically. Mirrors nousnet-web/(aria-agent)/layout.tsx so the    */
 /* canonical ARIA palette is the default — teal canvas + cream      */
 /* accent — without relying on leva/gsap at runtime.                  */
@@ -124,10 +124,10 @@ small { font-size: 1.0625rem; }
 code { font-size: 0.875rem; }
 
 /* Shadcn-compat tokens.
-   The dashboard's page code predates the Nous DS and uses shadcn-style
+   The dashboard's page code predates the ARIA design system and uses shadcn-style
    utility classes (bg-card, text-muted-foreground, border-border, etc.)
    extensively. Rather than rewrite every call site, we expose those
-   tokens on top of the Nous palette so classes continue to resolve. */
+   tokens on top of the ARIA palette so classes continue to resolve. */
 @theme inline {
   /* Remap foreground to midground so `text-foreground` / `bg-foreground`
      stay visible — in LENS_0, `--foreground` itself has alpha 0. */

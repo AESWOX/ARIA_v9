@@ -11,7 +11,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      "@vendor/ui": path.resolve(__dirname, "./src/components/vendor/nous-ui"),
+      "@vendor/ui": path.resolve(__dirname, "./src/components/vendor/ui-kit"),
     },
   },
   build: {
@@ -24,10 +24,10 @@ export default defineConfig({
         // initial main bundle stays well under 500 kB. These groups are
         // cache-friendly and change only on dependency bumps.
         manualChunks(id) {
-          // Vendorized copy of the Nous design system lives under src/ and
+          // Vendorized copy of the UI kit lives under src/ and
           // weighs heavily (Command, Toast, Dialog, …) — split it out too.
           // Match on the bare dir name: Vite ids use backslashes on Windows.
-          if (id.includes("nous-ui")) return "vendor-nous-ui";
+          if (id.includes("ui-kit")) return "vendor-ui-kit";
           if (!id.includes("node_modules")) return undefined;
           // P1.2: a single stable vendor chunk (no manual group cycles) keeps
           // the initial app bundle small; xterm is the one heavyweight that

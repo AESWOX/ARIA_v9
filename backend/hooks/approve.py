@@ -7,8 +7,8 @@ Called by the USER (not the agent) in response to pre_tool.py's BLOCKED message.
 Usage:
     python backend/hooks/approve.py <basename> <code>
 
-The code must match the code in `.hermes/approval/<basename>.pending`.
-On success, writes `.hermes/approval/<basename>.approved` which pre_tool.py
+The code must match the code in `.aria/approval/<basename>.pending`.
+On success, writes `.aria/approval/<basename>.approved` which pre_tool.py
 checks on retry.
 
 The .pending file is CONSUMED (deleted) after reading, so each approval
@@ -21,8 +21,8 @@ import json
 import time
 
 HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
-HERMES_DIR = os.path.normpath(os.path.join(HOOKS_DIR, "..", ".hermes"))
-APPROVAL_DIR = os.path.join(HERMES_DIR, "approval")
+STATE_DIR = os.path.normpath(os.path.join(HOOKS_DIR, "..", ".aria"))
+APPROVAL_DIR = os.path.join(STATE_DIR, "approval")
 
 
 def main():

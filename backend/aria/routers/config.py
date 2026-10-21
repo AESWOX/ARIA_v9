@@ -38,7 +38,7 @@ _LOAD_LOCK = threading.Lock()
 _BUILTIN_THEMES: tuple[tuple[str, str, str], ...] = (
     ("default", "ARIA Teal", "Classic dark teal — the canonical ARIA look"),
     ("default-large", "ARIA Teal (Large)", "ARIA Teal with bigger fonts and roomier spacing"),
-    ("nous-blue", "Nous Blue", "Light mode — vivid Nous-blue accents on cream canvas"),
+    ("aria-blue", "ARIA Blue", "Light mode — vivid ARIA-blue accents on cream canvas"),
     ("midnight", "Midnight", "Deep blue-violet with cool accents"),
     ("ember", "Ember", "Warm crimson and bronze — forge vibes"),
     ("mono", "Mono", "Clean grayscale — minimal and focused"),

@@ -2,7 +2,6 @@ export { AnimatedCount, useAnimatedCount } from "./ui/components/animated-count.
 export { AsciiSkeleton, Scramble as AsciiScramble } from "./ui/components/ascii.js";
 export { Badge } from "./ui/components/badge.js";
 export { BottomSheet } from "./ui/components/bottom-sheet.js";
-export { NousGirlBadge } from "./ui/components/badges/nous-girl.js";
 export { BlendMode, useBlendMode, withBlendMode } from "./ui/components/blend-mode.js";
 export { Blink } from "./ui/components/blink.js";
 export { Button } from "./ui/components/button.js";

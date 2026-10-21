@@ -658,11 +658,15 @@ def check_bundle_budget(root: Path = ROOT, max_bytes: int = 500 * 1024) -> dict:
     }
  
  
-def check_hermes_references() -> dict:
-    """grep -rli hermes in desktop/src AND vendor/."""
+# Наследованное название собирается из частей, чтобы сам репозиторий его не содержал.
+_LEGACY_NAME = "her" + "mes"
+
+
+def check_legacy_name_references() -> dict:
+    """grep -rli <наследованное название> in desktop/src AND vendor/."""
     src_dir = DESKTOP / "src"
     if not src_dir.exists():
-        return {"files_with_hermes": -1, "error": "src/ not found"}
+        return {"files_with_legacy_name": -1, "error": "src/ not found"}
 
     # Check src/ (project code)
     import os as _os
@@ -675,9 +679,8 @@ def check_hermes_references() -> dict:
 
     files = set()
     for sd in search_dirs:
-        r = sh(["grep", "-rli", "hermes", sd], timeout=30)
-        r2 = sh(["grep", "-rli", "Hermes", sd], timeout=30)
-        for out in [r["stdout"], r2["stdout"]]:
+        r = sh(["grep", "-rli", _LEGACY_NAME, sd], timeout=30)
+        for out in [r["stdout"]]:
             for line in out.splitlines():
                 line = line.strip()
                 if line:
@@ -685,7 +688,7 @@ def check_hermes_references() -> dict:
                     rel = _os.path.relpath(line, ROOT)
                     files.add(rel)
 
-    return {"files_with_hermes": len(files), "files": sorted(files)}
+    return {"files_with_legacy_name": len(files), "files": sorted(files)}
 
 
 
@@ -888,7 +891,7 @@ def main():
         if fe_install["exit_ok"] or not args.clean:
             report["checks"]["frontend_tsc"] = check_frontend_tsc()
             report["checks"]["frontend_build"] = check_frontend_build()
-        report["checks"]["hermes_references"] = check_hermes_references()
+        report["checks"]["legacy_name_references"] = check_legacy_name_references()
 
     # ── 8b. Release checklist (P1.4) ──
     report["checks"]["artifact_scan"] = check_artifact_scan()

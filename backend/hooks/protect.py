@@ -19,8 +19,8 @@ import difflib
 import datetime
 
 ARIA_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-HERMES_DIR = os.path.join(ARIA_ROOT, ".hermes")
-BAK_DIR = os.path.join(HERMES_DIR, "bak")
+STATE_DIR = os.path.join(ARIA_ROOT, ".aria")
+BAK_DIR = os.path.join(STATE_DIR, "bak")
 
 PROTECTED = [
     "backend/aria/core/loop.py",

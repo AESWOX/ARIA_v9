@@ -185,7 +185,7 @@ export const roseTheme: DashboardTheme = {
 };
 
 /**
- * Nous Blue — the inverted "light mode" ARIA look, ported from the
+ * ARIA Blue — the inverted "light mode" ARIA look, ported from the
  * LENS_5I overlay preset in `@vendor/ui`.
  *
  * Unlike the other built-ins (which paint dark color directly on the
@@ -194,7 +194,7 @@ export const roseTheme: DashboardTheme = {
  * that flips the entire stack below it. Authoring colors stay dark
  * (`#170d02` brown background, `#FFAC02` orange midground), and the
  * inversion converts them to their visual complements at paint time —
- * the orange midground reads as #0053FD Nous-blue on screen, against a
+ * the orange midground reads as #0053FD ARIA-blue on screen, against a
  * cream `#E8F2FD` canvas.
  *
  * Note on bg blend mode: the DS Lens uses `multiply` for LENS_5I because
@@ -209,10 +209,10 @@ export const roseTheme: DashboardTheme = {
  * Source of truth for the palette: `design-language/src/ui/components/
  * overlays/lens.ts` (LENS_5I export).
  */
-export const nousBlueTheme: DashboardTheme = {
-  name: "nous-blue",
-  label: "Nous Blue",
-  description: "Light mode — vivid Nous-blue accents on cream canvas",
+export const ariaBlueTheme: DashboardTheme = {
+  name: "aria-blue",
+  label: "ARIA Blue",
+  description: "Light mode — vivid ARIA-blue accents on cream canvas",
   palette: {
     background: { hex: "#170d02", alpha: 1 },
     midground: { hex: "#FFAC02", alpha: 1 },
@@ -258,13 +258,13 @@ export const nousBlueTheme: DashboardTheme = {
   // Pre-inverted data-series accents for the Analytics/Models token
   // charts. The defaults (#ffe6cb cream + #34d399 emerald) would render
   // through the FG difference layer as dark navy + hot-coral on the
-  // bright Nous-blue canvas — the coral is the "red" users see for
+  // bright ARIA-blue canvas — the coral is the "red" users see for
   // Output values without these overrides. Source → on-screen:
   //   Input:  #ffe6cb → #001934 (dark navy)        ← unchanged
-  //   Output: #ffac02 → #0053fd (vivid Nous-blue)  ← brand accent
+  //   Output: #ffac02 → #0053fd (vivid ARIA-blue)  ← brand accent
   // Input keeps the cream source so it stays a neutral, low-contrast
   // dark-blue against the cream canvas; output paints as the brand
-  // Nous-blue so the "primary" series in token-flow charts reads as
+  // ARIA-blue so the "primary" series in token-flow charts reads as
   // the highlight color, matching the rest of the inverted UI chrome.
   seriesColors: {
     inputTokenAccent: "#ffe6cb",
@@ -273,7 +273,7 @@ export const nousBlueTheme: DashboardTheme = {
   // Explicit picker swatch — the raw palette hex (`#170d02`, `#FFAC02`,
   // amber rgba) doesn't reflect what users see after the FG inversion,
   // so we paint the post-inversion visual triplet directly:
-  //   white → vivid Nous-blue → cream/light-blue
+  //   white → vivid ARIA-blue → cream/light-blue
   // matching the actual on-screen rendering of the theme.
   swatchColors: ["#FFFFFF", "#0053FD", "#E8F2FD"],
 };
@@ -302,7 +302,7 @@ export const defaultLargeTheme: DashboardTheme = {
 export const BUILTIN_THEMES: Record<string, DashboardTheme> = {
   default: defaultTheme,
   "default-large": defaultLargeTheme,
-  "nous-blue": nousBlueTheme,
+  "aria-blue": ariaBlueTheme,
   midnight: midnightTheme,
   ember: emberTheme,
   mono: monoTheme,

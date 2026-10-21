@@ -2,7 +2,6 @@ export { AnimatedCount, useAnimatedCount } from './ui/components/animated-count'
 export { AsciiSkeleton, Scramble as AsciiScramble } from './ui/components/ascii';
 export { Badge } from './ui/components/badge';
 export { BottomSheet } from './ui/components/bottom-sheet';
-export { NousGirlBadge } from './ui/components/badges/nous-girl';
 export { BlendMode, useBlendMode, withBlendMode } from './ui/components/blend-mode';
 export type { BlendModeProps } from './ui/components/blend-mode';
 export { Blink } from './ui/components/blink';

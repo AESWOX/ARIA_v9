@@ -19,7 +19,7 @@
 | 8 | **Self-test** | `python dod_verify.py` (проверка `/system/self-test`) | все под-проверки ok |
 | 9 | **Live providers** | встроено в `dod_verify.py` (`check_live_providers`) | ≥1 реальный провайдер отвечает |
 | 10 | **Vault** | встроено в `dod_verify.py` (`check_vault`) | >0 `.md` файлов |
-| 11 | **No Hermes references** | встроено в `dod_verify.py` (`check_hermes_references`) | 0 файлов с "hermes" в `desktop/src/` |
+| 11 | **No legacy-name references** | встроено в `dod_verify.py` (`check_legacy_name_references`) | 0 файлов с наследованными названиями в `desktop/src/` |
 | 12 | **Smoke test (manual)** | установить `.msi` на чистую машину, запустить | окно открывается, `/status` → 200 за <6 с, нет белого экрана |
 
 ## Ручные проверки (не автоматизированы)

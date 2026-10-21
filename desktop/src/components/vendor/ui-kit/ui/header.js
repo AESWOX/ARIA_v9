@@ -15,7 +15,7 @@ import { ThemeToggle } from "./components/theme-toggle.js";
 import { H2 } from "./components/typography/h2.js";
 import { Small } from "./components/typography/small.js";
 const DEFAULT_BRAND = /* @__PURE__ */ jsxs("hgroup", { className: "flex flex-col gap-2", children: [
-  /* @__PURE__ */ jsx(Small, { children: "Nous" }),
+  /* @__PURE__ */ jsx(Small, { children: "ARIA" }),
   /* @__PURE__ */ jsx(H2, { children: "Research" })
 ] });
 const DEFAULT_LINKS = [

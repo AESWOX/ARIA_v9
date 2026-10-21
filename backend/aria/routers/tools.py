@@ -59,14 +59,14 @@ def _env_var(key: str, prompt: str, url: str | None = None,
 def _provider(name: str, badge: str, tag: str,
               env_vars: list[dict[str, Any]],
               post_setup: str | None = None,
-              requires_nous_auth: bool = False) -> dict[str, Any]:
+              requires_portal_auth: bool = False) -> dict[str, Any]:
     return {
         "name": name,
         "badge": badge,
         "tag": tag,
         "env_vars": env_vars,
         "post_setup": post_setup,
-        "requires_nous_auth": requires_nous_auth,
+        "requires_portal_auth": requires_portal_auth,
         "is_active": False,
     }
 

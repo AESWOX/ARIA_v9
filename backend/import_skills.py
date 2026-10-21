@@ -1,4 +1,4 @@
-"""Одноразовый импорт skills из легаси Hermes в skills_meta.
+"""Одноразовый импорт skills из легаси-агента в skills_meta.
 Запуск: python import_skills.py <путь_к_директории_с_skills>
 """
 import sys

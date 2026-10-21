@@ -297,9 +297,9 @@ export function ToolsetConfigDrawer({ toolset, profile, onClose, onChanged }: Pr
                           {provider.badge}
                         </Badge>
                       )}
-                      {provider.requires_nous_auth && (
+                      {provider.requires_portal_auth && (
                         <Badge tone="outline" className="text-xs">
-                          Nous Portal
+                          Portal
                         </Badge>
                       )}
                     </div>

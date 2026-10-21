@@ -317,7 +317,7 @@ function FontSection({ fontChoices, fontId, setFont }: FontSectionProps) {
 }
 
 function ThemeSwatch({ theme }: { theme: DashboardTheme }) {
-  // Inverted themes (Nous Blue / future lens themes) author their palette
+  // Inverted themes (ARIA Blue / future lens themes) author their palette
   // pre-inversion — `#FFAC02` reads as `#0053FD` blue once the foreground-
   // difference layer flips the page. The picker can't replay that math
   // cheaply, so themes opt-in to an explicit `swatchColors` triplet that

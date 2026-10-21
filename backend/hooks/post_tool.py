@@ -17,7 +17,7 @@ import os
 import hashlib
 
 ARIA_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-BAK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".hermes", "bak")
+BAK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".aria", "bak")
 
 _AUTOCOMMIT_EXTENSIONS = frozenset({".py", ".yaml", ".yml", ".md"})
 

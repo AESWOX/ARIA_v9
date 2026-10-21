@@ -22,8 +22,8 @@
     "noUncheckedSideEffectImports": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@vendor/ui": ["./src/components/vendor/nous-ui"],
-      "@vendor/ui/*": ["./src/components/vendor/nous-ui/*"]
+      "@vendor/ui": ["./src/components/vendor/ui-kit"],
+      "@vendor/ui/*": ["./src/components/vendor/ui-kit/*"]
     }
   },
   "include": ["src"],

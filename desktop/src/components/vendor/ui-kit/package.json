@@ -1,5 +1,5 @@
 {
-  "name": "@nous-research/ui",
+  "name": "aria-ui-kit",
   "version": "0.18.2",
   "main": "./index.js",
   "module": "./index.js",

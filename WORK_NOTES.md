@@ -87,7 +87,7 @@
 | B5-D2 | `delegate_max_parallel`/`delegate_max_depth` из `.env` не читались | исправлено: `delegate.max_depth()`/`max_parallel()` читают Settings |
 | B5-D3 | `_delegate_task` не применял `timeout_sec` | исправлено: `asyncio.wait_for`, статус `timeout`, задача переводится в `failed` |
 | B5-D4 | неизвестная роль в `delegate.delegate_task` бросала исключение | исправлено: `DelegateResult(status="failed")` |
-| B5-D5 | в guardrails имена тулов из Hermes (`read_file`, `terminal`, …), которых нет в реестре | исправлено: только имена из `TOOL_REGISTRY` |
+| B5-D5 | в guardrails имена тулов из прежней панели (`read_file`, `terminal`, …), которых нет в реестре | исправлено: только имена из `TOOL_REGISTRY` |
 | B5-D6 | read-only тулы не входили в `IDEMPOTENT_TOOL_NAMES` — no-progress детектор на них молчал | исправлено: все `safe_read` тулы включены |
 | B5-D7 | `GuardrailConfig.mutating_tools` не читался | исправлено: успешная мутация сбрасывает счётчики no-progress |
 | B5-D8 | побег из песочницы через соседний каталог с общим префиксом | исправлено 2026-10-12 (`Path.is_relative_to`) |

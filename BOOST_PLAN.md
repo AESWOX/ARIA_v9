@@ -72,7 +72,7 @@
 - A19: дефолты модели в `config.py`, `routers/env.py`, `tools/registry.py` → `gemini-3.8-flash` (подтверждена владельцем).
 - A15: `psutil`, `croniter` в requirements, `redis` убрать.
 - E8: `.gitignore` для `coverage.xml`, `*.bak`.
-- D6: убрать «hermes» из `desktop/src/`.
+- D6: убрать наследованные названия из `desktop/src/`.
 - F2, F3: secret-scan репо; тест, что все маршруты кроме allowlist требуют токен.
 - B2, B7: порог `--cov-fail-under=55`; независимость тестов от порядка.
 - A12: «запустить сейчас» для произвольной задачи.
