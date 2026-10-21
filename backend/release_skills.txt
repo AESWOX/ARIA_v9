@@ -1,0 +1,6 @@
+# Skills bundled into the public installer (one folder name per line).
+# Everything else in backend/data/skills stays on the build machine.
+# Private/dev build with all skills: set ARIA_BUNDLE_ALL_SKILLS=1 before pyinstaller.
+aria-agent
+aria-knowledge
+obsidian

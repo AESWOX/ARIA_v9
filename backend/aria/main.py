@@ -52,6 +52,7 @@ from aria.routers.model import router as model_router
 from aria.routers.profiles import router as profiles_router
 from aria.routers.providers import router as providers_router
 from aria.routers.sessions import router as sessions_router
+from aria.routers.setup import router as setup_router
 from aria.routers.skills import router as skills_router
 from aria.routers.storage import router as storage_router
 from aria.routers.ops import router as ops_router
@@ -195,6 +196,7 @@ for _r in (
     profiles_router,
     providers_router,
     sessions_router,
+    setup_router,
     skills_router,
     storage_router,
     stubs_router,
