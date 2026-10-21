@@ -88,3 +88,12 @@ def test_full_height_layouts_account_for_the_title_bar():
     css = _read(SRC / "index.css")
     assert "--vh-avail" in css and ".h-app" in css and "--chrome-h" in css
 
+
+def test_backend_launch_does_not_block_the_main_thread_in_setup():
+    """setup() выполняется в главном потоке: ожидание здоровья бэкенда (до 180 с) там замораживает окно (белый экран)."""
+    rs = _read(DESKTOP / "src-tauri" / "src" / "main.rs")
+    setup = rs.split(".setup(|app| {", 1)[1].split(".invoke_handler", 1)[0]
+    assert "launch_backend(" in setup
+    assert setup.index("thread::spawn") < setup.index("launch_backend("), "launch_backend runs before the thread is spawned"
+    # состояние регистрируется до потока: команды и обработчик выхода не должны упасть на отсутствующем AppState
+    assert setup.index("app.manage(") < setup.index("thread::spawn")

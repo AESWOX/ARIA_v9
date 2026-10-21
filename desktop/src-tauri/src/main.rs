@@ -478,35 +478,64 @@ fn main() {
             let plan = make_launch_plan(&app.handle());
             let bootstrap = bootstrap_from_plan(&plan);
 
-            let (child, init_error) = match launch_backend(&app.handle(), &plan) {
-                Ok(child) => (Some(child), None),
-                Err(e) => {
-                    eprintln!("[ARIA] Init error: {e}");
-                    (None, Some(e))
-                }
-            };
-
+            // The state is registered up front with no child yet: setup() runs on the
+            // main thread, and waiting there for the backend health-check (12 s cold,
+            // up to 180 s on slow machines) froze the window and showed a white screen.
+            // The launch now happens on a worker thread; until it finishes the webview
+            // shows the static splash from the bundled index.html.
             app.manage(AppState {
                 sidecar: Mutex::new(SidecarRuntime {
-                    child,
+                    child: None,
                     bootstrap: bootstrap.clone(),
                 }),
-                init_error: Mutex::new(init_error),
+                init_error: Mutex::new(None),
                 shutdown: Arc::new(AtomicBool::new(false)),
             });
 
-            // Same-origin SPA mode: navigate the webview to the backend itself,
-            // which serves desktop/dist + embeds the runtime token into the HTML.
-            // The API and the page then share one origin — no CORS, no invoke
-            // bridge for auth.
-            if let Some(window) = app.get_webview_window("main") {
-                if let Ok(url) = tauri::Url::parse(&bootstrap.backend_base_url) {
-                    let _ = window.navigate(url);
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let launched = launch_backend(&handle, &plan);
+                let state = handle.state::<AppState>();
+                {
+                    let mut guard = match state.sidecar.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    match launched {
+                        Ok(child) => {
+                            // The app may have been closed while the backend was starting:
+                            // do not leave a freshly spawned orphan behind.
+                            if state.shutdown.load(Ordering::SeqCst) {
+                                let mut child = child;
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                return;
+                            }
+                            guard.child = Some(child);
+                        }
+                        Err(e) => {
+                            eprintln!("[ARIA] Init error: {e}");
+                            if let Ok(mut err) = state.init_error.lock() {
+                                *err = Some(e);
+                            }
+                        }
+                    }
                 }
-            }
 
-            // Supervisor: respawn the backend if it crashes (see spawn_supervisor).
-            spawn_supervisor(app.handle().clone(), plan);
+                // Same-origin SPA mode: navigate the webview to the backend itself,
+                // which serves desktop/dist + embeds the runtime token into the HTML.
+                // The API and the page then share one origin — no CORS, no invoke
+                // bridge for auth.
+                if let Some(window) = handle.get_webview_window("main") {
+                    if let Ok(url) = tauri::Url::parse(&bootstrap.backend_base_url) {
+                        let _ = window.navigate(url);
+                    }
+                }
+
+                // Supervisor: respawn the backend if it crashes (see spawn_supervisor).
+                // Started after the first launch attempt, as before.
+                spawn_supervisor(handle.clone(), plan);
+            });
 
             Ok(())
         })
