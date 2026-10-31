@@ -325,6 +325,41 @@ class PageCache(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 
+class Lead(Base):
+    """J1: ?????/??? ?? ???????????? ?????????? (???? ????? ????????????, ?? ???????????)."""
+
+    __tablename__ = "leads"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    source: Mapped[str] = mapped_column(String, default="manual")
+    url: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    budget_text: Mapped[str | None] = mapped_column(String, nullable=True)
+    budget_usd_est: Mapped[float | None] = mapped_column(Float, nullable=True)
+    currency: Mapped[str | None] = mapped_column(String, nullable=True)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    language: Mapped[str | None] = mapped_column(String, nullable=True)
+    raw_hash: Mapped[str] = mapped_column(String, index=True)
+    status: Mapped[str] = mapped_column(String, default="new", index=True)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    effort_hours_est: Mapped[float | None] = mapped_column(Float, nullable=True)
+    token_cost_est_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    scam_flags: Mapped[list] = mapped_column(JSON, default=list)
+    sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class LeadEvent(Base):
+    __tablename__ = "lead_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    lead_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("leads.id", ondelete="CASCADE"), index=True)
+    event_type: Mapped[str] = mapped_column(String, default="created")
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
 class SearchCache(Base):
     """S1: кэш результатов поиска (key = sha256 запроса и набора провайдеров)."""
 
