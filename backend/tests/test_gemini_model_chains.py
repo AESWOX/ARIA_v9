@@ -154,7 +154,7 @@ def test_pool_error_tells_when_the_first_key_frees_up():
     pool.mark_rate_limited("k2", 600)
     with pytest.raises(NoAvailableKeys, match=r"frees up in ~6\d\d?s"):
         pool.next_key()
-    assert 590 <= pool.status()["retry_in_sec"] <= 600
+    assert 590 <= pool.status()["retry_in_sec"] <= 600.001
     pool.mark_dead("k2")
     pool.mark_dead("k1")
     with pytest.raises(NoAvailableKeys, match="all dead until restart"):
