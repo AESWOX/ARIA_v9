@@ -93,8 +93,10 @@ class Settings(BaseSettings):
     search_provider_cooldown_min: int = 10
     # S7: свой SearXNG (пусто = адаптер не активен).
     searxng_url: str = ""
-    # T1: ????????? ?????? t.me (????? ????? ???????), ?????? ?????? ????????.
+    # T1: публичные каналы t.me (имена через запятую), правит только владелец.
     telegram_public_channels: str = ""
+    # J2: профиль исполнителя (JSON: skills, rates, languages, portfolio, tone, min_budget_usd, blacklist).
+    jobs_profile: str = ""
     # S2b: вежливый пул OpenAlex (пусто = без mailto).
     openalex_mailto: str = ""
     # S3: кэш прочитанных страниц (TTL, только при ETag/Last-Modified).
@@ -397,6 +399,16 @@ class Settings(BaseSettings):
 
 
 
+
+    @property
+    def jobs_profile_dict(self) -> dict:
+        import json
+
+        try:
+            data = json.loads(self.jobs_profile or "{}")
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
 
     @property
     def telegram_public_channels_list(self) -> list[str]:
