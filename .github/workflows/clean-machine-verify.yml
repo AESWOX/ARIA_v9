@@ -102,7 +102,7 @@ jobs:
         working-directory: desktop
         shell: pwsh
         run: |
-          npx tauri build --bundles msi
+          npx tauri build --bundles msi --config src-tauri/tauri.ci.conf.json
           Get-ChildItem src-tauri/target/release/bundle/msi/*.msi | Select-Object FullName, Length
 
       # ── 3.2 Silent per-user install (no admin rights) ─────────────────────
