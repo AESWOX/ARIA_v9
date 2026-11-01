@@ -326,7 +326,7 @@ class PageCache(Base):
 
 
 class Lead(Base):
-    """J1: ?????/??? ?? ???????????? ?????????? (???? ????? ????????????, ?? ???????????)."""
+    """J1: заказ/лид из недоверенных источников (весь текст untrusted, не исполняется)."""
 
     __tablename__ = "leads"
 
@@ -357,6 +357,24 @@ class LeadEvent(Base):
     lead_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("leads.id", ondelete="CASCADE"), index=True)
     event_type: Mapped[str] = mapped_column(String, default="created")
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class OrderLedger(Base):
+    """J6: деньги против токенов; FK RESTRICT действует на Postgres (SQLite pragma off)."""
+
+    __tablename__ = "order_ledger"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    lead_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("leads.id", ondelete="RESTRICT"), index=True)
+    revenue_amount: Mapped[float] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String)
+    platform_fee: Mapped[float] = mapped_column(Float, default=0.0)
+    fx_to_usd: Mapped[float] = mapped_column(Float, default=1.0)
+    llm_cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    order_type: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 
