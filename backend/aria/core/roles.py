@@ -140,8 +140,10 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         tool_whitelist=(), default_model_policy="standard_reasoning", enabled=False,
     ),
     "content_creative": RoleDefinition(
-        role_id="content_creative", description="Креативный контент.", system_prompt_asset="prompts/content_creative.md",
-        tool_whitelist=(), default_model_policy="standard_reasoning", enabled=False,
+        role_id="content_creative", description="Creative content: research, concepts, storyboards, card templates.",
+        system_prompt_asset="prompts/content_creative.md",
+        tool_whitelist=("web_search", "web_fetch", "memory_search", "memory_save", "read_note", "write_note", "file_write"),
+        default_model_policy="standard_reasoning",
     ),
 }
 

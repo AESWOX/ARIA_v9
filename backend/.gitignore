@@ -8,5 +8,6 @@ data/skills/*
 !data/skills/aria-agent/
 !data/skills/aria-knowledge/
 !data/skills/obsidian/
+!data/skills/creative-card/
 *.log
 .env
