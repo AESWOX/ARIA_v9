@@ -746,4 +746,8 @@ export const zh: Translations = {
     logTruncated: "（显示最后 100 KB — 完整日志位于 ",
     logAt: "）",
   },
+  chatMeta: {
+    sentAt: "发送于 {time}",
+    tookSeconds: "耗时 {seconds} 秒",
+  },
 };

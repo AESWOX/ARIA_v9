@@ -750,4 +750,8 @@ export const ko: Translations = {
     logTruncated: "(마지막 100 KB 표시 중 — 전체 로그 위치: ",
     logAt: ")",
   },
+  chatMeta: {
+    sentAt: "보냄 {time}",
+    tookSeconds: "{seconds}초 소요",
+  },
 };

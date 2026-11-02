@@ -751,4 +751,8 @@ export const hu: Translations = {
     logTruncated: "(az utolsó 100 KB látható — teljes napló: ",
     logAt: ")",
   },
+  chatMeta: {
+    sentAt: "Elküldve {time}",
+    tookSeconds: "feldolgozás {seconds} mp",
+  },
 };

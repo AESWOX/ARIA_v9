@@ -840,4 +840,10 @@ export interface Translations {
     next: string;
     done: string;
   };
+
+  // UX-1: hover meta on chat messages (send time, processing time).
+  chatMeta: {
+    sentAt: string;
+    tookSeconds: string;
+  };
 }

@@ -751,4 +751,8 @@ export const af: Translations = {
     logTruncated: "(toon laaste 100 KB — volledige log by ",
     logAt: ")",
   },
+  chatMeta: {
+    sentAt: "Gestuur {time}",
+    tookSeconds: "het {seconds} s geneem",
+  },
 };

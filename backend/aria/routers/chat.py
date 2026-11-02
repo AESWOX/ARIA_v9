@@ -44,6 +44,9 @@ from aria.memory import store as memory_store
 logger = logging.getLogger("local_agent.chat")
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+# UX-1: отдельная точка замера, чтобы тесты подменяли часы без секундомера.
+_monotonic = time.monotonic
+
 CHAT_PROVIDER_CLASS = "free_tier_reasoning"  # Gemini Flash first, then Groq
 CHAT_FALLBACK_CLASSES = ("standard_reasoning",)  # DeepSeek chat, then Gemini Pro (A20)
 HISTORY_MESSAGES = 40
@@ -497,11 +500,13 @@ class _Prepared:
     chat_prefer: str | None
     dlp_applied: bool
     sensitive: bool = False
+    started_monotonic: float = 0.0
 
 
 async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request: Request) -> _Prepared:
     """Запись user-сообщения, сжатие истории, память и сборка промпта — общая для стрима и не-стрима."""
     t_start = time.monotonic()
+    started_monotonic = _monotonic()
     content = str(payload.get("content") or "").strip()
     retry = bool(payload.get("retry"))  # re-ask using the last stored user message (no duplicate)
     if not content and not retry:
@@ -580,6 +585,24 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
         chat_prefer=chat_prefer,
         sensitive=sensitive,
         dlp_applied=dlp_applied,
+        started_monotonic=started_monotonic,
+    )
+
+
+def _log_chat_timing(prepared: _Prepared, session_id: uuid.UUID, first_token_at: float | None = None) -> None:
+    """UX-1: одна строка на готовый ответ чата, включая стрим. Без текстов сообщений."""
+    now = _monotonic()
+    total_ms = max(0.0, (now - prepared.started_monotonic) * 1000.0)
+    first_ms = (
+        total_ms
+        if first_token_at is None
+        else max(0.0, (first_token_at - prepared.started_monotonic) * 1000.0)
+    )
+    logger.info(
+        "chat_timing first_token_ms=%.0f total_ms=%.0f session_id=%s",
+        first_ms,
+        total_ms,
+        str(session_id)[:8],
     )
 
 
@@ -634,6 +657,7 @@ async def _run_nonstream(session_id: uuid.UUID, request: Request, prepared: _Pre
         session.updated_at = datetime.now(timezone.utc)
         assistant_payload = serialize_message(assistant_msg)
     emit_message_created(assistant_msg, session_id, None)
+    _log_chat_timing(prepared, session_id)
     return {
         "user": prepared.user_payload,
         "assistant": assistant_payload,
@@ -713,6 +737,7 @@ async def _stream_events(session_id: uuid.UUID, request: Request, prepared: _Pre
     entry.task = asyncio.create_task(consume())
     reply_parts: list[str] = []
     final_usage: dict = {}
+    first_token_at: float | None = None
     stopped = False
     try:
         while True:
@@ -734,6 +759,8 @@ async def _stream_events(session_id: uuid.UUID, request: Request, prepared: _Pre
                 break
             chunk = payload
             if chunk.text and not chunk.final:
+                if first_token_at is None:
+                    first_token_at = _monotonic()
                 reply_parts.append(chunk.text)
                 yield _ndjson_line({"type": "delta", "text": chunk.text})
             if chunk.final:
@@ -788,6 +815,7 @@ async def _stream_events(session_id: uuid.UUID, request: Request, prepared: _Pre
             session_id=session_id,
         )
     emit_message_created(assistant_msg, session_id, None)
+    _log_chat_timing(prepared, session_id, first_token_at)
     yield _ndjson_line(
         {
             "type": "done",

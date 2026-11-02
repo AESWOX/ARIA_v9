@@ -850,4 +850,8 @@ export const en: Translations = {
     next: "Next",
     done: "Get started",
   },
+  chatMeta: {
+    sentAt: "Sent {time}",
+    tookSeconds: "took {seconds} s",
+  },
 };

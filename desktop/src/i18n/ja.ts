@@ -750,4 +750,8 @@ export const ja: Translations = {
     logTruncated: "（最後の 100 KB を表示中 — 完全なログは ",
     logAt: "）",
   },
+  chatMeta: {
+    sentAt: "送信 {time}",
+    tookSeconds: "処理 {seconds} 秒",
+  },
 };

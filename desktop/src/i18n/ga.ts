@@ -759,4 +759,8 @@ export const ga: Translations = {
     logTruncated: "(taispeántar an 100 KB deireanach — loga iomlán ag ",
     logAt: ")",
   },
+  chatMeta: {
+    sentAt: "Seolta {time}",
+    tookSeconds: "mhair {seconds} soic",
+  },
 };

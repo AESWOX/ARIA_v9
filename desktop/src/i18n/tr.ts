@@ -751,4 +751,8 @@ export const tr: Translations = {
     logTruncated: "(son 100 KB gösteriliyor — tam günlük şurada: ",
     logAt: ")",
   },
+  chatMeta: {
+    sentAt: "Gönderildi {time}",
+    tookSeconds: "{seconds} sn sürdü",
+  },
 };

@@ -771,4 +771,8 @@ export const ru: Translations = {
     logTruncated: "(показаны последние 100 KB — полный журнал в ",
     logAt: ")",
   },
+  chatMeta: {
+    sentAt: "Отправлено {time}",
+    tookSeconds: "обработка {seconds} с",
+  },
 };

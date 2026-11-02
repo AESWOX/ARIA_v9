@@ -750,4 +750,8 @@ export const zhHant: Translations = {
     logTruncated: "（顯示最後 100 KB — 完整日誌位於 ",
     logAt: "）",
   },
+  chatMeta: {
+    sentAt: "傳送於 {time}",
+    tookSeconds: "耗時 {seconds} 秒",
+  },
 };

@@ -752,4 +752,8 @@ export const pt: Translations = {
     logTruncated: "(a mostrar os últimos 100 KB — registo completo em ",
     logAt: ")",
   },
+  chatMeta: {
+    sentAt: "Enviado {time}",
+    tookSeconds: "levou {seconds} s",
+  },
 };

@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, Check, Loader2, MessageCircle, Plus, RotateCcw, Send, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { CHAT_MODES, normalizeChatMode, type ChatMode } from "@/lib/chat-modes";
+import { formatLocalTime, processingSeconds } from "@/lib/message-timing";
+import { useI18n } from "@/i18n";
 import type { ChatModels, ChatMsg, ChatSessionRow, ChatStatus, ChatUsage, RunProfile, RunState } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@vendor/ui/ui/components/button";
@@ -70,6 +72,7 @@ function runBusy(run: RunState | null): boolean {
 }
 
 export default function NativeChatPage() {
+  const { t, locale } = useI18n();
   const [status, setStatus] = useState<ChatStatus | null>(null);
   const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -373,6 +376,14 @@ export default function NativeChatPage() {
 
   const lastIsUser = messages.length > 0 && messages[messages.length - 1].role === "user";
 
+  // UX-1: the nearest user message before each answer gives the processing time.
+  const previousUser = new Map<string, ChatMsg>();
+  let lastUserMessage: ChatMsg | null = null;
+  for (const message of messages) {
+    if (message.role === "user") lastUserMessage = message;
+    else if (lastUserMessage) previousUser.set(message.id, lastUserMessage);
+  }
+
   const send = async (retry = false) => {
     const text = input.trim();
     if (sending || (!retry && !text)) return;
@@ -546,29 +557,43 @@ export default function NativeChatPage() {
           {!loading && messages.length === 0 && (
             <p className="text-xs text-muted-foreground">Write a message below to start.</p>
           )}
-          {messages.map((m) => (
-            <div key={m.id} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-              <div
-                className={cn(
-                  focus ? "max-w-[92%] border border-border px-3 py-2" : "max-w-[85%] border border-border px-3 py-2",
-                  m.role === "user" ? "bg-foreground/10" : "bg-background/60",
-                )}
-              >
-                {m.role === "assistant" ? (
-                  <Markdown content={m.content} />
-                ) : (
-                  <div
-                    className={cn(
-                      "whitespace-pre-wrap text-sm leading-relaxed",
-                      m.role !== "user" && "text-xs text-muted-foreground",
-                    )}
-                  >
-                    {m.content}
-                  </div>
-                )}
+          {messages.map((m) => {
+            const sent = formatLocalTime(m.created_at, locale);
+            const seconds =
+              m.role === "assistant"
+                ? processingSeconds(previousUser.get(m.id)?.created_at, m.created_at)
+                : null;
+            const title = [
+              sent ? t.chatMeta.sentAt.replace("{time}", sent) : null,
+              seconds != null ? t.chatMeta.tookSeconds.replace("{seconds}", seconds.toFixed(1)) : null,
+            ]
+              .filter((part): part is string => Boolean(part))
+              .join(" · ");
+            return (
+              <div key={m.id} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
+                <div
+                  title={title || undefined}
+                  className={cn(
+                    focus ? "max-w-[92%] border border-border px-3 py-2" : "max-w-[85%] border border-border px-3 py-2",
+                    m.role === "user" ? "bg-foreground/10" : "bg-background/60",
+                  )}
+                >
+                  {m.role === "assistant" ? (
+                    <Markdown content={m.content} />
+                  ) : (
+                    <div
+                      className={cn(
+                        "whitespace-pre-wrap text-sm leading-relaxed",
+                        m.role !== "user" && "text-xs text-muted-foreground",
+                      )}
+                    >
+                      {m.content}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {sending && streamingText !== null && streamingText !== "" && (
             <div className="flex justify-start">
               <div
