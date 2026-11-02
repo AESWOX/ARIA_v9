@@ -115,13 +115,18 @@ def test_disjoint_write_scope_runs_in_one_group():
 
 @pytest.mark.anyio
 async def test_independent_nodes_run_in_parallel(monkeypatch):
-    calls: list[float] = []
+    import asyncio
+
+    arrived: list[str] = []
+    both_arrived = asyncio.Event()
 
     async def handler(*, input_json, timeout_sec, sandbox_root):
-        calls.append(time.monotonic())
-        import asyncio
-
-        await asyncio.sleep(0.3)
+        arrived.append(input_json.get("path"))
+        if len(arrived) == 2:
+            both_arrived.set()
+        # Параллельность без часов: второй узел должен стартовать, пока первый ещё ждёт.
+        # При последовательном исполнении событие не наступит, и узел упадёт по таймауту.
+        await asyncio.wait_for(both_arrived.wait(), timeout=5)
         return {"path": input_json.get("path"), "hash_before": "a", "hash_after": "b"}
 
     monkeypatch.setattr("aria.tools.registry.get_tool", lambda name: _spec(name, handler))
@@ -130,15 +135,12 @@ async def test_independent_nodes_run_in_parallel(monkeypatch):
     steps = [_step("step-1", scope=["generated/a.txt"]), _step("step-2", scope=["generated/b.txt"])]
     task_id, _sid, plan_id = _plan(steps)
 
-    started = time.monotonic()
     with session_scope() as db:
         task = repo.get_task(db, task_id)
         plan = _load_plan(db, plan_id)
         raw = await executor._stage3_execute(db, task, plan, router=SimpleNamespace())
-    elapsed = time.monotonic() - started
 
     assert len(raw) == 2 and all(tc["status"] == "ok" for tc in raw)
-    assert elapsed < 0.55, f"узлы шли последовательно: {elapsed:.2f}s"
     assert [tc["input_json"]["path"] for tc in raw] == ["generated/a.txt", "generated/b.txt"]
 
 
