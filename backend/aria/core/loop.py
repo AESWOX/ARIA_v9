@@ -253,50 +253,6 @@ async def _abort_task(task_id, code: str, message: str) -> None:
     logger.warning("task %s stopped by guard: %s", task_id, code)
 
 
-async def _preflight_task_start(task_id: uuid.UUID, router: ProviderRouter) -> str | None:
-    """PREFLIGHT §7: rewrite задачи один раз, с сохранением в TaskSpec.meta.
-
-    Возвращает переписанный текст (или None). Сбой LLM/сети не роняет цикл:
-    задача просто идёт с raw-сообщением из БД.
-    """
-    from aria.core import clarifier as _clarifier_preflight
-    from aria.core import preflight as _preflight_mod
-    from aria.core.privacy import contains_sensitive
-
-    rewritten: str | None = None
-    try:
-        with session_scope() as db:
-            task = repo.get_task(db, task_id)
-            spec = _clarifier_preflight.load_spec(db, task_id) if task is not None else None
-        if spec is not None:
-            rewritten = str((spec.meta or {}).get("preflight_rewrite") or "") or None
-        if task is not None and not rewritten:
-            result = await _preflight_mod.preflight_user_message(
-                task.objective or "",
-                router=router,
-                mode="agent",
-                session_id=task.session_id,
-                sensitive=contains_sensitive(task.objective or ""),
-            )
-            if result.applied:
-                rewritten = result.rewritten
-                if spec is not None:
-                    spec.meta = {**(spec.meta or {}), "preflight_rewrite": rewritten}
-                    with session_scope() as db:
-                        fresh = repo.get_task(db, task_id)
-                        if fresh is not None:
-                            repo.upsert_task_spec(
-                                db,
-                                fresh,
-                                spec.model_dump(mode="json"),
-                                valid=spec.is_valid,
-                                clarify_rounds=spec.clarify_rounds,
-                            )
-    except Exception:  # noqa: BLE001 — preflight не должен ронять агентский цикл
-        logger.exception("agent preflight failed task=%s", task_id)
-    return rewritten
-
-
 async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox_root: str) -> None:
     """Run the agent loop for a given task."""
     settings = get_settings()
@@ -337,20 +293,9 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
         "Число навыков, заметок, задач и т.п. называй только после реального вызова инструмента (skill_lookup возвращает total)."
     )
     role_prompt += _load_persona()
-    # PREFLIGHT §7/§9: execution contract после persona; флаг off — старое поведение.
-    if bool(getattr(settings, "preflight_rewrite_enabled", True)):
-        from aria.core.preflight import load_compliance_prompt
-
-        _compliance = load_compliance_prompt()
-        if _compliance:
-            role_prompt += "\n\n" + _compliance
     _hint = runprofile.thinking_hint(profile)
     if _hint:
         role_prompt += "\n\n" + _hint
-
-    # PREFLIGHT §7: rewrite считается один раз на задачу, живёт в TaskSpec.meta,
-    # в первый user-turn подставляется; дальше история идёт raw из БД.
-    preflight_rewritten = await _preflight_task_start(task_id, router)
 
     iterations = 0
     guardrails = ToolCallGuardrailController()
@@ -426,11 +371,6 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
             session = repo.get_session(db, task.session_id)
             history = repo.list_messages_for_prompt(db, session.id)
             messages = _build_messages(role_prompt, history)
-        if iterations == 1 and preflight_rewritten:
-            for _idx in range(len(messages) - 1, 0, -1):
-                if messages[_idx].role == "user":
-                    messages[_idx] = ChatMessage(role="user", content=preflight_rewritten)
-                    break
 
         try:
             model_class, preferred_model = runprofile.resolve_for_task(profile, role.default_model_policy, delegation_depth, router)

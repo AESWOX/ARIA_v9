@@ -24,9 +24,6 @@ class FakeLlm(LlmProvider):
         return True
 
     async def chat(self, messages, tools, timeout_sec):
-        # PREFLIGHT: переписыватель — служебный вызов, ответ не входит в seen/answers.
-        if messages and messages[0].role == "system" and "silent pre-processor" in messages[0].content:
-            return LlmResponse(text=messages[-1].content, usage={"prompt_tokens": 1, "completion_tokens": 1})
         self.seen.append(list(messages))
         if self.error:
             raise self.error

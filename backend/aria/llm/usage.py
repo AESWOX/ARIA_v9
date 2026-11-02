@@ -12,7 +12,7 @@ from typing import Any
 logger = logging.getLogger("local_agent.llm.usage")
 
 PURPOSES = frozenset({
-    "chat", "agent", "plan", "audit", "vision", "clarifier", "compress", "subagent", "preflight", "other",
+    "chat", "agent", "plan", "audit", "vision", "clarifier", "compress", "subagent", "other",
 })
 
 

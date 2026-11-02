@@ -100,9 +100,6 @@ class TaskSpec(BaseModel):
     # 19.4b D-21: режим вкладки (agent/plan), выбранный при постановке задачи; переживает
     # раунд уточнения, чтобы `/clarify` без mode не уводил задачу в plan.
     mode: str = ""
-    # PREFLIGHT: служебные значения слоя (например, preflight_rewrite) без изменения
-    # пользовательской постановки задачи.
-    meta: dict = Field(default_factory=dict)
 
     def sync_questions(self) -> None:
         """Синхронизирует зеркало open_questions с уточнённым списком вопросов."""

@@ -28,9 +28,6 @@ class _EchoLlm(LlmProvider):
         return True
 
     async def chat(self, messages, tools, timeout_sec):
-        # PREFLIGHT: служебный вызов переписывателя не считается ответом чата.
-        if messages and messages[0].role == "system" and "silent pre-processor" in messages[0].content:
-            return LlmResponse(text=messages[-1].content, usage={"prompt_tokens": 1, "completion_tokens": 1})
         self.calls += 1
         return LlmResponse(text="pong")
 
