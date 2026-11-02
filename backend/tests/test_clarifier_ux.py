@@ -33,7 +33,8 @@ def test_plain_string_question_stays_blocking():
     assert out[0]["blocking"] is True
 
 
-def test_clarifier_prompt_demands_questions_with_five_options():
+def test_clarifier_prompt_states_the_soft_rules():
     prompt = (Path(clarifier.__file__).parent.parent / "prompts" / "clarifier.md").read_text(encoding="utf-8")
-    assert "ВСЕГДА" in prompt and "5 вариантов" in prompt and "recommended" in prompt
+    assert "0 карточек" in prompt and "не больше 2" in prompt and "принял:" in prompt
+    assert "5 вариантов" in prompt and "recommended" in prompt
     assert "assumptions" in prompt

@@ -41,7 +41,7 @@ def test_run_state_returns_the_open_questions_while_awaiting_clarification(env):
     state = _run(sid)
     assert state["status"] == "awaiting_clarification" and state["task_id"] == tid
     qs = state["questions"]
-    assert len(qs) >= 3
+    assert 1 <= len(qs) <= 2
     assert all(q["id"] and q["text"] and len(q["options"]) == 5 and q["default_value"] in q["options"] for q in qs)
 
 

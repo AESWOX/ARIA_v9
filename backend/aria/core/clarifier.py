@@ -167,6 +167,56 @@ def needs_tools(content: str) -> bool:
     return bool(words & _TOOL_FILE_VERBS and words & _TOOL_FILE_WORDS)
 
 
+# L3 (clarifier soft): явная цель и формат => 0 карточек; исследовательские задачи не блокируются.
+_FORMAT_RE = re.compile(
+    r"(?:"
+    r"заголов|title|"
+    r"таблиц|table|"
+    r"список\s+из\s+\d+|list\s+of\s+\d+|"
+    r"сохран\w*\s+(?:в|into)\s+файл|save\s+(?:it\s+)?(?:to|in)\s+(?:a\s+)?file|"
+    r"в\s+файл|in\s+a\s+file|"
+    r"в\s+формате|as\s+(?:a\s+)?(?:json|csv|markdown|table)|"
+    r"ответ\w*\s+(?:текстом|строкой)|"
+    r"(?:на|по|in)\s+(?:python|go|golang|rust|javascript|typescript|java|bash|powershell|c\+\+)|"
+    r"\.(?:md|txt|json|csv|py|go|js|ts|tsx|html|ya?ml|sql|ps1)\b|"
+    r"\bjson\b|\bcsv\b|\bmarkdown\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_GOAL_VERB_RE = re.compile(
+    r"(?:^|[\s,.;:!?])(?:"
+    r"открой|открыть|собери|собрать|сделай|сделать|напиши|написать|создай|создать|"
+    r"проверь|проверить|прочитай|прочитать|покажи|показать|выведи|вывести|"
+    r"сохрани|сохранить|запусти|запустить|переведи|перевести|составь|составить|"
+    r"сформируй|посчитай|исправь|починить|open|find|fetch|build|create|write|read|"
+    r"check|run|save|make|list|summari[sz]e|generate|fix"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_RESEARCH_RE = re.compile(
+    r"(?:найди|найти|поищи|поиск|исследуй|исследовать|изучи|изучить|проанализируй|"
+    r"анализ|сравни|сравнить|обзор|"
+    r"\bfind\b|\bresearch\b|\bexplore\b|\bcompare\b|\binvestigate\b|\banaly[sz]e\b|\breview\b)",
+    re.IGNORECASE,
+)
+
+
+def explicit_goal_and_format(content: str) -> bool:
+    """L3: и действие, и ожидаемый формат названы явно — уточнять нечего (0 карточек)."""
+    text = content or ""
+    has_goal = bool(
+        _TOOL_URL_RE.search(text) or _TOOL_PATH_RE.search(text) or _GOAL_VERB_RE.search(text)
+    )
+    return has_goal and bool(_FORMAT_RE.search(text))
+
+
+def is_research_task(content: str) -> bool:
+    """L3: исследовательская задача не блокируется вопросами на этапе clarify."""
+    return bool(_RESEARCH_RE.search(content or ""))
+
+
 def detect_language(content: str) -> str:
     """'uk' | 'ru' | 'en' по буквам запроса; без букв остаётся русский (прежнее поведение)."""
     text = content or ""
@@ -277,6 +327,10 @@ def question_id(text: str) -> str:
 
 MAX_QUESTIONS = 7
 MAX_OPTIONS = 5
+# L3: за один раунд задаём не больше двух вопросов (даже если модель вернула больше).
+MAX_QUESTIONS_PER_ROUND = 2
+EXPLICIT_ASSUMPTION = "Цель и формат заданы в запросе, уточнения не требуются."
+RESEARCH_ASSUMPTION = "Исследовательская задача не блокируется уточнениями на старте."
 
 
 def _clean_options(raw) -> list[str]:
@@ -413,6 +467,24 @@ def _dedupe(items: list[str]) -> list[str]:
     return out
 
 
+def _assumption_line(parts: list[str]) -> str:
+    """L3: принятые по умолчанию допущения — одной строкой «принял: …»."""
+    flat = "; ".join(_dedupe([str(p).strip().rstrip(".") for p in parts if str(p).strip()]))
+    return "принял: " + flat
+
+
+def _apply_assumptions(spec: TaskSpec, parts: list[str]) -> None:
+    """Дописывает новые допущения в единственную строку «принял: …»."""
+    if not parts:
+        return
+    line = _assumption_line(parts)
+    for i, existing in enumerate(spec.assumptions):
+        if existing.startswith("принял:"):
+            spec.assumptions[i] = f"{existing.rstrip('.')}; {line[len('принял: '):]}"
+            return
+    spec.assumptions = _dedupe(list(spec.assumptions) + [line])
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Основной вход
 # ═══════════════════════════════════════════════════════════════════
@@ -499,20 +571,33 @@ async def run_gate(
         or taskspec.is_high_risk(spec.goal or "")
     )
     rounds = int(spec.clarify_rounds or 0)
+    explicit = explicit_goal_and_format(content)
+    research = not explicit and is_research_task(content)
 
     questions: list[dict] = []
     new_assumptions: list[str] = []
 
     if autonomous:
         new_assumptions.append(AUTONOMOUS_NOTE)
-    elif router is not None and rounds < MAX_CLARIFY_ROUNDS:
-        try:
-            payload = await _ask_model(router, content, spec, task_id=task_id)
-        except Exception as exc:  # noqa: BLE001 — clarifier недоступен, работаем детерминированно
-            logger.warning("clarifier недоступен (%s), гейт работает детерминированно", type(exc).__name__)
-            payload = {}
-        questions = _normalise_questions(payload.get("questions"))
+    elif rounds < MAX_CLARIFY_ROUNDS:
+        payload: dict = {}
+        if router is not None:
+            try:
+                payload = await _ask_model(router, content, spec, task_id=task_id)
+            except Exception as exc:  # noqa: BLE001 — clarifier недоступен, работаем детерминированно
+                logger.warning("clarifier недоступен (%s), гейт работает детерминированно", type(exc).__name__)
+                payload = {}
         new_assumptions += _merge_payload(spec, payload)
+        if explicit:
+            # L3: цель и формат названы явно — карточек нет, вопросы модели отбрасываем.
+            new_assumptions.append(EXPLICIT_ASSUMPTION)
+        elif research:
+            # L3: исследовательская задача стартует без блокирующих вопросов.
+            new_assumptions.append(RESEARCH_ASSUMPTION)
+        else:
+            questions = _normalise_questions(payload.get("questions"))[:MAX_QUESTIONS_PER_ROUND]
+            if router is None:
+                questions = _fallback_questions(lang)[:MAX_QUESTIONS_PER_ROUND]
 
     if not autonomous and rounds >= MAX_CLARIFY_ROUNDS:
         # Лимит исчерпан: вопросов владельцу больше не задаём (PR-3). Остаток
@@ -531,12 +616,14 @@ async def run_gate(
 
     blocking = [q for q in questions if q.get("blocking")]
 
-    if not autonomous and not blocking and rounds == 0:
-        # Решение владельца: вопросы задаются ВСЕГДА, даже если модель решила, что запрос ясен
-        # (или clarifier недоступен). Дальше раунды идут только по неснятым пробелам контракта.
-        blocking = _fallback_questions(lang)
-
-    if not autonomous and not blocking and not spec.acceptance_criteria and rounds < MAX_CLARIFY_ROUNDS:
+    if (
+        not autonomous
+        and not explicit
+        and not research
+        and not blocking
+        and not spec.acceptance_criteria
+        and rounds < MAX_CLARIFY_ROUNDS
+    ):
         # Контракт неполный, а модель вопросов не задала: спрашиваем детерминированно,
         # иначе задача ушла бы в исполнение без критериев приёмки (PR-6 проверять нечего).
         # После исчерпания лимита раундов вопросов владельцу больше не задаём: остаток
@@ -573,7 +660,8 @@ async def run_gate(
         new_assumptions.append("Критерий приёмки не задан: принят детерминированный критерий по умолчанию.")
     if len((spec.goal or "").strip()) < taskspec.MIN_GOAL_CHARS:
         spec.goal = (content or "").strip()[:400]
-    spec.assumptions = _dedupe(list(spec.assumptions) + new_assumptions)
+    spec.assumptions = _dedupe(list(spec.assumptions))
+    _apply_assumptions(spec, new_assumptions)
     spec.open_questions = []
 
     status = "approved"

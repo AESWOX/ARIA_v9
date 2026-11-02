@@ -81,8 +81,8 @@ async def test_gate_asks_a_deterministic_question_when_no_criteria(monkeypatch):
         task_id = t.id
     outcome = await clarifier.run_gate(task_id, "приведи дела в порядок", router=None)
     assert outcome.status == "awaiting_clarification"
-    # модель недоступна (router=None) — всё равно спрашиваем: детерминированный набор с 5 вариантами
-    assert len(outcome.questions) >= 3
+    # модель недоступна (router=None) — детерминированный набор, но L3: не больше 2 вопросов за раунд
+    assert 1 <= len(outcome.questions) <= 2
     assert all(len(q["options"]) == 5 and q["default_value"] in q["options"] for q in outcome.questions)
     with session_scope() as db:
         task = repo.get_task(db, task_id)
@@ -110,17 +110,15 @@ async def test_gate_approves_when_model_returns_the_contract(monkeypatch):
         _s, t = _task(db)
         task_id = t.id
     first = await clarifier.run_gate(task_id, GOOD, router=object())
-    # модель сочла запрос ясным, но вопросы задаются всегда (решение владельца)
-    assert first.status == "awaiting_clarification" and len(first.questions) >= 3
-    outcome = await clarifier.run_gate(task_id, GOOD, router=object())  # раунд 2: ответы получены
-    assert outcome.status == "approved" and outcome.spec.is_valid
+    # L3: цель и формат названы явно — карточек нет, задача сразу проходит контракт
+    assert first.status == "approved" and first.questions == []
+    assert first.spec.is_valid
+    assert any("квартал — текущий по календарю" in a for a in first.spec.assumptions)
     with session_scope() as db:
         task = repo.get_task(db, task_id)
         row = repo.get_task_spec(db, task_id)
         assert task.status == TaskStatus.approved
         assert row.valid is True
-        spec = clarifier.load_spec(db, task_id)
-        assert "квартал — текущий по календарю" in spec.assumptions
         assert clarifier.assert_runnable(db, task).is_valid
 
 
@@ -135,9 +133,9 @@ async def test_blocking_question_pauses_the_task(monkeypatch):
 
     monkeypatch.setattr(clarifier, "_ask_model", fake_ask)
     with session_scope() as db:
-        _s, t = _task(db)
+        _s, t = _task(db, "сделай отчёт по продажам")
         task_id = t.id
-    outcome = await clarifier.run_gate(task_id, GOOD, router=object())
+    outcome = await clarifier.run_gate(task_id, "сделай отчёт по продажам", router=object())
     assert outcome.status == "awaiting_clarification"
     with session_scope() as db:
         assert repo.get_task(db, task_id).status == TaskStatus.awaiting_clarification
@@ -199,9 +197,7 @@ async def test_high_risk_task_goes_to_tz_approval(monkeypatch):
         _s, t = _task(db, "задеплой сервис в prod")
         task_id = t.id
     first = await clarifier.run_gate(task_id, "задеплой сервис в prod", router=object())
-    assert first.status == "awaiting_clarification"
-    outcome = await clarifier.run_gate(task_id, "задеплой сервис в prod", router=object())
-    assert outcome.status == "awaiting_approval"
+    assert first.status == "awaiting_approval" and first.questions == []
     with session_scope() as db:
         assert repo.get_task(db, task_id).status == TaskStatus.awaiting_approval
         items = repo.list_attention_items(db, only_pending=True)
