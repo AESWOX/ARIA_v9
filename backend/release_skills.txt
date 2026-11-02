@@ -4,4 +4,3 @@
 aria-agent
 aria-knowledge
 obsidian
-creative-card

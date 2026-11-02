@@ -44,6 +44,16 @@ def test_c2_release_skill_gate_is_green():
     assert problems == []
 
 
+def test_c7_skill_stays_in_repo_but_is_not_bundled():
+    """L4: creative-card — приватный навык владельца: остаётся в репозитории, но не в установщике."""
+    from scripts.check_release_skills import load_allowlist
+
+    allow = load_allowlist()
+    assert "creative-card" not in allow, "creative-card must not be bundled into the public installer"
+    assert SKILL.is_dir() and (SKILL / "SKILL.md").is_file(), "the skill must stay tracked in the repository"
+    assert len(allow) == 3
+
+
 def test_c3_template_renders_on_a_neutral_example(tmp_path):
     import sys
 
