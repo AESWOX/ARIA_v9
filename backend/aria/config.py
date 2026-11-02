@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     # П.4.2 ТЗ: список глаголов-маркеров задачи (через запятую) для agent-режима;
     # пусто = встроенный список clarifier._DEFAULT_TASK_VERBS.
     clarifier_task_verbs: str = ""
+    # PREFLIGHT: слой переписывания пользовательского сообщения перед моделью.
+    # UI/БД хранят raw; rewrite уходит только в промпт модели.
+    preflight_rewrite_enabled: bool = True
+    preflight_rewrite_model_class: str = "free_tier_reasoning"
+    preflight_max_chars: int = 8000
+    preflight_context_turns: int = 2
+    # Пусто = refusal-fallback выключен; иначе один хоп на non-stream.
+    preflight_refusal_fallback_classes: str = ""
     # П.5.2 ТЗ: лимиты параллелизма по классам провайдеров, например
     # "free_tier_reasoning=2,standard_reasoning=3" (иначе один общий лимит).
     provider_max_concurrency: str = ""
@@ -306,6 +314,11 @@ class Settings(BaseSettings):
     def clarifier_verbs_list(self) -> list[str]:
         """П.4.2 ТЗ: настроенный список глаголов-маркеров задачи (пусто = встроенный)."""
         return [v.strip() for v in (self.clarifier_task_verbs or "").split(",") if v.strip()]
+
+    @property
+    def preflight_refusal_classes(self) -> list[str]:
+        """PREFLIGHT: классы для одного refusal-fallback хопа (пусто = выключен)."""
+        return [c.strip() for c in (self.preflight_refusal_fallback_classes or "").split(",") if c.strip()]
 
     @property
     def provider_concurrency_limits(self) -> dict[str, int]:

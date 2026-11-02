@@ -238,12 +238,24 @@ async def _ask_model(
     task_id: object | None = None,
 ) -> dict:
     """Один запрос к clarifier-роли. Любой сбой = пустой payload, а не падение задачи."""
+    # PREFLIGHT §7: в clarifier уходит rewrite, clarifier.md и история не меняются.
+    from aria.core import preflight as _preflight
+    from aria.core.privacy import contains_sensitive
+
+    rewrite = await _preflight.preflight_user_message(
+        content,
+        router=router,
+        mode="clarifier",
+        session_id=session_id,
+        sensitive=contains_sensitive(content),
+    )
+    prompt_content = rewrite.rewritten if rewrite.applied else content
     messages = [
         ChatMessage(role="system", content=_prompt_text()),
         ChatMessage(
             role="user",
             content=(
-                f"Запрос владельца: {content}\n\n"
+                f"Запрос владельца: {prompt_content}\n\n"
                 f"Язык запроса: {_LANG_NAME[detect_language(content)]}. Все вопросы, варианты ответа "
                 "(включая «Свой вариант»), цель, критерии и допущения пиши на этом же языке.\n\n"
                 f"Уже известный контракт (может быть пустым): {spec.model_dump_json()}\n"

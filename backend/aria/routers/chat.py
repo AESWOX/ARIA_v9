@@ -53,10 +53,20 @@ HISTORY_MESSAGES = 40
 HISTORY_CHAR_BUDGET = 60_000
 MAX_CONTENT_CHARS = 20_000
 DEFAULT_TITLES = {"", "Untitled session", "New chat"}
-SYSTEM_PROMPT = (
+SYSTEM_PROMPT_BASE = (
     "You are ARIA, a helpful assistant running locally on the user's machine. "
     "Reply in the language the user writes in. Be concise and honest; say so when you are unsure."
 )
+# PREFLIGHT §7/§9: execution contract is part of the stable system prefix (PR-1),
+# so the provider prompt cache keeps working. Flag off -> the original prompt.
+_COMPLIANCE_PROMPT = ""
+try:
+    from aria.core.preflight import load_compliance_prompt as _load_compliance_prompt
+
+    _COMPLIANCE_PROMPT = _load_compliance_prompt()
+except Exception:  # noqa: BLE001 — a missing prompt must not break chat import
+    _COMPLIANCE_PROMPT = ""
+SYSTEM_PROMPT = SYSTEM_PROMPT_BASE + ("\n\n" + _COMPLIANCE_PROMPT if _COMPLIANCE_PROMPT else "")
 NOT_CONFIGURED_HINT = (
     "No language model is configured. Open Keys and add a key for any provider "
     "(DeepSeek, Gemini or Groq), then send the message again."
@@ -137,6 +147,13 @@ def _real_provider_ids(request: Request) -> list[str]:
     )
 
 
+def _system_prompt() -> str:
+    """PREFLIGHT: flag off -> exactly the pre-ticket prompt (DoD regression)."""
+    if bool(getattr(get_settings(), "preflight_rewrite_enabled", True)):
+        return SYSTEM_PROMPT
+    return SYSTEM_PROMPT_BASE
+
+
 def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> list[ChatMessage]:
     """System prompt + the most recent turns that fit the budget (oldest dropped first).
 
@@ -172,7 +189,7 @@ def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> lis
     # Сводки компрессии и memory_block уходят отдельным system-сообщением перед последним
     # user-ходом: OpenAI-совместимые провайдеры (DeepSeek) кэшируют по префиксу, и правка
     # первого сообщения обнуляла кэш на весь запрос.
-    messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)] + [
+    messages = [ChatMessage(role="system", content=_system_prompt())] + [
         ChatMessage(role=r, content=t) for r, t in head + kept
     ]
     return _attach_dynamic(messages, _dynamic_system_block(summaries, memory_block))
@@ -207,6 +224,14 @@ def _attach_dynamic(prompt: list[ChatMessage], dynamic: str) -> list[ChatMessage
             insert_at = i
             break
     return prompt[:insert_at] + [ChatMessage(role="system", content=dynamic)] + prompt[insert_at:]
+
+
+def _replace_last_user(prompt: list[ChatMessage], text: str) -> list[ChatMessage]:
+    """PREFLIGHT: подменяет только последний user-ход, остальная история — raw."""
+    for i in range(len(prompt) - 1, 0, -1):
+        if prompt[i].role == "user":
+            return prompt[:i] + [ChatMessage(role="user", content=text)] + prompt[i + 1:]
+    return prompt
 
 
 def _dlp_mask(prompt: list[ChatMessage], session_id: uuid.UUID) -> tuple[list[ChatMessage], bool]:
@@ -572,6 +597,23 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
     hint = runprofile.thinking_hint(profile)
     # PR-1: thinking_hint больше не дописывается в messages[0] — он тоже ломал кэш.
     prompt = _attach_dynamic(prompt, hint)
+    # PREFLIGHT: БД/UI хранят raw; в модель уходит rewritten последнего user-хода.
+    # Сбой слоя не роняет чат — отправляется исходный текст.
+    try:
+        from aria.core import preflight as preflight_mod
+
+        preflight_result = await preflight_mod.preflight_user_message(
+            last_user_text,
+            router=request.app.state.router,
+            mode="chat",
+            session_id=session_id,
+            context_history=history[:-1],
+            sensitive=sensitive,
+        )
+        if preflight_result.applied:
+            prompt = _replace_last_user(prompt, preflight_result.rewritten)
+    except Exception:  # noqa: BLE001 — preflight is an enhancer, never a failure point
+        logger.exception("chat: preflight failed, sending the raw message")
     # PR-7: DLP применяется к исходящему промпту и снимается с ответа. Только чат —
     # агентский цикл не трогаем: плейсхолдеры сломали бы пути и команды в tool calls.
     prompt, dlp_applied = _dlp_mask(prompt, session_id)
@@ -606,6 +648,17 @@ def _log_chat_timing(prepared: _Prepared, session_id: uuid.UUID, first_token_at:
     )
 
 
+def _refusal_fallback_classes() -> list[str]:
+    """PREFLIGHT §5: классы для одного хопа при отказе модели (пусто = выключен)."""
+    settings = get_settings()
+    raw = getattr(settings, "preflight_refusal_classes", None)
+    if raw is None:
+        raw = getattr(settings, "preflight_refusal_fallback_classes", "")
+    if isinstance(raw, (tuple, list)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    return [item.strip() for item in str(raw or "").split(",") if item.strip()]
+
+
 async def _run_nonstream(session_id: uuid.UUID, request: Request, prepared: _Prepared) -> dict[str, Any]:
     """Полный не-стрим ответ: route_chat + DLP-restore + проверки + запись ассистента."""
     try:
@@ -628,6 +681,37 @@ async def _run_nonstream(session_id: uuid.UUID, request: Request, prepared: _Pre
     reply = (result.response.text or "").strip()
     if prepared.dlp_applied and reply:
         reply = _dlp_restore(reply, session_id)
+    # PREFLIGHT §5: один хоп на отказ, только non-stream. Network/5xx уже
+    # обрабатывает resilient-путь router — второй цикл не дублируем.
+    from aria.core.refusal import is_model_refusal
+
+    if is_model_refusal(reply):
+        fallback_classes = _refusal_fallback_classes()
+        if fallback_classes:
+            to_class = fallback_classes[0]
+            logger.info(
+                "refusal_fallback session_id=%s reason=refusal_fallback from_class=%s to_class=%s",
+                str(session_id)[:8],
+                prepared.chat_class,
+                to_class,
+            )
+            try:
+                result = await request.app.state.router.route_chat(
+                    to_class,
+                    prepared.prompt,
+                    [],
+                    timeout_sec=60,
+                    resilient=True,
+                    reject_empty=True,
+                    purpose="chat",
+                    session_id=session_id,
+                    sensitive=prepared.sensitive,
+                )
+                reply = (result.response.text or "").strip()
+                if prepared.dlp_applied and reply:
+                    reply = _dlp_restore(reply, session_id)
+            except Exception as exc:  # noqa: BLE001 — fallback failure keeps the first refusal
+                logger.warning("refusal_fallback failed session_id=%s: %s", str(session_id)[:8], exc)
     if not reply:
         raise HTTPException(status_code=502, detail="The model returned an empty answer. Try again.")
     if result.provider_id.startswith("stub"):
