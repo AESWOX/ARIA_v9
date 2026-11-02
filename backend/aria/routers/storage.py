@@ -2,20 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
-from aria.api.auth import token_store
+from aria.api.auth import require_runtime_token
 from aria.config import get_settings
 from aria.storage import obsidian_vault
 from aria.storage.b2_client import B2ConfigError, BackblazeB2Client
 
 router = APIRouter(tags=["storage"])
-
-
-async def require_runtime_token(x_local_agent_token: str | None = Header(default=None)) -> str:
-    if not token_store.verify_token(x_local_agent_token):
-        raise HTTPException(status_code=401, detail="invalid runtime token")
-    return x_local_agent_token or ""
 
 
 def save_to_vault_fallback(file_name: str, content: bytes) -> dict[str, Any]:
@@ -31,10 +25,7 @@ def save_to_vault_fallback(file_name: str, content: bytes) -> dict[str, Any]:
 
 
 @router.post("/storage/b2/upload")
-async def upload_to_b2(file: UploadFile = File(...), _: str = Header(default=""), x_local_agent_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if not token_store.verify_token(x_local_agent_token):
-        raise HTTPException(status_code=401, detail="invalid runtime token")
-
+async def upload_to_b2(file: UploadFile = File(...), _: str = Depends(require_runtime_token)) -> dict[str, Any]:
     client = BackblazeB2Client()
     if not client.is_configured():
         raise HTTPException(status_code=503, detail="B2 storage is not configured")
@@ -66,10 +57,7 @@ async def upload_to_b2(file: UploadFile = File(...), _: str = Header(default="")
 
 
 @router.post("/storage/vault/upload")
-async def upload_to_vault(file: UploadFile = File(...), x_local_agent_token: str | None = Header(default=None)) -> dict[str, Any]:
-    if not token_store.verify_token(x_local_agent_token):
-        raise HTTPException(status_code=401, detail="invalid runtime token")
-
+async def upload_to_vault(file: UploadFile = File(...), _: str = Depends(require_runtime_token)) -> dict[str, Any]:
     content = await file.read()
     return save_to_vault_fallback(file.filename or "upload.bin", content)
 

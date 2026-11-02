@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 
-from aria.api.auth import token_store
+from aria.api.auth import require_runtime_token
 from aria.db import repository as repo
 from aria.db.base import session_scope
 
@@ -24,12 +24,6 @@ TIER_HINTS = {
     "balanced": "Balanced quality, speed, and cost",
     "local": "Runs locally when available and can work as an offline-friendly fallback",
 }
-
-
-async def require_runtime_token(x_local_agent_token: str | None = Header(default=None)) -> str:
-    if not token_store.verify_token(x_local_agent_token):
-        raise HTTPException(status_code=401, detail="invalid runtime token")
-    return x_local_agent_token or ""
 
 
 @router.get("/providers/models")
