@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     compliance_prompt_enabled: bool = True
     # L0: только детекция и логирование отказов, без повторных вызовов провайдера.
     refusal_detection_enabled: bool = True
+    # L1: persona.md в system-prompt чата и роль агента (после базы, до compliance).
+    persona_prompt_enabled: bool = True
     # П.5.2 ТЗ: лимиты параллелизма по классам провайдеров, например
     # "free_tier_reasoning=2,standard_reasoning=3" (иначе один общий лимит).
     provider_max_concurrency: str = ""

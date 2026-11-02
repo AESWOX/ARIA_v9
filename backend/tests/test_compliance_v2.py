@@ -85,6 +85,8 @@ def test_chat_prompt_contains_contract_and_is_byte_stable():
 
 def test_chat_prompt_returns_to_old_text_when_flag_is_off(monkeypatch):
     settings = get_settings()
+    # L1: compose check isolates the compliance flag from the persona layer.
+    monkeypatch.setattr(settings, "persona_prompt_enabled", False)
     monkeypatch.setattr(settings, "compliance_prompt_enabled", False)
     prompt = chat_mod._build_prompt([("user", "hi")])
     assert prompt[0].content == SYSTEM_PROMPT_BASE

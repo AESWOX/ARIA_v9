@@ -19,7 +19,7 @@ def test_persona_md_exists():
     with open(abspath, encoding="utf-8") as f:
         content = f.read()
     assert len(content) > 200, f"persona.md too short ({len(content)} chars)"
-    assert "честности" in content or "honesty" in content, "persona.md missing honesty rule"
+    assert "Never pretend a tool worked" in content or "честности" in content, "persona.md missing honesty rule"
 
 
 def test_load_persona_function_exists():

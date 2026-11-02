@@ -31,6 +31,7 @@ from aria.api.auth import require_runtime_token
 from aria.config import get_settings
 from aria.core import runprofile, timing
 from aria.core.compliance import COMPLIANCE_TEXT
+from aria.core.persona import PERSONA_TEXT
 from aria.db import models as m
 from aria.db import repository as repo
 from aria.db.base import session_scope
@@ -58,9 +59,11 @@ SYSTEM_PROMPT_BASE = (
     "You are ARIA, a helpful assistant running locally on the user's machine. "
     "Reply in the language the user writes in. Be concise and honest; say so when you are unsure."
 )
-# L0 (TZ_COMPLIANCE_V2 §3): contract is part of the stable system prefix (PR-1),
-# so the provider prompt cache keeps working. Flag off -> the original prompt.
-SYSTEM_PROMPT = SYSTEM_PROMPT_BASE + ("\n\n" + COMPLIANCE_TEXT if COMPLIANCE_TEXT else "")
+# L0/L1: contract and persona are part of the stable system prefix (PR-1),
+# so the provider prompt cache keeps working. Flags off -> the previous prompt.
+SYSTEM_PROMPT = "\n\n".join(
+    part for part in (SYSTEM_PROMPT_BASE, PERSONA_TEXT, COMPLIANCE_TEXT) if part
+)
 NOT_CONFIGURED_HINT = (
     "No language model is configured. Open Keys and add a key for any provider "
     "(DeepSeek, Gemini or Groq), then send the message again."
@@ -142,14 +145,18 @@ def _real_provider_ids(request: Request) -> list[str]:
 
 
 def _system_prompt() -> str:
-    """L0: flag off -> exactly the pre-ticket prompt (DoD regression).
+    """L0/L1: flags off -> exactly the pre-ticket prompt (DoD regression).
 
-    The contract is a module-level constant, so the returned string is
-    byte-identical between calls while the flag is on (prompt-cache PR-1).
+    The parts are module-level constants, so the returned string is
+    byte-identical between calls while the flags are unchanged (prompt-cache PR-1).
     """
-    if bool(getattr(get_settings(), "compliance_prompt_enabled", True)):
-        return SYSTEM_PROMPT
-    return SYSTEM_PROMPT_BASE
+    settings = get_settings()
+    parts = [SYSTEM_PROMPT_BASE]
+    if bool(getattr(settings, "persona_prompt_enabled", True)) and PERSONA_TEXT:
+        parts.append(PERSONA_TEXT)
+    if bool(getattr(settings, "compliance_prompt_enabled", True)) and COMPLIANCE_TEXT:
+        parts.append(COMPLIANCE_TEXT)
+    return "\n\n".join(parts)
 
 
 def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> list[ChatMessage]:

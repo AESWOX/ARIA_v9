@@ -76,15 +76,12 @@ def _tool_schemas_for_role(tool_whitelist: tuple[str, ...]) -> list[dict]:
 
 
 def _load_persona() -> str:
-    """Load persona.md from the prompts directory."""
-    import os
-    p = os.path.join(os.path.dirname(__file__), "..", "prompts", "persona.md")
-    try:
-        with open(p, encoding="utf-8") as f:
-            return "\n" + f.read()
-    except FileNotFoundError:
-        logger.warning("persona.md not found at %s", p)
+    """Load persona.md from the prompts directory (L1: gated by PERSONA_PROMPT_ENABLED)."""
+    if not bool(getattr(get_settings(), "persona_prompt_enabled", True)):
         return ""
+    from aria.core.persona import PERSONA_TEXT
+
+    return ("\n" + PERSONA_TEXT) if PERSONA_TEXT else ""
 
 
 # A22: сколько символов результата тула показываем модели (остальное — в БД и UI).
