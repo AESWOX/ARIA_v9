@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, Check, Loader2, MessageCircle, Plus, RotateCcw, Send, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { CHAT_MODES, normalizeChatMode, type ChatMode } from "@/lib/chat-modes";
 import type { ChatModels, ChatMsg, ChatSessionRow, ChatStatus, ChatUsage, RunProfile, RunState } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@vendor/ui/ui/components/button";
@@ -22,14 +23,6 @@ function errMessage(e: unknown): string {
   const m = raw.match(/"detail"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   return m ? m[1].replace(/\\"/g, '"') : raw;
 }
-
-type Mode = "chat" | "agent" | "plan";
-
-const MODES: { id: Mode; label: string; hint: string }[] = [
-  { id: "chat", label: "Chat", hint: "Answers only, no tools" },
-  { id: "agent", label: "Agent", hint: "Works step by step with tools; risky steps ask you first" },
-  { id: "plan", label: "Plan", hint: "Plans, executes and audits the task; risky steps ask you first" },
-];
 
 const POLL_MS = 2000;
 const LIST_POLL_MS = 3000;
@@ -87,7 +80,7 @@ export default function NativeChatPage() {
   const [taskQuestions, setTaskQuestions] = useState<ClarifyQuestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<Mode>("chat");
+  const [mode, setMode] = useState<ChatMode>("chat");
   const [run, setRun] = useState<RunState | null>(null);
   const [usage, setUsage] = useState<ChatUsage | null>(null);
   const usageInFlight = useRef(false);
@@ -254,7 +247,7 @@ export default function NativeChatPage() {
     });
   }, [run]);
 
-  // Agent/Plan runs execute in the background (TaskRunner); poll while one is active.
+  // Agent runs execute in the background (TaskRunner); poll while one is active.
   const watching = activeId !== null && runBusy(run);
   useEffect(() => {
     if (!watching || !activeId) return;
@@ -328,7 +321,7 @@ export default function NativeChatPage() {
     setMode("chat");
   };
 
-  const sendRun = async (text: string, runMode: "agent" | "plan") => {
+  const sendRun = async (text: string, runMode: "agent") => {
     let sid = activeId;
     if (!sid) {
       sid = (await api.chatCreate(text.slice(0, 60))).session_id;
@@ -341,7 +334,7 @@ export default function NativeChatPage() {
     ]);
     setInput("");
     const res = await api.runPost(sid, { content: text, mode: runMode });
-    // Гейт уточнений (Agent/Plan): бэкенд отвечает queued:false + questions — показываем карточку,
+    // Гейт уточнений (Agent): бэкенд отвечает queued:false + questions — показываем карточку,
     // а не ошибку «already queued».
     const qs = (res as unknown as { questions?: ClarifyQuestion[] })?.questions ?? null;
     const hasQuestions = !!qs && qs.length > 0;
@@ -419,7 +412,8 @@ export default function NativeChatPage() {
       }
       // 19.4b B2: запросу нужен инструмент — бэкенд перевёл сессию в Agent.
       // Переключаем вкладку и включаем опрос запуска: шаги и ответ придут существующим polling.
-      if (sent.mode === "agent") {
+      const returnedMode = (sent as { mode?: unknown }).mode;
+      if (returnedMode && normalizeChatMode(returnedMode) === "agent") {
         setMode("agent");
         setRun(await api.runState(sid).catch(() => null));
       }
@@ -519,7 +513,7 @@ export default function NativeChatPage() {
       <div className="flex min-h-0 min-w-0 flex-col border border-border bg-background/40">
         <ChatTopBar
           title={sessions.find((x) => x.id === activeId)?.title ?? ""}
-          mode={MODES.find((md) => md.id === mode)?.label ?? mode}
+          mode={CHAT_MODES.find((md) => md.id === mode)?.label ?? mode}
           profile={profile}
           models={models}
           busy={runBusy(run) || sending}
@@ -685,7 +679,7 @@ export default function NativeChatPage() {
           <TeamPanel profile={profile} models={models} disabled={sending || runBusy(run)} notes={profileNotes} onChange={changeProfile} />
         )}
         <div className="flex items-center gap-1 border-t border-border px-2 pt-2" role="radiogroup" aria-label="Mode">
-          {MODES.map((md) => (
+          {CHAT_MODES.map((md) => (
             <button
               type="button"
               key={md.id}
@@ -703,7 +697,7 @@ export default function NativeChatPage() {
             </button>
           ))}
           <span className="ml-2 truncate text-xs text-muted-foreground">
-            {MODES.find((md) => md.id === mode)?.hint}
+            {CHAT_MODES.find((md) => md.id === mode)?.hint}
           </span>
         </div>
         <div className="flex gap-2 p-2">
