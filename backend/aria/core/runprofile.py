@@ -104,7 +104,8 @@ def normalize(raw: Any, router: Any = None) -> tuple[dict, list[str]]:
     thinking = raw.get("thinking", "off")
     if thinking not in THINKING_LEVELS:
         raise ProfileError(f"'thinking' must be one of {list(THINKING_LEVELS)}")
-    profile: dict[str, Any] = {"style": style, "audit": audit, "thinking": thinking}
+    # A save through the API/UI is an explicit owner choice, including audit="off".
+    profile: dict[str, Any] = {"style": style, "audit": audit, "thinking": thinking, "audit_explicit": True}
     for name in SEATS:
         profile[name] = _seat(raw.get(name), name, router)
     notes: list[str] = []
@@ -117,16 +118,35 @@ def normalize(raw: Any, router: Any = None) -> tuple[dict, list[str]]:
 
 # ── хранение ─────────────────────────────────────────────────────────────
 
+def migrate_profile(profile: dict | None) -> dict | None:
+    """L4: сохранённые до явного выбора профили (112/112 с ``audit="off"``) читаются как strict.
+
+    Явный выбор владельца помечается ``audit_explicit=True`` при сохранении и не
+    переопределяется. Строки БД не переписываются: эффективное значение считается при чтении,
+    поэтому миграция обратима и не трогает чужие данные.
+    """
+    if not isinstance(profile, dict) or not profile:
+        return profile
+    if profile.get("audit_explicit"):
+        return dict(profile)
+    if str(profile.get("audit") or "") != "off":
+        return dict(profile)
+    out = dict(profile)
+    out["audit"] = "strict"
+    return out
+
+
 def get_profile(db: Any, session_id: Any) -> dict | None:
     """Профиль сессии, иначе последний сохранённый по умолчанию, иначе None (прежнее поведение)."""
     for key in (f"run_profile:{session_id}", DEFAULT_KEY):
         value = repo.get_agent_state(db, key)
         if isinstance(value, dict) and value:
-            return value
+            return migrate_profile(value)
     return None
 
 
 def save_profile(db: Any, session_id: Any, profile: dict) -> None:
+    profile = {**profile, "audit_explicit": True}
     repo.set_agent_state(db, f"run_profile:{session_id}", profile, source="user")
     repo.set_agent_state(db, DEFAULT_KEY, profile, source="user")
 
@@ -182,6 +202,7 @@ def audit_settings(
     где это возможно. Явный выбор владельца (``auditor.tier``/``auditor.model``)
     всегда главнее и не подменяется.
     """
+    profile = migrate_profile(profile)
     if not profile:
         return "strict", "standard_reasoning", None
     cls, prefer = _target(profile.get("auditor") or {}, "standard_reasoning", router)

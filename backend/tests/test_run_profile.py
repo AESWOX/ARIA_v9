@@ -68,6 +68,26 @@ def test_normalize_validates_and_applies_72_rule():
         raise AssertionError(f"{bad} was accepted")
 
 
+def test_legacy_audit_off_migrates_to_strict_and_explicit_off_is_kept():
+    """L4: 112/112 saved profiles had audit=off before an explicit choice existed.
+
+    A saved profile without the explicit flag is legacy: agent tasks audit strict.
+    An owner who re-saves audit=off marks the choice explicit and is not overridden.
+    """
+    legacy = {"style": "solo", "audit": "off", "thinking": "off", "main": {}, "workers": {}, "auditor": {}}
+    assert runprofile.audit_settings(legacy, router=None)[0] == "strict"
+    assert runprofile.migrate_profile(legacy)["audit"] == "strict"
+
+    explicit = {**legacy, "audit_explicit": True}
+    assert runprofile.audit_settings(explicit, router=None)[0] == "off"
+    assert runprofile.migrate_profile(explicit)["audit"] == "off"
+
+
+def test_a_user_save_marks_the_audit_choice_explicit():
+    prof, _notes = runprofile.normalize({"style": "solo", "audit": "off"}, router=None)
+    assert prof["audit"] == "off" and prof["audit_explicit"] is True
+
+
 def test_loop_uses_chosen_model_and_falls_back_when_missing():
     r, p = _router(("std-a", "standard_reasoning"), ("free-a", "free_tier_reasoning"))
     sid, tid = _session_task()
