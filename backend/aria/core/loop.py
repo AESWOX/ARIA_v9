@@ -293,6 +293,12 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
         "Число навыков, заметок, задач и т.п. называй только после реального вызова инструмента (skill_lookup возвращает total)."
     )
     role_prompt += _load_persona()
+    # L0 (TZ_COMPLIANCE_V2 §3): контракт после persona; флаг off — старое поведение.
+    if bool(getattr(settings, "compliance_prompt_enabled", True)):
+        from aria.core.compliance import COMPLIANCE_TEXT
+
+        if COMPLIANCE_TEXT:
+            role_prompt += "\n\n" + COMPLIANCE_TEXT
     _hint = runprofile.thinking_hint(profile)
     if _hint:
         role_prompt += "\n\n" + _hint
@@ -399,6 +405,23 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
             return
 
         response = routing.response
+
+        # L0 §4: диагностика отказа — строка в лог, без повторов и без текста.
+        if bool(getattr(settings, "refusal_detection_enabled", True)):
+            from aria.core.refusal import finish_reason_from_response, is_model_refusal, log_refusal
+
+            if is_model_refusal(
+                response.text,
+                has_tool_calls=bool(response.tool_calls),
+                finish_reason=finish_reason_from_response(response),
+            ):
+                _refusal_provider = router.find_provider(routing.provider_id)
+                log_refusal(
+                    session_id=task.session_id,
+                    task_id=task_id,
+                    provider=routing.provider_id,
+                    model=getattr(_refusal_provider, "model", None),
+                )
 
         if not response.tool_calls:
             with session_scope() as db:

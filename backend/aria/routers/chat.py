@@ -30,6 +30,7 @@ from sqlalchemy import func, select
 from aria.api.auth import require_runtime_token
 from aria.config import get_settings
 from aria.core import runprofile, timing
+from aria.core.compliance import COMPLIANCE_TEXT
 from aria.db import models as m
 from aria.db import repository as repo
 from aria.db.base import session_scope
@@ -53,10 +54,13 @@ HISTORY_MESSAGES = 40
 HISTORY_CHAR_BUDGET = 60_000
 MAX_CONTENT_CHARS = 20_000
 DEFAULT_TITLES = {"", "Untitled session", "New chat"}
-SYSTEM_PROMPT = (
+SYSTEM_PROMPT_BASE = (
     "You are ARIA, a helpful assistant running locally on the user's machine. "
     "Reply in the language the user writes in. Be concise and honest; say so when you are unsure."
 )
+# L0 (TZ_COMPLIANCE_V2 §3): contract is part of the stable system prefix (PR-1),
+# so the provider prompt cache keeps working. Flag off -> the original prompt.
+SYSTEM_PROMPT = SYSTEM_PROMPT_BASE + ("\n\n" + COMPLIANCE_TEXT if COMPLIANCE_TEXT else "")
 NOT_CONFIGURED_HINT = (
     "No language model is configured. Open Keys and add a key for any provider "
     "(DeepSeek, Gemini or Groq), then send the message again."
@@ -137,6 +141,17 @@ def _real_provider_ids(request: Request) -> list[str]:
     )
 
 
+def _system_prompt() -> str:
+    """L0: flag off -> exactly the pre-ticket prompt (DoD regression).
+
+    The contract is a module-level constant, so the returned string is
+    byte-identical between calls while the flag is on (prompt-cache PR-1).
+    """
+    if bool(getattr(get_settings(), "compliance_prompt_enabled", True)):
+        return SYSTEM_PROMPT
+    return SYSTEM_PROMPT_BASE
+
+
 def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> list[ChatMessage]:
     """System prompt + the most recent turns that fit the budget (oldest dropped first).
 
@@ -172,7 +187,7 @@ def _build_prompt(history: list[tuple[str, str]], memory_block: str = "") -> lis
     # Сводки компрессии и memory_block уходят отдельным system-сообщением перед последним
     # user-ходом: OpenAI-совместимые провайдеры (DeepSeek) кэшируют по префиксу, и правка
     # первого сообщения обнуляла кэш на весь запрос.
-    messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)] + [
+    messages = [ChatMessage(role="system", content=_system_prompt())] + [
         ChatMessage(role=r, content=t) for r, t in head + kept
     ]
     return _attach_dynamic(messages, _dynamic_system_block(summaries, memory_block))
@@ -640,6 +655,20 @@ async def _run_nonstream(session_id: uuid.UUID, request: Request, prepared: _Pre
         "provider_id": result.provider_id,
         "usage": dict(result.response.usage or {}),
     }
+    # L0 §4: диагностика отказа — только строка в лог, без повторных вызовов и без текста.
+    if bool(getattr(get_settings(), "refusal_detection_enabled", True)):
+        from aria.core.refusal import finish_reason_from_response, is_model_refusal, log_refusal
+
+        if is_model_refusal(
+            reply,
+            has_tool_calls=bool(getattr(result.response, "tool_calls", None)),
+            finish_reason=finish_reason_from_response(result.response),
+        ):
+            log_refusal(
+                session_id=session_id,
+                provider=result.provider_id,
+                model=getattr(provider, "model", None),
+            )
 
     # 3) store the assistant message
     with timing.stage("chat_store"), session_scope() as db:
@@ -784,6 +813,17 @@ async def _stream_events(session_id: uuid.UUID, request: Request, prepared: _Pre
         result = await _run_nonstream(session_id, request, prepared)
         yield _ndjson_line({"type": "done", "result": result})
         return
+
+    # L0 §4/T12: в стриме finish_reason недоступен; детекция по собранному тексту.
+    if bool(getattr(get_settings(), "refusal_detection_enabled", True)):
+        from aria.core.refusal import is_model_refusal, log_refusal
+
+        if is_model_refusal(reply):
+            log_refusal(
+                session_id=session_id,
+                provider=provider.provider_id,
+                model=getattr(provider, "model", None),
+            )
 
     with timing.stage("chat_store"), session_scope() as db:
         session = repo.get_session(db, session_id)
