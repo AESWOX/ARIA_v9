@@ -30,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
 
 from aria.config import get_settings
-from aria.core import approvals, runprofile
+from aria.core import approvals, role_models, runprofile
 from aria.core.audit import run_audit
 from aria.core.events import event_bus
 from aria.llm import compression
@@ -296,6 +296,12 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
 
         if COMPLIANCE_TEXT:
             role_prompt += "\n\n" + COMPLIANCE_TEXT
+    # L6: owner preferences (vault/preferences.md) — часть стабильного префикса.
+    from aria.memory.preferences import stable_block as _preferences_block
+
+    _preferences = _preferences_block()
+    if _preferences:
+        role_prompt += "\n\n" + _preferences
     _hint = runprofile.thinking_hint(profile)
     if _hint:
         role_prompt += "\n\n" + _hint
@@ -376,7 +382,12 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
             messages = _build_messages(role_prompt, history)
 
         try:
-            model_class, preferred_model = runprofile.resolve_for_task(profile, role.default_model_policy, delegation_depth, router)
+            role_class, role_model = role_models.resolve_role_model(
+                role.role_id, role.default_model_policy, router
+            )
+            model_class, preferred_model = runprofile.resolve_for_task(profile, role_class, delegation_depth, router)
+            if profile is None and role_model:
+                preferred_model = role_model
             # resilient: повтор 5xx и переход на запасной класс/провайдера (как в чате, A20). Без этого один
             # 503/429 от Gemini сразу ронял всю задачу (живой смоук 11.10: агентские стадии падали за 1.7 с).
             routing = await router.route_chat(
@@ -470,6 +481,23 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                     )
                     event_bus.emit("task.status_changed", {"status": TaskStatus.awaiting_attention.value}, session_id=session.id, task_id=task.id, db=db)
                     approval_ctx = (session.id, task.id, str(item.id), f"{call.tool_name} {json.dumps(call.arguments, ensure_ascii=False, default=str)[:300]}")
+                    break  # пауза до Approve; остальные tool calls ответа отбрасываются
+
+                if call.tool_name == "memory_save" and str((call.arguments or {}).get("layer") or "") == "preference":
+                    # L6: правка vault/preferences.md — только после Approve владельца.
+                    item = approvals.request_preference_update_approval(db, session, task, dict(call.arguments or {}))
+                    event_bus.emit(
+                        "attention_item.created",
+                        {"id": str(item.id), "type": item.type.value, "title": item.title},
+                        session_id=session.id,
+                        task_id=task.id,
+                        db=db,
+                    )
+                    event_bus.emit("task.status_changed", {"status": TaskStatus.awaiting_attention.value}, session_id=session.id, task_id=task.id, db=db)
+                    approval_ctx = (
+                        session.id, task.id, str(item.id),
+                        f"memory_save preference: {str(call.arguments.get('content'))[:120]}",
+                    )
                     break  # пауза до Approve; остальные tool calls ответа отбрасываются
 
                 if call.tool_name == "shell_execute":

@@ -85,6 +85,7 @@ class AttentionType(str, enum.Enum):
     task_tz_approval = "task_tz_approval"
     high_risk_shell = "high_risk_shell"
     mcp_tool_approval = "mcp_tool_approval"
+    preference_update = "preference_update"
     budget_escalation = "budget_escalation"
     skill_update = "skill_update"
     cron_high_risk_exception = "cron_high_risk_exception"

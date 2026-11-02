@@ -240,12 +240,28 @@ async def _memory_search(input_json: dict, **_ctx) -> dict:
     return {"items": items, "total": len(items)}
 
 
-async def _memory_save(input_json: dict, **_ctx) -> dict:
-    from aria.memory import store
+async def _memory_save(input_json: dict, approved: bool = False, **_ctx) -> dict:
+    from aria.memory import preferences, store
 
+    layer = str(input_json.get("layer") or "fact")
+    content = str(input_json.get("content") or "")
+    if layer == "preference":
+        # L6: предпочтения живут в vault/preferences.md и меняются только с Approve.
+        section = preferences.section_name(input_json.get("section"))
+        if not approved:
+            return {
+                "status": "approval_required",
+                "error": "saving a preference to vault/preferences.md requires the owner's Approve",
+                "section": section,
+            }
+        try:
+            saved = preferences.save(section or "", content)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return {"saved": True, **saved, "duplicate": False}
     item = store.add(
-        str(input_json.get("layer") or "fact"),
-        str(input_json.get("content") or ""),
+        layer,
+        content,
         source="agent",  # недоверенный источник: в подсказку модели попадает с пометкой
     )
     return {"saved": True, "id": item["id"], "duplicate": bool(item.get("duplicate"))}
@@ -801,12 +817,17 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     ),
     "memory_save": ToolSpec(
         tool_name="memory_save",
-        description="Сохраняет в долговременную память короткий факт, предпочтение или итог задачи. Не сохранять секреты и ключи.",
+        description=(
+            "Сохраняет в долговременную память короткий факт, предпочтение или итог задачи. "
+            "Предпочтение (layer=preference) пишется в vault/preferences.md только после Approve владельца; "
+            "укажи section: Формат, Язык или Не спрашивать. Не сохранять секреты и ключи."
+        ),
         input_schema={
             "type": "object",
             "properties": {
                 "content": {"type": "string"},
                 "layer": {"type": "string", "enum": ["episode", "fact", "preference"]},
+                "section": {"type": "string", "enum": ["Формат", "Язык", "Не спрашивать"]},
             },
             "required": ["content"],
         },

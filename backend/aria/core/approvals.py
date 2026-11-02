@@ -61,6 +61,29 @@ def request_mcp_tool_approval(
     return item
 
 
+def request_preference_update_approval(
+    db: OrmSession, session: m.Session, task: m.Task, arguments: dict
+) -> m.AttentionItem:
+    """L6: запись в vault/preferences.md — только после Approve владельца."""
+    section = str(arguments.get("section") or "")
+    content = str(arguments.get("content") or "")
+    item = repo.create_attention_item(
+        db,
+        type_=AttentionType.preference_update,
+        title=f"Запись предпочтения: {section or 'без секции'}",
+        body_md=(
+            "Агент хочет сохранить ваше предпочтение в vault/preferences.md.\n\n"
+            f"Секция: {section or '—'}\nТекст: {content}\n\n"
+            "Approve — сохранить, Reject — не сохранять."
+        ),
+        session=session,
+        task=task,
+        payload_json={"kind": "preference", "tool_name": "memory_save", "arguments": arguments, "section": section},
+    )
+    repo.set_task_status(db, task, TaskStatus.awaiting_attention)
+    return item
+
+
 def request_task_tz_approval(db: OrmSession, session: m.Session, task: m.Task, draft_tz_md: str) -> m.AttentionItem:
     item = repo.create_attention_item(
         db,

@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     refusal_detection_enabled: bool = True
     # L1: persona.md в system-prompt чата и роль агента (после базы, до compliance).
     persona_prompt_enabled: bool = True
+    # L6: статическая карта роль → класс провайдера или provider_id (JSON), например
+    # {"content_creative": "standard_reasoning", "coder": "premium_reasoning"}.
+    # Пусто = модель по роли как раньше; автопереключения при отказе нет.
+    role_models: str = ""
     # П.5.2 ТЗ: лимиты параллелизма по классам провайдеров, например
     # "free_tier_reasoning=2,standard_reasoning=3" (иначе один общий лимит).
     provider_max_concurrency: str = ""

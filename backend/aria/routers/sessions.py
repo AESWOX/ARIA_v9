@@ -567,7 +567,8 @@ async def approve_attention(item_id: uuid.UUID, request: Request, _: str = Depen
         resolved.type == AttentionType.budget_escalation and payload.get("kind") == "estimate"
     )
     if (
-        resolved.type in (AttentionType.high_risk_shell, AttentionType.mcp_tool_approval) or is_estimate
+        resolved.type in (AttentionType.high_risk_shell, AttentionType.mcp_tool_approval, AttentionType.preference_update)
+        or is_estimate
     ) and resolved.task_id is not None:
         runner = getattr(request.app.state, "task_runner", None)
         if runner is not None:

@@ -145,10 +145,12 @@ def _real_provider_ids(request: Request) -> list[str]:
 
 
 def _system_prompt() -> str:
-    """L0/L1: flags off -> exactly the pre-ticket prompt (DoD regression).
+    """L0/L1/L6: flags off -> exactly the pre-ticket prompt (DoD regression).
 
     The parts are module-level constants, so the returned string is
-    byte-identical between calls while the flags are unchanged (prompt-cache PR-1).
+    byte-identical between calls while the flags and vault/preferences.md are
+    unchanged (prompt-cache PR-1). Preferences are appended last so the earlier
+    parts keep their exact positions.
     """
     settings = get_settings()
     parts = [SYSTEM_PROMPT_BASE]
@@ -156,6 +158,11 @@ def _system_prompt() -> str:
         parts.append(PERSONA_TEXT)
     if bool(getattr(settings, "compliance_prompt_enabled", True)) and COMPLIANCE_TEXT:
         parts.append(COMPLIANCE_TEXT)
+    from aria.memory.preferences import stable_block
+
+    preferences_block = stable_block()
+    if preferences_block:
+        parts.append(preferences_block)
     return "\n\n".join(parts)
 
 
