@@ -145,13 +145,15 @@ def test_hook_blocked_does_not_replan(env, monkeypatch):
 
 def test_post_failure_message_retries_on_database_locked(env, monkeypatch):
     calls = []
+    real_append = repo.append_message
 
-    def fake_append(session, task):
+    def fake_append(db, session, role, content, **kwargs):
         calls.append(1)
         if len(calls) < 3:
             raise RuntimeError("database is locked (sqlite3.OperationalError)")
+        return real_append(db, session, role, content, **kwargs)
 
-    monkeypatch.setattr(ex, "_append_failure_message", fake_append)
+    monkeypatch.setattr(repo, "append_message", fake_append)
     monkeypatch.setattr(ex.time, "sleep", lambda s: None)
     with session_scope() as db:
         s = repo.create_session(db, "r7")
@@ -163,11 +165,11 @@ def test_post_failure_message_retries_on_database_locked(env, monkeypatch):
 def test_post_failure_message_stops_on_non_transient(env, monkeypatch):
     calls = []
 
-    def fake_append(session, task):
+    def fake_append(db, session, role, content, **kwargs):
         calls.append(1)
         raise ValueError("boom")
 
-    monkeypatch.setattr(ex, "_append_failure_message", fake_append)
+    monkeypatch.setattr(repo, "append_message", fake_append)
     with session_scope() as db:
         s = repo.create_session(db, "r7")
         t = repo.create_task(db, s, role="general", objective="x")

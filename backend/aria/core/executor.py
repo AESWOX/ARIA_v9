@@ -1291,15 +1291,58 @@ def build_result_message(task: Task, files: list[tuple[str, str]], spec: Any | N
     return "\n".join(lines)
 
 
+def _is_transient_db_error(exc: Exception) -> bool:
+    return any(t in str(exc).lower() for t in _TRANSIENT_DB_ERRORS)
+
+
+def _deliver_assistant_message(task_id, session_id, content: str) -> None:
+    """Доставляет assistant-сообщение и событие ``message.created`` отдельной транзакцией.
+
+    L4: единственные ``database is locked`` в логах — INSERT INTO events при доставке
+    результата/отказа (backend.log 2755, 3062, 3564). Своя транзакция нужна потому, что
+    после неудачного flush вызывающая сессия уже в ``PendingRollback``: повтор в ней
+    невозможен, а откат потерял бы переход статуса. Поэтому вызывающий сначала commit'ит
+    статус, а доставка ретраится на свежем соединении.
+    """
+    from aria.core.events import event_bus
+    from aria.db import repository as repo
+    from aria.db.base import session_scope
+    from aria.http_utils import serialize_message
+
+    last_exc: Exception | None = None
+    for attempt in range(MAX_DB_RETRIES):
+        try:
+            with session_scope() as db:
+                agent_session = repo.get_session(db, session_id)
+                if agent_session is None:
+                    return
+                msg = repo.append_message(db, agent_session, role="assistant", content=content)
+                db.flush()
+                event_bus.emit(
+                    "message.created", serialize_message(msg),
+                    session_id=session_id, task_id=task_id, db=db,
+                )
+            return
+        except Exception as exc:  # noqa: BLE001 - доставка не должна ломать задачу
+            if not _is_transient_db_error(exc):
+                logger.warning("Message for task %s not posted: %s", str(task_id)[:8], exc)
+                return
+            last_exc = exc
+            if attempt < MAX_DB_RETRIES - 1:
+                time.sleep(_DB_RETRY_DELAY_SEC[min(attempt, len(_DB_RETRY_DELAY_SEC) - 1)])
+    logger.error(
+        "Message for task %s not posted after %d retries: %s",
+        str(task_id), MAX_DB_RETRIES, last_exc,
+    )
+
+
 def _post_result_message(session: OrmSession, task: Task, task_plan: TaskPlan,
                          tool_calls: list[dict], note_path: str | None) -> None:
     """Кладёт результат в чат сессии. Сбой доставки в чат не должен ронять уже выполненную задачу."""
     try:
         from aria.config import get_settings
         from aria.core import clarifier as _clarifier
-        from aria.core.events import event_bus
         from aria.db import repository as repo
-        from aria.http_utils import serialize_message
 
         agent_session = repo.get_session(session, task.session_id)
         if agent_session is None:
@@ -1308,12 +1351,14 @@ def _post_result_message(session: OrmSession, task: Task, task_plan: TaskPlan,
         reports = repo.list_audit_reports(session, task.id)
         criteria = dict((reports[-1].plan_vs_fact or {}).get("criteria_status") or {}) if reports else {}
         files = _result_files(tool_calls, get_settings().agent_sandbox_root)
-        msg = repo.append_message(session, agent_session, role="assistant",
-                                  content=build_result_message(task, files, spec, criteria, note_path))
-        session.flush()
-        event_bus.emit("message.created", serialize_message(msg), session_id=task.session_id, task_id=task.id)
+        content = build_result_message(task, files, spec, criteria, note_path)
+        # Статус done фиксируем до независимой записи сообщения: при сбое доставки
+        # задача остаётся выполненной (L4: backend.log 3564).
+        session.commit()
     except Exception as exc:  # noqa: BLE001
         logger.warning("Result message for task %s not posted: %s", str(task.id)[:8], exc)
+        return
+    _deliver_assistant_message(task.id, task.session_id, content)
 
 
 _FAILURE_TITLES = {
@@ -1348,46 +1393,29 @@ def build_failure_message(task: Task, remarks: list[str]) -> str:
 def _post_failure_message(session: OrmSession, task: Task) -> None:
     """Сообщение об отказе в чат: раньше failed-задача оставляла пустой экран и ни одной строки в логе.
 
-    R7: запись переживает transient-ошибки БД (``database is locked``) — те же константы,
-    что у ``_with_db_retry`` (MAX_DB_RETRIES, _DB_RETRY_DELAY_SEC, _TRANSIENT_DB_ERRORS).
-    После исчерпания ретраев — ошибка в лог с полным ``task_id``, а не молчание.
+    R7/L4: вызывающая сессия сначала commit'ит переход в failed, затем доставка идёт
+    свежей транзакцией с ретраями на ``database is locked`` (см. ``_deliver_assistant_message``).
     """
-    last_exc: Exception | None = None
-    for attempt in range(MAX_DB_RETRIES):
-        try:
-            _append_failure_message(session, task)
+    try:
+        from aria.db import repository as repo
+
+        agent_session = repo.get_session(session, task.session_id)
+        if agent_session is None:
             return
-        except Exception as exc:  # noqa: BLE001 - сбой доставки не должен ломать переход статуса
-            if not any(t in str(exc).lower() for t in _TRANSIENT_DB_ERRORS):
-                logger.warning("Failure message for task %s not posted: %s", str(task.id)[:8], exc)
-                return
-            last_exc = exc
-            if attempt < MAX_DB_RETRIES - 1:
-                time.sleep(_DB_RETRY_DELAY_SEC[min(attempt, len(_DB_RETRY_DELAY_SEC) - 1)])
-    logger.error(
-        "Failure message for task %s not posted after %d retries: %s",
-        str(task.id), MAX_DB_RETRIES, last_exc,
-    )
-
-
-def _append_failure_message(session: OrmSession, task: Task) -> None:
-    from aria.core.events import event_bus
-    from aria.db import repository as repo
-    from aria.http_utils import serialize_message
-
-    agent_session = repo.get_session(session, task.session_id)
-    if agent_session is None:
+        remarks: list[str] = []
+        reports = repo.list_audit_reports(session, task.id)
+        if reports:
+            last = reports[-1]
+            for item in [*(last.patch_suggestions or []), *(last.missing_requirements or [])]:
+                text = str(item).strip()
+                if text:
+                    remarks.append(text[:300])
+        content = build_failure_message(task, remarks[:4])
+        session.commit()  # статус failed не должен зависеть от доставки сообщения
+    except Exception as exc:  # noqa: BLE001 - сбой доставки не должен ломать переход статуса
+        logger.warning("Failure message for task %s not posted: %s", str(task.id)[:8], exc)
         return
-    remarks: list[str] = []
-    reports = repo.list_audit_reports(session, task.id)
-    if reports:
-        last = reports[-1]
-        for item in [*(last.patch_suggestions or []), *(last.missing_requirements or [])]:
-            text = str(item).strip()
-            if text:
-                remarks.append(text[:300])
-    msg = repo.append_message(session, agent_session, role="assistant", content=build_failure_message(task, remarks[:4]))
-    event_bus.emit("message.created", serialize_message(msg), session_id=task.session_id, task_id=task.id, db=session)
+    _deliver_assistant_message(task.id, task.session_id, content)
 
 
 _DETERMINISTIC_STEP_ERRORS: list[tuple[str, str]] = [
