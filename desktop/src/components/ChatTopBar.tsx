@@ -8,6 +8,11 @@ import { cn } from "@/lib/utils";
    NativeChatPage. */
 
 const TIER_SHORT: Record<string, string> = { premium: "Strong", standard: "Medium", free: "Free", fast: "Fast" };
+
+/** D-38: under ten cents two decimals would read as $0.00; keep four there. */
+export function formatUsd(value: number): string {
+  return value < 0.1 ? value.toFixed(4) : value.toFixed(2);
+}
 const AUDIT_SHORT = { off: "no check", light: "quick check", strict: "strict check" } as const;
 const THINK_SHORT = { off: "fast", medium: "balanced", high: "deep" } as const;
 
@@ -36,7 +41,7 @@ function Chip({ children, title, tone }: { children: React.ReactNode; title?: st
 }
 
 export function ChatTopBar({
-  title, mode, profile, models, busy, waiting, costToday, usage, focus, onToggleFocus,
+  title, mode, profile, models, busy, waiting, costToday, costTodayUnpriced, usage, focus, onToggleFocus,
 }: {
   title: string;
   mode: string;
@@ -45,6 +50,8 @@ export function ChatTopBar({
   busy: boolean;
   waiting: boolean;
   costToday: number | null;
+  /** D-38: ledger calls today without a price (shown next to the sum, never hidden). */
+  costTodayUnpriced: number;
   usage: ChatUsage | null;
   focus: boolean;
   onToggleFocus: () => void;
@@ -74,14 +81,16 @@ export function ChatTopBar({
           ctx {usage.context_pct}%
         </Chip>
       )}
-      {usage?.priced && usage.session_cost != null && (
+      {usage?.session_cost != null && (
         <Chip title="Cost of this chat (from provider usage and model prices)">
-          ${usage.session_cost.toFixed(4)} this chat
+          ${formatUsd(usage.session_cost)} this chat
+          {usage.unpriced_messages > 0 && ` +${usage.unpriced_messages} unpriced`}
         </Chip>
       )}
       {costToday !== null && (
-        <Chip title="Estimated spend today across all chats (upper bound, cache not counted)">
-          ≈ ${costToday.toFixed(2)} today
+        <Chip title="Spend today across all chats, from the provider usage ledger">
+          ≈ ${formatUsd(costToday)} today
+          {costTodayUnpriced > 0 && ` +${costTodayUnpriced} unpriced`}
         </Chip>
       )}
       <button

@@ -399,10 +399,11 @@ async def chat_messages(session_id: uuid.UUID, _: str = Depends(require_runtime_
 
 @router.get("/sessions/{session_id}/usage")
 async def chat_session_usage(session_id: uuid.UUID, _: str = Depends(require_runtime_token)) -> dict[str, Any]:
-    """???????? ?????? ? ????????? ?? llm_usage (E1/E2/E3).
+    """Стоимость сессии и контекст по llm_usage (E1/E2/E3).
 
-    ``session_cost`` ? ????? ???????? cost_usd ????? llm_usage ??????; ???? ? ????? ?????
-    ???? ??????????, ``session_cost_complete=False`` ? ``priced=False`` (????????? ????? ?? ??????????).
+    ``session_cost`` — сумма известных cost_usd строк llm_usage сессии. Если часть
+    вызовов без цены, ``session_cost_complete=False`` и ``priced=False``, но
+    ``session_cost_partial=True``: частичную сумму показываем, а не скрываем (D-38).
     """
     with session_scope() as db:
         if repo.get_session(db, session_id) is None:
@@ -411,7 +412,7 @@ async def chat_session_usage(session_id: uuid.UUID, _: str = Depends(require_run
         context_tokens = compression.history_tokens(history)
         profile = runprofile.get_profile(db, session_id) or runprofile.builtin_profile()
         main_seat = profile.get("main") if isinstance(profile, dict) else None
-        provider_id = main_seat.get("model") if isinstance(main_seat, dict) else None  # ? ??????? ??? provider_id
+        provider_id = main_seat.get("model") if isinstance(main_seat, dict) else None  # здесь фактически provider_id
         context_window: int | None = None
         if provider_id:
             windows = [
@@ -433,6 +434,7 @@ async def chat_session_usage(session_id: uuid.UUID, _: str = Depends(require_run
     priced_messages = sum(1 for c in costs if c is not None)
     unpriced_messages = len(costs) - priced_messages
     session_cost_complete = bool(costs) and unpriced_messages == 0
+    session_cost_partial = priced_messages > 0 and unpriced_messages > 0
     priced_total = sum(float(c) for c in costs if c is not None)
     context_pct = round(context_tokens / context_window * 100, 1) if context_window else None
     return {
@@ -441,6 +443,7 @@ async def chat_session_usage(session_id: uuid.UUID, _: str = Depends(require_run
         "context_pct": context_pct,
         "session_cost": round(priced_total, 6) if priced_messages else None,
         "session_cost_complete": session_cost_complete,
+        "session_cost_partial": session_cost_partial,
         "priced": priced_messages > 0 and session_cost_complete,
         "priced_messages": priced_messages,
         "unpriced_messages": unpriced_messages,

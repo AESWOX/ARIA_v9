@@ -8,7 +8,7 @@ per-token rate; real billing is not tracked (``actual_cost=0``).
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -24,15 +24,25 @@ _INPUT_RATE_PER_1M = 2.5  # $ per 1M input tokens (estimate)
 _OUTPUT_RATE_PER_1M = 10.0  # $ per 1M output tokens (estimate)
 
 
+def _local(ts: datetime) -> datetime:
+    """SQLite отдаёт naive UTC — считаем его UTC, а не локальным временем."""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone()
+
+
 def _day_key(ts: datetime) -> str:
-    return ts.astimezone().strftime("%Y-%m-%d")
+    return _local(ts).strftime("%Y-%m-%d")
 
 
 def _day_range(days: int) -> tuple[datetime, datetime]:
+    """Начало периода — локальная полночь пользователя, конец — сейчас."""
     end = utc_now()
-    start = end - timedelta(days=max(1, days) - 1)
-    start = start.replace(hour=0, minute=0, second=0, microsecond=0)
-    return start, end
+    local_end = _local(end)
+    local_start = (local_end - timedelta(days=max(1, days) - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return local_start.astimezone(timezone.utc), end
 
 
 def _model_of(msg: m.Message) -> str:
@@ -69,8 +79,13 @@ async def analytics_usage(
         messages = db.query(m.Message).filter(m.Message.created_at >= start).all()
         sessions = db.query(m.Session).filter(m.Session.created_at >= start).all()
         skills = db.query(m.SkillMeta).all()
+        usage_rows = db.query(m.LlmUsage).filter(m.LlmUsage.created_at >= start).all()
 
-    day_list = [(start + timedelta(days=i)).date().isoformat() for i in range((end.date() - start.date()).days + 1)]
+    local_start, local_end = _local(start), _local(end)
+    day_list = [
+        (local_start + timedelta(days=i)).date().isoformat()
+        for i in range((local_end.date() - local_start.date()).days + 1)
+    ]
     daily: dict[str, dict[str, Any]] = {
         d: {
             "day": d,
@@ -82,6 +97,8 @@ async def analytics_usage(
             "actual_cost": 0.0,
             "sessions": 0,
             "api_calls": 0,
+            "ledger_cost_usd": 0.0,
+            "unpriced_calls": 0,
         }
         for d in day_list
     }
@@ -151,6 +168,21 @@ async def analytics_usage(
     for sid in session_has_activity:
         pass  # already counted by created_at; keep daily sessions = sessions created that day
 
+    # D-38: real ledger (llm_usage.cost_usd) for the user's local days. Rows without a
+    # price are not folded into zero silently — they are reported as unpriced_calls.
+    ledger_total = 0.0
+    ledger_unpriced = 0
+    for row in usage_rows:
+        bucket = daily.get(_day_key(row.created_at))
+        if bucket is None:
+            continue
+        if row.cost_usd is None:
+            bucket["unpriced_calls"] += 1
+            ledger_unpriced += 1
+        else:
+            bucket["ledger_cost_usd"] = round(bucket["ledger_cost_usd"] + float(row.cost_usd), 6)
+            ledger_total += float(row.cost_usd)
+
     for bucket in daily.values():
         bucket["estimated_cost"] = _estimate_cost(bucket["input_tokens"], bucket["output_tokens"])
     for mb in by_model.values():
@@ -165,6 +197,8 @@ async def analytics_usage(
         "total_actual_cost": 0.0,
         "total_sessions": len(sessions),
         "total_api_calls": sum(b["api_calls"] for b in daily.values()),
+        "ledger_cost_usd": round(ledger_total, 6),
+        "unpriced_calls": ledger_unpriced,
     }
 
     total_use = sum(s.use_count or 0 for s in skills)

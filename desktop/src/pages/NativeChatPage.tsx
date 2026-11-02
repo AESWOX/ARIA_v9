@@ -99,6 +99,7 @@ export default function NativeChatPage() {
   const [seen, setSeen] = useState<SeenMap>(() => loadSeen());
   const [focus, setFocus] = useState<boolean>(() => loadFocus());
   const [costToday, setCostToday] = useState<number | null>(null);
+  const [costTodayUnpriced, setCostTodayUnpriced] = useState(0);
   const profileDirty = useRef(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -153,7 +154,9 @@ export default function NativeChatPage() {
       api
         .getAnalytics(1)
         .then((r) => {
-          if (!cancelled) setCostToday(r.totals.total_estimated_cost);
+          if (cancelled) return;
+          setCostToday(r.totals.ledger_cost_usd);
+          setCostTodayUnpriced(r.totals.unpriced_calls);
         })
         .catch(() => undefined);
     };
@@ -522,6 +525,7 @@ export default function NativeChatPage() {
           busy={runBusy(run) || sending}
           waiting={(run?.attention.length ?? 0) > 0}
           costToday={costToday}
+          costTodayUnpriced={costTodayUnpriced}
           usage={usage}
           focus={focus}
           onToggleFocus={() => applyFocus(!focus)}

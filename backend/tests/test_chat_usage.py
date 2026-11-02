@@ -19,6 +19,7 @@ KEYS = {
     "context_pct",
     "session_cost",
     "session_cost_complete",
+    "session_cost_partial",
     "priced",
     "priced_messages",
     "unpriced_messages",

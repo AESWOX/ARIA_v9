@@ -2099,6 +2099,10 @@ export interface AnalyticsDailyEntry {
   actual_cost: number;
   sessions: number;
   api_calls: number;
+  /** D-38: real spend from the llm_usage ledger (cost_usd), local day. */
+  ledger_cost_usd: number;
+  /** D-38: ledger rows without a price; they are not folded into zero. */
+  unpriced_calls: number;
 }
 
 export interface AnalyticsModelEntry {
@@ -2138,6 +2142,10 @@ export interface AnalyticsResponse {
     total_actual_cost: number;
     total_sessions: number;
     total_api_calls: number;
+    /** D-38: real spend from the llm_usage ledger (cost_usd). */
+    ledger_cost_usd: number;
+    /** D-38: ledger rows without a price. */
+    unpriced_calls: number;
   };
   skills: {
     summary: AnalyticsSkillsSummary;
@@ -2410,6 +2418,9 @@ export interface ChatUsage {
   context_window: number | null;
   context_pct: number | null;
   session_cost: number | null;
+  session_cost_complete: boolean;
+  /** D-38: some calls are priced, some are not — show the partial sum, not silence. */
+  session_cost_partial: boolean;
   priced: boolean;
   priced_messages: number;
   unpriced_messages: number;

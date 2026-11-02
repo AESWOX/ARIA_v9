@@ -1,5 +1,5 @@
 {
-  "checked": "2026-10-29",
+  "checked": "2026-11-02",
   "source": "https://api-docs.deepseek.com/quick_start/pricing",
   "currency": "USD",
   "unit": "per_1m_tokens",
@@ -15,7 +15,9 @@
   },
   "aliases": {
     "deepseek-v4-flash": "deepseek-flash",
-    "deepseek-v4-flash-vision-exp": "deepseek-flash"
+    "deepseek-v4-flash-vision-exp": "deepseek-flash",
+    "deepseek-chat": "deepseek-flash",
+    "deepseek-reasoner": "deepseek-flash"
   },
   "peak_windows_utc": [["01:00", "04:00"], ["06:00", "10:00"]],
   "peak_weekdays": [0, 1, 2, 3, 4],
