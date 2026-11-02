@@ -1,0 +1,27 @@
+{
+  "note": "L4 regression fixture: every web_fetch invalid_arguments hit in %APPDATA%\\ARIA\\logs (26.10-02.11). Step 5bb37d4c was generated without a URL; objective text alone is not enough for the plan step.",
+  "objective": "open the page from the task and show its title",
+  "role": "research",
+  "tool_ref": "web_fetch",
+  "step_id": "5bb37d4c",
+  "records": [
+    {"source": "backend.log", "line": 3016, "ts": "2026-10-29 12:12:32,088", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "backend.log", "line": 3032, "ts": "2026-10-29 12:12:40,755", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "backend.log", "line": 3045, "ts": "2026-10-29 12:12:59,742", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "backend.log", "line": 3058, "ts": "2026-10-29 12:13:33,381", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "backend.log", "line": 3409, "ts": "2026-10-30 11:27:53,333", "task": "37d83fa6", "kind": "invalid_arguments"},
+    {"source": "backend.log", "line": 3414, "ts": "2026-10-30 11:27:54,650", "task": "37d83fa6", "kind": "task_failed"},
+    {"source": "errors.log", "line": 318, "ts": "2026-10-29 12:12:32,088", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "errors.log", "line": 322, "ts": "2026-10-29 12:12:40,755", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "errors.log", "line": 324, "ts": "2026-10-29 12:12:59,742", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "errors.log", "line": 326, "ts": "2026-10-29 12:13:33,381", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "errors.log", "line": 358, "ts": "2026-10-30 11:27:53,333", "task": "37d83fa6", "kind": "invalid_arguments"},
+    {"source": "errors.log", "line": 361, "ts": "2026-10-30 11:27:54,650", "task": "37d83fa6", "kind": "task_failed"},
+    {"source": "tasks.log", "line": 438, "ts": "2026-10-29 12:12:32,088", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "tasks.log", "line": 448, "ts": "2026-10-29 12:12:40,755", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "tasks.log", "line": 455, "ts": "2026-10-29 12:12:59,742", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "tasks.log", "line": 462, "ts": "2026-10-29 12:13:33,381", "task": "36c58df9", "kind": "invalid_arguments"},
+    {"source": "tasks.log", "line": 571, "ts": "2026-10-30 11:27:53,333", "task": "37d83fa6", "kind": "invalid_arguments"},
+    {"source": "tasks.log", "line": 574, "ts": "2026-10-30 11:27:54,650", "task": "37d83fa6", "kind": "task_failed"}
+  ]
+}

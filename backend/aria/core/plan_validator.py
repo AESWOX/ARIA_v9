@@ -397,7 +397,8 @@ def validate_plan(steps: list[dict], criteria_ids: list[str] | None = None) -> l
         if resolved is None:
             raise ValueError(
                 f"Plan validation failed: step[{i}] web_fetch: url не указан ни в поле url, "
-                "ни в input, ни в objective"
+                "ни в input, ни в objective. Укажи полный http(s) URL в поле url шага — "
+                "шаг web_fetch без URL не создаётся."
             )
     result: list[PlanStep] = []
     errors: list[str] = []

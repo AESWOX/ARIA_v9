@@ -640,7 +640,11 @@ async def web_fetch(input_json: dict, sandbox_root: str = "", **_ctx) -> dict:
 
     raw_url = input_json.get("url")
     if not isinstance(raw_url, str) or not raw_url.strip():
-        return {"error": "empty url", "url": ""}
+        return {
+            "error": "url не передан: повтори вызов web_fetch с полным http(s) URL "
+                     "в аргументе url (например https://example.com/page)",
+            "url": "",
+        }
     url = raw_url.strip().split("#", 1)[0]
     max_chars = _clamp_int(input_json.get("max_chars"), DEFAULT_MAX_CHARS, 200, HARD_MAX_CHARS)
     focus = str(input_json.get("focus") or "").strip() or None

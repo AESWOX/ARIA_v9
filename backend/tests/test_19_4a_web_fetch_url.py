@@ -79,6 +79,14 @@ def test_validate_plan_rejects_web_fetch_without_url_with_reason():
     assert "web_fetch" in msg and "url" in msg
 
 
+def test_validate_plan_web_fetch_hint_is_actionable():
+    """L4: причина отказа должна не только констатировать пропуск, но и говорить Оракулу, что делать."""
+    with pytest.raises(ValueError) as ei:
+        pv.validate_plan([_wf_step()])
+    msg = str(ei.value)
+    assert "Укажи" in msg and "http" in msg, msg
+
+
 def test_validate_plan_rejects_ambiguous_multiple_urls():
     with pytest.raises(ValueError) as ei:
         pv.validate_plan([_wf_step(objective="см. https://a.com и https://b.com")])

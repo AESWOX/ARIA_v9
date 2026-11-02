@@ -360,9 +360,9 @@ class TestWebFetchExtraction:
     async def test_junk_arguments(self, opener):
         install, calls = opener
         install(FakeResp(b"<p>hi</p>"))
-        assert (await web.web_fetch({}))["error"] == "empty url"
-        assert (await web.web_fetch({"url": 123}))["error"] == "empty url"
-        assert (await web.web_fetch({"url": "   "}))["error"] == "empty url"
+        for bad in ({}, {"url": 123}, {"url": "   "}):
+            err = (await web.web_fetch(bad))["error"]
+            assert "url" in err and "http" in err and "повтори" in err, err
         assert not calls
         out = await web.web_fetch({"url": "https://example.com/", "max_chars": "many"})
         assert out["content"] == "hi"
