@@ -85,6 +85,10 @@ _TERMINAL_TASK_STATUSES = {
     TaskStatus.cancelled,
 }
 
+# P0 A3: только эти статусы означают «задача реально идёт». awaiting_attention / needs_rework /
+# approved / draft больше не блокируют Chat→Agent молчаливым return None.
+_RUNNING_TASK_STATUSES = {TaskStatus.in_progress, TaskStatus.under_audit}
+
 
 async def _switch_to_agent(session_id: uuid.UUID, payload: dict[str, Any], request: Request) -> dict[str, Any] | None:
     """19.4b B2: запрос, которому нужен инструмент, уходит из Chat в Agent.
@@ -98,7 +102,11 @@ async def _switch_to_agent(session_id: uuid.UUID, payload: dict[str, Any], reque
     content = str(payload.get("content") or "").strip()
     if not content or payload.get("retry"):
         return None
-    if clarifier.is_small_talk(content) or not clarifier.needs_tools(content):
+    if clarifier.is_small_talk(content):
+        logger.debug("chat→agent skipped: small talk")
+        return None
+    if not clarifier.needs_tools(content):
+        logger.debug("chat→agent skipped: no tool intent")
         return None
     runner = getattr(request.app.state, "task_runner", None)
     if runner is None:
@@ -108,23 +116,53 @@ async def _switch_to_agent(session_id: uuid.UUID, payload: dict[str, Any], reque
         if session is None:
             raise HTTPException(status_code=404, detail="session not found")
         task = repo.get_task(db, session.current_task_id) if session.current_task_id else None
-        if task is not None and task.status not in _TERMINAL_TASK_STATUSES:
-            return None  # задача уже идёт: не переключаем повторно
-        task = repo.create_task(
-            db,
-            session,
-            role=runprofile.root_role(runprofile.get_profile(db, session.id)),
-            objective=content,
-            draft_tz_md=f"# {content[:80]}\n",
-        )
-        repo.set_task_status(db, task, TaskStatus.approved)
-        user_msg = repo.append_message(
-            db, session, role="user", content=content, source_trust=SourceTrust.trusted
-        )
-        session.updated_at = datetime.now(timezone.utc)
-        if (session.title or "") in DEFAULT_TITLES:
-            session.title = content.replace("\n", " ")[:60]
-        task_id = task.id
+        assistant_msg = None
+        busy_task_id = None
+        if task is not None and task.status in _RUNNING_TASK_STATUSES:
+            busy_task_id = task.id
+            assistant_msg = repo.append_message(
+                db,
+                session,
+                role="assistant",
+                content=(
+                    f"Сейчас выполняется задача {str(task.id)[:8]}. "
+                    "Нажми Cancel task или дождись завершения — тогда повторю запрос в Agent."
+                ),
+            )
+            session.updated_at = datetime.now(timezone.utc)
+            logger.info(
+                "chat→agent suppressed: session %s has running task %s (%s)",
+                session_id, task.id, task.status,
+            )
+        else:
+            if task is not None:
+                logger.info(
+                    "chat→agent: replacing non-running task %s (%s) in session %s",
+                    task.id, task.status, session_id,
+                )
+            task = repo.create_task(
+                db,
+                session,
+                role=runprofile.root_role(runprofile.get_profile(db, session.id)),
+                objective=content,
+                draft_tz_md=f"# {content[:80]}\n",
+            )
+            repo.set_task_status(db, task, TaskStatus.approved)
+            user_msg = repo.append_message(
+                db, session, role="user", content=content, source_trust=SourceTrust.trusted
+            )
+            session.updated_at = datetime.now(timezone.utc)
+            if (session.title or "") in DEFAULT_TITLES:
+                session.title = content.replace("\n", " ")[:60]
+            task_id = task.id
+    if assistant_msg is not None:
+        emit_message_created(assistant_msg, session_id, busy_task_id)
+        return {
+            "ok": True,
+            "mode": "agent_busy",
+            "task_id": str(busy_task_id),
+            "message": assistant_msg.content,
+        }
     emit_message_created(user_msg, session_id, task_id)
     queued = bool(runner.submit(task_id, mode="agent", source="ui").get("queued"))
     return {"ok": True, "mode": "agent", "task_id": str(task_id), "queued": queued}

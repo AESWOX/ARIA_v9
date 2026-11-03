@@ -113,6 +113,43 @@ def _is_immediate_repeat(history: list, tool_name: str, arguments: dict) -> bool
     )
 
 
+_SESSION_TOOL_REPEATS: dict[str, tuple[str, int]] = {}
+# P0 A4: только инструменты чтения. У delegate_task/shell своя retry-политика.
+_REPEAT_GUARDED_TOOLS = frozenset({"file_read", "file_search", "file_grep"})
+
+
+def _repeat_signature(tool_name: str, arguments: dict | None) -> str:
+    """P0 A4: basename и абсолютный путь одного файла должны считаться одним повтором."""
+    args = dict(arguments or {})
+    if tool_name in ("file_read", "file_search", "file_grep"):
+        raw = str(args.get("path") or args.get("glob") or "").replace("\\", "/").rstrip("/")
+        return f"{tool_name}:{(raw.split('/')[-1] if raw else '').lower()}"
+    try:
+        return f"{tool_name}:" + json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return f"{tool_name}:{args!r}"
+
+
+def _note_session_repeat(session_id, tool_name: str, arguments: dict | None, limit: int = 3) -> tuple[bool, int]:
+    """Счётчик повторов на СЕССИЮ: ловит и 5 отдельных сообщений «прочитай файл»."""
+    if tool_name not in _REPEAT_GUARDED_TOOLS:
+        return False, 0
+    sig = _repeat_signature(tool_name, arguments)
+    key = str(session_id)
+    prev, count = _SESSION_TOOL_REPEATS.get(key, ("", 0))
+    count = count + 1 if prev == sig else 1
+    _SESSION_TOOL_REPEATS[key] = (sig, count)
+    return count >= limit, count
+
+
+def _agent_shell_target(role_id: str, settings) -> tuple[bool, str | None]:
+    """P0 A2: shell в Agent только для general, только при тумблере, только в project root."""
+    if role_id != "general" or not bool(getattr(settings, "agent_shell_enabled", False)):
+        return False, None
+    root = str(getattr(settings, "agent_project_root", "") or "").strip()
+    return True, (root or None)
+
+
 def _fold_tool_output(sandbox_root: str, task_id, ref, output) -> dict:
     """E6: длинный вывод пишем в sandbox/.tool_output/<task>/<ref>.txt и отдаём ref в контекст."""
     try:
@@ -268,6 +305,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
 
     await toolhooks.lifecycle("task_start", session_id=session.id, task_id=task_id, role=task.role)
 
+    agent_shell, agent_shell_root = _agent_shell_target(role.role_id, settings)
     tool_whitelist = role.tool_whitelist
     try:
         # H7: тулы подключённых MCP-серверов (только для ролей из MCP_ROLES); сбой сервера не ломает задачу.
@@ -278,6 +316,9 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
         tool_whitelist = tuple(role.tool_whitelist) + _mcp.tool_names_for_role(role.role_id)
     except Exception:  # noqa: BLE001
         logger.warning("MCP tools unavailable for task %s", task_id, exc_info=True)
+    if agent_shell:
+        # P0 A2: тумблер включён — добавляем shell РОЛИ general только на время этой задачи.
+        tool_whitelist = tuple(tool_whitelist) + ("shell_execute",)
     tool_schemas = _tool_schemas_for_role(tool_whitelist)
     with session_scope() as db:
         _t = repo.get_task(db, task_id)
@@ -439,6 +480,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
 
         approval_ctx = None
         _parent_paused = False
+        session_repeat_abort: str | None = None
         delegate_batch: list[dict] = []  # B5-D1: delegate_task из одного ответа исполняются пачкой, параллельно
         for call in response.tool_calls:
             with session_scope() as db:
@@ -449,6 +491,23 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                     spec = get_tool(call.tool_name)
                 except (ToolValidationError, KeyError) as exc:
                     repo.append_message(db, session, role="tool", content=f"blocked_policy: {exc}")
+                    continue
+
+                # P0 A4: повтор одного и того же файла ловим и между отдельными сообщениями
+                # (basename == абсолютный путь), иначе 5× «прочитай BIG_TEST.txt» не стопорились.
+                # Корневые задачи делят сессию (5 сообщений = 5 задач), а параллельные
+                # субагенты — нет: у каждого свой task_id, иначе ложный loop_detected.
+                repeat_scope = session.id if not delegation_depth else f"{session.id}:{task_id}"
+                repeated, rep_count = _note_session_repeat(repeat_scope, call.tool_name, call.arguments)
+                if repeated:
+                    session_repeat_abort = (
+                        f"Остановлено: {call.tool_name} повторяется с теми же аргументами "
+                        f"{rep_count} раз(а) подряд. Нужен другой подход."
+                    )
+                    repo.append_message(
+                        db, session, role="tool",
+                        content=f"{call.tool_name} -> repeat_blocked: {session_repeat_abort}",
+                    )
                     continue
 
                 if _is_immediate_repeat(history, call.tool_name, call.arguments):
@@ -508,7 +567,8 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                             content=f"shell_execute -> rejected: {command_rejection_reason(command)}",
                         )
                         continue
-                    if classify_shell_command(command) != "allow":
+                    # P0 A2: shell в Agent ВСЕГДА через Approve, даже для «безопасных» dir/echo.
+                    if agent_shell or classify_shell_command(command) != "allow":
                         item = approvals.check_command_and_maybe_request_approval(db, session, task, command)
                         event_bus.emit(
                             "attention_item.created",
@@ -616,7 +676,10 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                     )
                 continue
 
-            output, status, error_code, error_message = await _execute_tool(spec, call.arguments, sandbox_root, router=router, task_id=task_id)
+            output, status, error_code, error_message = await _execute_tool(
+                spec, call.arguments, sandbox_root, router=router, task_id=task_id,
+                shell_root=agent_shell_root, agent_shell=agent_shell,
+            )
 
             # После tool call — guardrail recording для loop detection
             guardrails.after_call(spec.tool_name, call.arguments, output)
@@ -645,6 +708,10 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                     "on_error", session_id=task.session_id, task_id=task_id,
                     tool=spec.tool_name, code=error_code, message=error_message,
                 )
+
+        if session_repeat_abort is not None:
+            await _abort_task(task_id, "loop_detected", session_repeat_abort)
+            return
 
         if delegate_batch:
             if await _run_delegate_batch(
@@ -729,7 +796,10 @@ async def _run_delegate_batch(
     return parent_paused
 
 
-async def _execute_tool(spec, arguments: dict, sandbox_root: str, *, approved: bool = False, router=None, task_id=None):
+async def _execute_tool(
+    spec, arguments: dict, sandbox_root: str, *, approved: bool = False,
+    router=None, task_id=None, shell_root: str | None = None, agent_shell: bool = False,
+):
     # Аргументы приходят от модели: сверяем с input_schema ДО handler'а. Ошибка уходит модели понятным
     # текстом (какой аргумент и что не так), а не «KeyError: 'path'» и не молчаливым «ok» на пустой вызов.
     from aria.tools.validators import validate_tool_input
@@ -739,11 +809,15 @@ async def _execute_tool(spec, arguments: dict, sandbox_root: str, *, approved: b
     try:
         import asyncio
 
+        extra: dict = {"approved": True} if approved else {}
+        if spec.tool_name == "shell_execute":
+            extra["shell_root"] = shell_root
+            extra["agent_shell"] = agent_shell
         output = await asyncio.wait_for(
             spec.handler(
                 input_json=arguments, timeout_sec=spec.timeout_sec, sandbox_root=sandbox_root,
                 router=router, task_id=task_id,
-                **({"approved": True} if approved else {}),
+                **extra,
             ),
             timeout=spec.timeout_sec,
         )
@@ -905,6 +979,10 @@ async def resume_after_approval(task_id: uuid.UUID, router: ProviderRouter, sand
                     content=f"{tool_name} (approved) -> error: tool is no longer available",
                 )
         sess_id = task.session_id
+        task_role = task.role
+
+    settings = get_settings()
+    agent_shell, agent_shell_root = _agent_shell_target(task_role, settings)
 
     if already_run:
         logger.info("approval %s was already executed; continuing without re-running it", attention_item.id)
@@ -917,7 +995,10 @@ async def resume_after_approval(task_id: uuid.UUID, router: ProviderRouter, sand
                 {"hook_blocked": True, "reason": hook_decision.reason}, ToolStatus.blocked_policy, "hook_blocked", hook_decision.reason,
             )
         else:
-            output, status, error_code, error_message = await _execute_tool(spec, arguments, sandbox_root, approved=True, router=router, task_id=task_id)
+            output, status, error_code, error_message = await _execute_tool(
+                spec, arguments, sandbox_root, approved=True, router=router, task_id=task_id,
+                shell_root=agent_shell_root, agent_shell=agent_shell,
+            )
             await toolhooks.post_tool(
                 tool_name, arguments, output, status.value,
                 session_id=sess_id, task_id=task_id, sandbox_root=sandbox_root,

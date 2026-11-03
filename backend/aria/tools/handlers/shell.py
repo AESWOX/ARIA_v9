@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shlex
 from pathlib import Path
 
@@ -42,6 +43,45 @@ def build_shell_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """Окружение для дочернего процесса: только allowlist (+ ``LC_*``), без секретов."""
     source = os.environ if base is None else base
     return {k: v for k, v in source.items() if k.upper() in _ENV_ALLOWLIST or k.upper().startswith("LC_")}
+
+
+_WIN_ABS_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+_ESCAPE_RE = re.compile(r"%[A-Za-z_]+%|\$HOME|\$env:|(?:^|[\\/])~[\\/]?")
+
+
+def outside_root_reason(command: str, root: Path) -> str | None:
+    """P0 A2: не выпускаем Agent-shell за пределы project root.
+
+    Ловит ``dir C:\\Windows``, ``..\\secret``, ``%USERPROFILE%``, ``~/x``.
+    Флаги вида ``/b`` не считаются путём.
+    """
+    try:
+        tokens = shlex.split(command, posix=False)
+    except ValueError:
+        tokens = command.split()
+    for raw in tokens:
+        tok = raw.strip("\"'")
+        if not tok or tok.startswith("-"):
+            continue
+        if _ESCAPE_RE.search(tok):
+            return f"Agent shell: environment/home paths are not allowed: {tok}"
+        candidate: Path | None = None
+        if _WIN_ABS_RE.match(tok):
+            candidate = Path(tok)
+        elif tok.startswith("/") and not (len(tok) <= 3 and tok[1:].isalpha()):
+            candidate = Path(tok)
+        elif ".." in Path(tok).parts:
+            candidate = root / tok
+        if candidate is None:
+            continue
+        try:
+            resolved = candidate.resolve(strict=False)
+            resolved.relative_to(root)
+        except ValueError:
+            return f"Agent shell: path outside project root is not allowed: {tok}"
+        except OSError:
+            return f"Agent shell: cannot resolve path: {tok}"
+    return None
 
 
 async def shell_execute(input_json: dict, timeout_sec: int, cwd: str | None = None, *, approved: bool = False) -> dict:

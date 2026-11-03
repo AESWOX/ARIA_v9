@@ -254,8 +254,17 @@ class Settings(BaseSettings):
 
     agent_sandbox_root: str = paths.default_sandbox_path()
     # Папка проекта пользователя, которую агент может ТОЛЬКО читать (file_read/file_search/file_grep со scope="project").
-    # Пусто = выключено. Писать, запускать команды и создавать файлы там агент не может: корень получают лишь читающие инструменты.
-    agent_project_root: str = ""
+    # Пусто = выключено. При agent_shell_enabled=True этот же корень становится рабочим каталогом shell.
+    agent_project_root: str = Field(
+        default="",
+        description="Project folder for Agent shell (and read-only project scope). Empty = disabled.",
+    )
+    # P0 A2: тумблер «Shell в Agent». general остаётся read-only, пока флаг выключен.
+    # При включении shell_execute доступен только роли general, всегда через Approve и только внутри agent_project_root.
+    agent_shell_enabled: bool = Field(
+        default=False,
+        description="Allow shell_execute in the default Agent role (general). Always requires approval and stays inside the project root.",
+    )
 
     @field_validator(
         "gemini_api_keys", "groq_api_keys", "compression_gemini_api_keys",

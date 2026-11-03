@@ -83,8 +83,27 @@ async def _shell_execute(input_json: dict, timeout_sec: int, sandbox_root: str, 
     # Подтверждение владельца передаётся только системным kwarg (loop.resume_after_approval).
     safe_input = {k: v for k, v in input_json.items() if k != "approved"}
     shell_handler.validate_shell_input(safe_input)
+    cwd = sandbox_root
+    if bool(_ctx.get("agent_shell")):
+        # P0 A2: shell в роли general — только внутри agent_project_root.
+        raw = str(_ctx.get("shell_root") or "").strip()
+        if not raw:
+            return {
+                "error": (
+                    "Agent shell: включён «Shell в Agent», но project root не задан. "
+                    "Задай Settings → Agent → Project root или выключи тумблер."
+                )
+            }
+        root = Path(raw).expanduser()
+        if not root.is_dir():
+            return {"error": f"Agent shell: project root не существует или не папка: {raw}"}
+        root_resolved = root.resolve()
+        reason = shell_handler.outside_root_reason(safe_input["command"], root_resolved)
+        if reason:
+            return {"error": reason}
+        cwd = str(root_resolved)
     return await shell_handler.shell_execute(
-        safe_input, timeout_sec=timeout_sec, cwd=sandbox_root, approved=bool(_ctx.get("approved")),
+        safe_input, timeout_sec=timeout_sec, cwd=cwd, approved=bool(_ctx.get("approved")),
     )
 
 

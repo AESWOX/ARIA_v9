@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from aria.api.auth import require_runtime_token
 from aria.db import repository as repo
 from aria.db.base import session_scope
+from aria.db.enums import TaskStatus
 from aria.llm.providers.base import LlmProvider, LlmResponse
 from aria.llm.router import ProviderRouter
 from aria.routers import chat as chat_mod
@@ -88,6 +89,44 @@ def test_plain_chat_request_stays_in_chat(text):
     assert body.get("mode") != "agent"
     assert rec.submitted == []
     assert body["assistant"]["content"] == "pong" and provider.calls == 1
+
+
+def test_tool_request_switches_even_when_previous_task_awaits_attention():
+    """A3: awaiting_attention больше не блокирует Chat→Agent молчаливым None."""
+    client, rec, provider = _client()
+    sid = _session()
+    with session_scope() as db:
+        session = repo.get_session(db, uuid.UUID(sid))
+        stale = repo.create_task(db, session, role="general", objective="old")
+        repo.set_task_status(db, stale, TaskStatus.approved)
+        repo.set_task_status(db, stale, TaskStatus.in_progress)
+        repo.set_task_status(db, stale, TaskStatus.awaiting_attention)
+
+    r = client.post(f"/chat/sessions/{sid}/send", json={"content": "открой https://example.com"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["mode"] == "agent" and len(rec.submitted) == 1
+    assert provider.calls == 0
+
+
+def test_tool_request_while_task_runs_returns_short_message():
+    """A3: если задача реально идёт — короткая реплика, а не простыня из головы."""
+    client, rec, provider = _client()
+    sid = _session()
+    with session_scope() as db:
+        session = repo.get_session(db, uuid.UUID(sid))
+        running = repo.create_task(db, session, role="general", objective="running")
+        repo.set_task_status(db, running, TaskStatus.approved)
+        repo.set_task_status(db, running, TaskStatus.in_progress)
+        running_id = str(running.id)
+
+    r = client.post(f"/chat/sessions/{sid}/send", json={"content": "открой https://example.com"})
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["mode"] == "agent_busy" and body["task_id"] == running_id
+    assert "Cancel task" in body["message"]
+    assert rec.submitted == [] and provider.calls == 0
 
 
 def test_streaming_chat_switch_reports_the_mode():

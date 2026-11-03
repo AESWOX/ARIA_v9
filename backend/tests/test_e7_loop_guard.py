@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import datetime, timezone
 
 from aria import paths
@@ -93,6 +94,22 @@ def test_loop_detected_on_repeated_call(tmp_path, monkeypatch):
     status, code, messages = _state(task_id)
     assert status == TaskStatus.failed and code == "loop_detected"
     assert any("повторяет" in m for m in messages)
+
+
+def test_repeat_signature_normalizes_abs_and_basename():
+    assert loop._repeat_signature("file_read", {"path": "note.txt"}) == loop._repeat_signature(
+        "file_read", {"path": r"C:\x\note.txt"}
+    )
+
+
+def test_session_repeat_counter_catches_separate_messages():
+    """A4: 3 одинаковых file_read в РАЗНЫХ сообщениях одной сессии тоже стопорятся."""
+    loop._SESSION_TOOL_REPEATS.clear()
+    sid = uuid.uuid4()
+    assert loop._note_session_repeat(sid, "file_read", {"path": "note.txt"})[0] is False
+    assert loop._note_session_repeat(sid, "file_read", {"path": r"C:\x\note.txt"})[0] is False
+    repeated, count = loop._note_session_repeat(sid, "file_read", {"path": "note.txt"})
+    assert repeated is True and count == 3
 
 
 def test_hard_budget_stops_before_call(tmp_path, monkeypatch):
