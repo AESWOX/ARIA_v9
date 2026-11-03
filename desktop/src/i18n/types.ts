@@ -70,6 +70,15 @@ export interface Translations {
     expand: string;
     general: string;
     messaging: string;
+    /** Optional — Settings → Agent → Shell in Agent (falls back to English literals). */
+    agentShell?: {
+      title: string;
+      hint: string;
+      enabled: string;
+      projectRoot: string;
+      projectRootHint: string;
+      saved: string;
+    };
     // Optional: non-English locales fall back to the English literal in the
     // component until translated, matching the enriched-profiles keys.
     gateway?: string;
@@ -177,6 +186,8 @@ export interface Translations {
     confirmDeleteTitle: string;
     confirmDeleteMessage: string;
     sessionDeleted: string;
+    /** Optional — toast after a successful JSON export. */
+    exported?: string;
     failedToDelete: string;
     deleteEmpty: string;
     deleteEmptyConfirmTitle: string;

@@ -63,6 +63,14 @@ export const ru: Translations = {
     expand: "Развернуть",
     general: "Общие",
     messaging: "Мессенджеры",
+    agentShell: {
+      title: "Shell в Agent",
+      hint: "general остаётся read-only, пока тумблер выключен. При включении shell работает только внутри project root и всегда требует Approve.",
+      enabled: "Разрешить shell_execute в Agent",
+      projectRoot: "Корень проекта",
+      projectRootHint: "Абсолютный путь. Вне этой папки Agent-shell запрещён.",
+      saved: "Настройки Agent-shell сохранены",
+    },
     pluginLoadFailed:
       "Не удалось загрузить скрипт этого плагина. Проверьте вкладку «Сеть» (dashboard-plugins/…) и путь к плагинам на сервере.",
     pluginNotRegistered:
@@ -160,6 +168,7 @@ export const ru: Translations = {
     confirmDeleteMessage:
       "Это безвозвратно удалит разговор и все его сообщения. Действие нельзя отменить.",
     sessionDeleted: "Сессия удалена",
+    exported: "Сессия экспортирована",
     failedToDelete: "Не удалось удалить сессию",
     deleteEmpty: "Удалить пустые",
     deleteEmptyConfirmTitle: "Удалить пустые сессии?",

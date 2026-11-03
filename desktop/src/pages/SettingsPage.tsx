@@ -15,9 +15,13 @@ import {
   Webhook,
   Wrench,
 } from "lucide-react";
-import type { ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { Card, CardContent } from "@vendor/ui/ui/components/card";
 import { H2 } from "@vendor/ui/ui/components/typography/h2";
+import { Toast } from "@vendor/ui/ui/components/toast";
+import { useToast } from "@vendor/ui/hooks/use-toast";
+import { useI18n } from "@/i18n";
+import { api } from "@/lib/api";
 
 type SettingsLink = {
   to: string;
@@ -60,12 +64,88 @@ const GROUPS: SettingsGroup[] = [
   },
 ];
 
+function AgentShellCard() {
+  const { t } = useI18n();
+  const s = t.common.agentShell;
+  const { toast, showToast } = useToast();
+  const [enabled, setEnabled] = useState(false);
+  const [root, setRoot] = useState("");
+  const [config, setConfig] = useState<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api
+      .getConfig()
+      .then((cfg) => {
+        setConfig(cfg);
+        setEnabled(Boolean(cfg.agent_shell_enabled));
+        setRoot(String(cfg.agent_project_root ?? ""));
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const save = async () => {
+    if (!config) return;
+    setBusy(true);
+    try {
+      const next = { ...config, agent_shell_enabled: enabled, agent_project_root: root.trim() };
+      await api.saveConfig(next);
+      setConfig(next);
+      showToast(s?.saved ?? "Agent shell settings saved", "success");
+    } catch (e) {
+      showToast(String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="border-border">
+      <CardContent className="flex flex-col gap-3 p-4">
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-medium">{s?.title ?? "Shell in Agent"}</span>
+          <span className="text-xs text-muted-foreground">
+            {s?.hint ??
+              "general stays read-only until this is on. When on, shell runs only inside the project root and always asks for approval."}
+          </span>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          {s?.enabled ?? "Allow shell_execute in Agent"}
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span>{s?.projectRoot ?? "Project root"}</span>
+          <input
+            className="border border-border bg-background/40 px-3 py-2 text-sm"
+            value={root}
+            onChange={(e) => setRoot(e.target.value)}
+            placeholder={s?.projectRootHint ?? "C:\\path\\to\\project"}
+          />
+          <span className="text-xs text-muted-foreground">{s?.projectRootHint ?? ""}</span>
+        </label>
+        <div>
+          <button
+            type="button"
+            className="border border-border px-3 py-1.5 text-sm disabled:opacity-50"
+            onClick={() => void save()}
+            disabled={busy || !config}
+          >
+            {t.common.save}
+          </button>
+        </div>
+        <Toast toast={toast} />
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   return (
     <div className="flex flex-col gap-8">
       <H2 variant="sm" className="text-muted-foreground">
         Settings
       </H2>
+      <AgentShellCard />
       {GROUPS.map((group) => (
         <div key={group.title} className="flex flex-col gap-3">
           <H2 variant="sm" className="text-muted-foreground">

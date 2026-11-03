@@ -1153,11 +1153,12 @@ export default function SessionsPage() {
         a.download = `session-${id}.json`;
         a.click();
         URL.revokeObjectURL(url);
+        showToast(t.sessions.exported ?? "Session exported", "success");
       } catch {
         showToast("Failed to export session", "error");
       }
     },
-    [showToast],
+    [showToast, t.sessions.exported],
   );
 
   const handlePrune = useCallback(async () => {

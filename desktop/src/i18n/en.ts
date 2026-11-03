@@ -63,6 +63,14 @@ export const en: Translations = {
     expand: "Expand",
     general: "General",
     messaging: "Messaging",
+    agentShell: {
+      title: "Shell in Agent",
+      hint: "general stays read-only until this is on. When on, shell runs only inside the project root and always asks for approval.",
+      enabled: "Allow shell_execute in Agent",
+      projectRoot: "Project root",
+      projectRootHint: "Absolute path. Agent shell is denied outside this folder.",
+      saved: "Agent shell settings saved",
+    },
     gateway: "Gateway",
     gatewayHint:
       "Messaging platforms, the API server and webhooks are configured on the Channels page. These are gateway-wide settings (proxy/relay mode and the global allowlist).",
@@ -169,6 +177,7 @@ export const en: Translations = {
     confirmDeleteMessage:
       "This permanently removes the conversation and all of its messages. This cannot be undone.",
     sessionDeleted: "Session deleted",
+    exported: "Session exported",
     failedToDelete: "Failed to delete session",
     deleteEmpty: "Delete empty",
     deleteEmptyConfirmTitle: "Delete empty sessions?",
