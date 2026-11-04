@@ -682,3 +682,44 @@ async def web_fetch(input_json: dict, sandbox_root: str = "", **_ctx) -> dict:
     if not out.get("error"):
         out["notice"] = UNTRUSTED_NOTICE
     return out
+
+
+async def telegram_channel(input_json: dict, sandbox_root: str = "", **_ctx) -> dict:
+    """Read recent posts from a public Telegram channel via t.me/s (no account)."""
+    from aria.integrations.telegram_public.reader import TelegramPublicError, read_channel
+
+    channel = str(input_json.get("channel") or "").strip()
+    if not channel:
+        return {"error": "channel required"}
+    try:
+        limit = max(1, min(int(input_json.get("limit") or 20), 50))
+    except (TypeError, ValueError):
+        limit = 20
+    query = str(input_json.get("query") or "").strip().lower()
+    try:
+        posts = await read_channel(channel, pages=1)
+    except TelegramPublicError as exc:
+        return {"error": str(exc), "source_trust": "untrusted"}
+    if query:
+        posts = [post for post in posts if query in str(post.get("text") or "").lower()]
+    posts = posts[-limit:]
+    out = [
+        {
+            "channel": post.get("channel"),
+            "message_id": post.get("message_id"),
+            "date": post.get("date"),
+            "text": post.get("text"),
+            "views": post.get("views"),
+            "links": post.get("links") or [],
+            "url": post.get("url"),
+            "source_trust": "untrusted",
+        }
+        for post in posts
+    ]
+    return {
+        "channel": channel.lstrip("@"),
+        "count": len(out),
+        "posts": out,
+        "source_trust": "untrusted",
+        "notice": UNTRUSTED_NOTICE,
+    }

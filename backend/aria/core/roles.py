@@ -28,7 +28,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
         role_id="general",
         description="Базовая роль общего назначения, диспетчеризация простых задач.",
         system_prompt_asset="prompts/general.md",
-        tool_whitelist=("read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "file_read", "file_search", "file_grep", "file_extract", "vision_analyze", "audio_transcribe", "memory_search", "notebook_query", "skill_lookup", "skill_read", "web_search", "web_fetch"),
+        tool_whitelist=("read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions", "file_read", "file_search", "file_grep", "file_extract", "vision_analyze", "audio_transcribe", "memory_search", "notebook_query", "skill_lookup", "skill_read", "web_search", "web_fetch", "telegram_channel"),
         default_model_policy="standard_reasoning",
     ),
     "oracle": RoleDefinition(
@@ -120,7 +120,7 @@ ROLE_REGISTRY: dict[str, RoleDefinition] = {
     "research": RoleDefinition(
         role_id="research", description="Веб-исследования — поиск в интернете через DuckDuckGo.",
         system_prompt_asset="prompts/research.md",
-        tool_whitelist=("web_search", "web_fetch", "file_read", "file_search", "file_grep"),
+        tool_whitelist=("web_search", "web_fetch", "telegram_channel", "file_read", "file_search", "file_grep"),
         default_model_policy="subagent_execution",
     ),
     "social_monitor": RoleDefinition(

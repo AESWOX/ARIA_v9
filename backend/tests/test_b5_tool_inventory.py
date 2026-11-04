@@ -97,7 +97,7 @@ HANDLER_TOOLS = sorted(n for n, s in TOOL_REGISTRY.items() if s.handler is not N
 
 
 def test_registry_has_26_tools_and_delegate_is_special_case():
-    assert len(TOOL_REGISTRY) == 28, f"в реестре {len(TOOL_REGISTRY)} тулов, обновите ожидаемое число"
+    assert len(TOOL_REGISTRY) == 29, f"в реестре {len(TOOL_REGISTRY)} тулов, обновите ожидаемое число"
     assert [n for n, s in TOOL_REGISTRY.items() if s.handler is None] == ["delegate_task"]
 
 
@@ -124,6 +124,8 @@ CASES = {
     # offline: тул обязан вернуть dict с понятной ошибкой, а не исключение
     "web_search": (lambda sb: {"query": "aria test"}, lambda o: isinstance(o, dict) and o.get("results") == [] and o.get("error")),
     "web_fetch": (lambda sb: {"url": "https://example.com/"}, lambda o: isinstance(o, dict) and "dns resolution failed" in o.get("error", "")),
+    # invalid channel is rejected before any network request
+    "telegram_channel": (lambda sb: {"channel": "!!"}, lambda o: isinstance(o, dict) and o.get("error") == "invalid public channel name"),
     "vision_analyze": (lambda sb: {"image_base64": _img_b64(), "prompt": "what is it"}, lambda o: isinstance(o, dict) and "error" in o),
     "notebook_query": (lambda sb: {"prompt": "hi"}, lambda o: isinstance(o, dict) and o.get("success") is False),
     "skill_lookup": (lambda sb: {"pattern": "web"}, lambda o: o.get("total", 0) >= 1),

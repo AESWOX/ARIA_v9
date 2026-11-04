@@ -686,6 +686,15 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
                 logger.exception("chat: could not save memory")
     if memory_store.enabled():
         memory_block = memory_store.recall_block(last_user_text)
+    # Automatic vault recall: the owner should not have to ask "check notes".
+    try:
+        from aria.storage.obsidian_vault import relevant_block as _vault_block
+
+        vault_block = _vault_block(last_user_text)
+    except Exception:  # noqa: BLE001 — notes must not break chat
+        logger.exception("chat: vault recall failed")
+        vault_block = ""
+    context_blocks = "\n\n".join(block for block in (memory_block, vault_block) if block)
 
     # 2) call the model outside any DB transaction
     with session_scope() as db:
@@ -693,7 +702,7 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
     chat_class, chat_fallback, chat_prefer = runprofile.chat_target(
         profile, request.app.state.router, CHAT_PROVIDER_CLASS, CHAT_FALLBACK_CLASSES
     )
-    prompt = _build_prompt(history, memory_block)
+    prompt = _build_prompt(history, context_blocks)
     hint = runprofile.thinking_hint(profile)
     # PR-1: thinking_hint больше не дописывается в messages[0] — он тоже ломал кэш.
     prompt = _attach_dynamic(prompt, hint)

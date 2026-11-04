@@ -19,7 +19,7 @@ from typing import Any, Mapping
 # Read-only тулы (idempotency_class=safe_read): повтор с тем же результатом = нет прогресса.
 IDEMPOTENT_TOOL_NAMES = frozenset({
     "read_note", "search_vault", "list_vault", "search_vault_tags", "list_decisions",
-    "file_read", "file_search", "file_grep", "web_search", "web_fetch", "vision_analyze", "notebook_query",
+    "file_read", "file_search", "file_grep", "web_search", "web_fetch", "telegram_channel", "vision_analyze", "notebook_query",
     "skill_lookup", "skill_read", "task_status", "memory_search", "friend_memory_read",
     "make_plan", "tool_output_read", "file_extract", "audio_transcribe",
 })

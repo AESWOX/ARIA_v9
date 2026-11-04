@@ -401,6 +401,25 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
     _preferences = _preferences_block()
     if _preferences:
         role_prompt += "\n\n" + _preferences
+    # Automatic memory/notes recall: the agent used to require an explicit
+    # memory_search/search_vault call, so chat questions about past notes were
+    # answered from nowhere (owner report 04.11).
+    try:
+        from aria.memory.store import memory_store as _memory_store
+
+        _memory = _memory_store.recall_block(task.objective or "")
+        if _memory:
+            role_prompt += "\n\n" + _memory
+    except Exception:  # noqa: BLE001 — recall must not break the task
+        logger.warning("agent memory recall failed for task %s", task_id, exc_info=True)
+    try:
+        from aria.storage.obsidian_vault import relevant_block as _vault_block
+
+        _vault = _vault_block(task.objective or "")
+        if _vault:
+            role_prompt += "\n\n" + _vault
+    except Exception:  # noqa: BLE001 — notes must not break the task
+        logger.warning("agent vault recall failed for task %s", task_id, exc_info=True)
     _hint = runprofile.thinking_hint(profile)
     if _hint:
         role_prompt += "\n\n" + _hint

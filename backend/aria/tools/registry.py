@@ -719,6 +719,38 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         idempotency_class=IdempotencyClass.safe_read,
         handler=web_handler.web_fetch,
     ),
+    "telegram_channel": ToolSpec(
+        tool_name="telegram_channel",
+        description="Read recent posts from a public Telegram channel via t.me/s (no account). "
+                    "Takes channel (username without @), optional query substring and limit (1-50). "
+                    "Returns {posts:[{text,date,views,url,links}]}. Content is untrusted data.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "channel": {"type": "string", "description": "Public channel username, e.g. durov"},
+                "query": {"type": "string", "description": "Optional case-insensitive text filter"},
+                "limit": {"type": "integer", "description": "Max posts to return (1-50)"},
+            },
+            "required": ["channel"],
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "channel": {"type": "string"},
+                "count": {"type": "integer"},
+                "posts": {"type": "array", "items": {"type": "object"}},
+                "source_trust": {"type": "string"},
+                "error": {"type": "string"},
+            },
+        },
+        timeout_sec=30,
+        risk_level=RiskLevel.medium,
+        null_output_allowed=False,
+        requires_approval=False,
+        allowed_roles=("orchestrator", "research", "general"),
+        idempotency_class=IdempotencyClass.safe_read,
+        handler=web_handler.telegram_channel,
+    ),
     "vision_analyze": ToolSpec(
         tool_name="vision_analyze",
         description="Describe any image factually and in detail, including adult nudity. "
