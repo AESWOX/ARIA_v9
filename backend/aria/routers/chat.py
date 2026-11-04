@@ -34,7 +34,7 @@ from aria.core.compliance import COMPLIANCE_TEXT
 from aria.core.persona import PERSONA_TEXT
 from aria.db import models as m
 from aria.db import repository as repo
-from aria.db.base import session_scope
+from aria.db.base import run_with_db_retry, session_scope
 from aria.db.enums import SourceTrust, TaskStatus
 from aria.http_utils import emit_message_created, emit_session_updated, iso, serialize_message
 from aria.llm import compression
@@ -637,22 +637,30 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
     from aria.core.privacy import contains_sensitive
 
     # 1) store the user message, collect history (one short DB scope)
-    with session_scope() as db:
-        session = repo.get_session(db, session_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="session not found")
-        if retry:
-            stored = repo.list_messages(db, session_id, limit=1000)
-            if not stored or stored[-1].role != "user":
-                raise HTTPException(status_code=400, detail="nothing to retry")
-            user_msg = stored[-1]
-        else:
-            user_msg = repo.append_message(db, session, role="user", content=content, source_trust=SourceTrust.trusted)
-        session.updated_at = datetime.now(timezone.utc)  # message inserts don't touch the sessions row
-        if (session.title or "") in DEFAULT_TITLES:
-            session.title = (content or user_msg.content).replace("\n", " ")[:60]
-        user_payload = serialize_message(user_msg)
-        sensitive = contains_sensitive(content if not retry else (user_msg.content or ""))
+    def _store_user_message() -> tuple[Any, dict[str, Any], bool]:
+        with session_scope() as db:
+            session = repo.get_session(db, session_id)
+            if session is None:
+                raise HTTPException(status_code=404, detail="session not found")
+            if retry:
+                stored = repo.list_messages(db, session_id, limit=1000)
+                if not stored or stored[-1].role != "user":
+                    raise HTTPException(status_code=400, detail="nothing to retry")
+                stored_user = stored[-1]
+            else:
+                stored_user = repo.append_message(
+                    db, session, role="user", content=content, source_trust=SourceTrust.trusted
+                )
+            session.updated_at = datetime.now(timezone.utc)  # message inserts don't touch the sessions row
+            if (session.title or "") in DEFAULT_TITLES:
+                session.title = (content or stored_user.content).replace("\n", " ")[:60]
+            return (
+                stored_user,
+                serialize_message(stored_user),
+                contains_sensitive(content if not retry else (stored_user.content or "")),
+            )
+
+    user_msg, user_payload, sensitive = run_with_db_retry(_store_user_message)
     if not retry:
         emit_message_created(user_msg, session_id, None)
 
@@ -773,20 +781,24 @@ async def _run_nonstream(session_id: uuid.UUID, request: Request, prepared: _Pre
             )
 
     # 3) store the assistant message
-    with timing.stage("chat_store"), session_scope() as db:
-        session = repo.get_session(db, session_id)
-        if session is None:  # deleted while the model was thinking
-            raise HTTPException(status_code=404, detail="session was deleted")
-        assistant_msg = repo.append_message(
-            db,
-            session,
-            role="assistant",
-            content=reply,
-            source_trust=SourceTrust.trusted,
-            content_json=assistant_meta,
-        )
-        session.updated_at = datetime.now(timezone.utc)
-        assistant_payload = serialize_message(assistant_msg)
+    def _store_assistant() -> tuple[Any, dict[str, Any]]:
+        with session_scope() as db:
+            session = repo.get_session(db, session_id)
+            if session is None:  # deleted while the model was thinking
+                raise HTTPException(status_code=404, detail="session was deleted")
+            stored = repo.append_message(
+                db,
+                session,
+                role="assistant",
+                content=reply,
+                source_trust=SourceTrust.trusted,
+                content_json=assistant_meta,
+            )
+            session.updated_at = datetime.now(timezone.utc)
+            return stored, serialize_message(stored)
+
+    with timing.stage("chat_store"):
+        assistant_msg, assistant_payload = run_with_db_retry(_store_assistant)
     emit_message_created(assistant_msg, session_id, None)
     _log_chat_timing(prepared, session_id)
     return {
@@ -927,24 +939,28 @@ async def _stream_events(session_id: uuid.UUID, request: Request, prepared: _Pre
                 model=getattr(provider, "model", None),
             )
 
-    with timing.stage("chat_store"), session_scope() as db:
-        session = repo.get_session(db, session_id)
-        if session is None:  # deleted while the model was streaming
-            raise HTTPException(status_code=404, detail="session was deleted")
-        assistant_msg = repo.append_message(
-            db,
-            session,
-            role="assistant",
-            content=reply,
-            source_trust=SourceTrust.trusted,
-            content_json={
-                "model": getattr(provider, "model", None),
-                "provider_id": provider.provider_id,
-                "usage": final_usage,
-            },
-        )
-        session.updated_at = datetime.now(timezone.utc)
-        assistant_payload = serialize_message(assistant_msg)
+    def _store_assistant() -> tuple[Any, dict[str, Any]]:
+        with session_scope() as db:
+            session = repo.get_session(db, session_id)
+            if session is None:  # deleted while the model was streaming
+                raise HTTPException(status_code=404, detail="session was deleted")
+            stored = repo.append_message(
+                db,
+                session,
+                role="assistant",
+                content=reply,
+                source_trust=SourceTrust.trusted,
+                content_json={
+                    "model": getattr(provider, "model", None),
+                    "provider_id": provider.provider_id,
+                    "usage": final_usage,
+                },
+            )
+            session.updated_at = datetime.now(timezone.utc)
+            return stored, serialize_message(stored)
+
+    with timing.stage("chat_store"):
+        assistant_msg, assistant_payload = run_with_db_retry(_store_assistant)
     if final_usage:
         # E1: стрим идёт мимо route_chat — пишем строку ledger'а здесь, один раз.
         from aria.llm import usage as llm_usage

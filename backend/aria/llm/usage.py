@@ -84,7 +84,7 @@ def record_usage(
             cost_usd, tier = pricing.cost_usd(model, hit, miss, parsed["completion"])
         except Exception:  # noqa: BLE001 — стоимость не должна ломать запись
             logger.warning("llm_usage_pricing_failed provider=%s purpose=%s", provider_id, purpose, exc_info=True)
-    try:
+    def _write() -> Any:
         from aria.db import models
         from aria.db.base import session_scope
 
@@ -107,6 +107,11 @@ def record_usage(
             db.add(row)
             db.flush()
             return row.id
+
+    try:
+        from aria.db.base import run_with_db_retry
+
+        return run_with_db_retry(_write)
     except Exception:  # noqa: BLE001 — учёт не должен ломать ответ модели
         logger.warning("llm_usage_write_failed provider=%s purpose=%s", provider_id, purpose, exc_info=True)
         return None

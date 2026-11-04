@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator, TypeVar
+
+T = TypeVar("T")
+
+_LOCK_MARKERS = ("database is locked", "database table is locked", "database is busy")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as OrmSession
@@ -100,6 +105,37 @@ def get_engine():
     if _engine is None:
         init_db()
     return _engine
+
+
+def is_locked_error(exc: BaseException) -> bool:
+    """True for SQLite writer-lock errors (including the table-level variant)."""
+    message = str(exc).lower()
+    return any(marker in message for marker in _LOCK_MARKERS)
+
+
+def run_with_db_retry(
+    fn: Callable[[], T],
+    *,
+    attempts: int = 3,
+    delays: tuple[float, ...] = (0.2, 0.5, 1.0),
+) -> T:
+    """Run a short DB operation again when SQLite reports a writer lock.
+
+    The operation must open its own transaction: a failed commit rolls the whole
+    scope back, so re-running the callable is safe. Non-lock errors propagate at
+    once. This is a bounded retry, not a queue: after ``attempts`` the last error
+    is raised to the caller.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - only lock errors are retried
+            if not is_locked_error(exc) or attempt == attempts - 1:
+                raise
+            last_exc = exc
+            time.sleep(delays[min(attempt, len(delays) - 1)])
+    raise last_exc  # pragma: no cover - loop always returns or raises
 
 
 @contextmanager

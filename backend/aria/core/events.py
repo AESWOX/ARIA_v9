@@ -12,7 +12,7 @@ from datetime import timezone
 from typing import Any
 
 from aria.db import repository as repo
-from aria.db.base import session_scope
+from aria.db.base import run_with_db_retry, session_scope
 
 
 class EventBus:
@@ -50,16 +50,21 @@ class EventBus:
                 "payload": payload,
             }
         else:
-            with session_scope() as db_local:
-                event = repo.persist_event(db_local, event_type, payload, session_id=session_id, task_id=task_id)
-                envelope = {
-                    "event_id": str(event.event_id),
-                    "event_type": event.event_type,
-                    "session_id": str(session_id) if session_id else None,
-                    "task_id": str(task_id) if task_id else None,
-                    "ts": event.ts.astimezone(timezone.utc).isoformat(),
-                    "payload": payload,
-                }
+            def _persist():
+                with session_scope() as db_local:
+                    return repo.persist_event(
+                        db_local, event_type, payload, session_id=session_id, task_id=task_id
+                    )
+
+            event = run_with_db_retry(_persist)
+            envelope = {
+                "event_id": str(event.event_id),
+                "event_type": event.event_type,
+                "session_id": str(session_id) if session_id else None,
+                "task_id": str(task_id) if task_id else None,
+                "ts": event.ts.astimezone(timezone.utc).isoformat(),
+                "payload": payload,
+            }
         for q in list(self._subscribers):
             try:
                 q.put_nowait(envelope)
