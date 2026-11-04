@@ -781,6 +781,13 @@ export const af: Translations = {
     hint: "Die agtergrond lê bo-op die tema; tekskleure kom steeds daaruit.",
     modeImage: "Beeld",
     imageFile: "Agtergrondbeeld",
+    imageDim: "Beeld verdonker",
+    open: "Tema-instellings",
+    textColor: "Tekskleur",
+    windowTextColor: "Venstertekskleur",
+    accentColor: "Aksent",
+    auto: "Outomaties",
+    reset: "Kleure herstel",
   },
 
 };

@@ -810,6 +810,13 @@ export const ru: Translations = {
     hint: "Фон накладывается поверх темы; цвет текста берётся из неё.",
     modeImage: "Изображение",
     imageFile: "Фоновое изображение",
+    imageDim: "Затемнить изображение",
+    open: "Настройки темы",
+    textColor: "Цвет текста",
+    windowTextColor: "Цвет текста окна",
+    accentColor: "Акцент",
+    auto: "Авто",
+    reset: "Сбросить цвета",
   },
 
 };

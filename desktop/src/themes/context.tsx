@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { BUILTIN_THEMES, defaultTheme } from "./presets";
+import { applyThemeOverrides, readThemeOverrides } from "./overrides";
 import {
   FONT_CHOICES,
   THEME_DEFAULT_FONT_ID,
@@ -400,6 +401,12 @@ function applyTheme(theme: DashboardTheme) {
   // Re-assert the font override last: theme application just rewrote
   // --theme-font-sans/-display, so an active override has to win again.
   applyFontOverride(_ACTIVE_FONT_OVERRIDE);
+  // User color overrides (text/window text/accent) also survive theme switches.
+  applyThemeOverrides(
+    readThemeOverrides(),
+    theme.palette.midground.hex,
+    theme.palette.warmGlow,
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ export const SURFACE_MODES: readonly SurfaceMode[] = [
 const SURFACE_KEY = "aria-dashboard-surface";
 const SURFACE_COLOR_KEY = "aria-dashboard-surface-color";
 const SURFACE_IMAGE_KEY = "aria-dashboard-surface-image";
+const SURFACE_IMAGE_DIM_KEY = "aria-dashboard-surface-image-dim";
 
 export const DEFAULT_SURFACE_COLOR = "#101418";
 /** Keep the data URL under the common 5 MB localStorage budget. */
@@ -34,6 +35,14 @@ export interface SurfaceState {
   mode: SurfaceMode;
   color: string;
   image: string;
+  /** 0..100, applied only to the image layer (never to text or cards). */
+  imageDim: number;
+}
+
+function normalizeDim(value: string | number | null): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(100, Math.round(parsed)));
 }
 
 function isSurfaceMode(value: string | null): value is SurfaceMode {
@@ -50,7 +59,7 @@ function normalizeImage(value: string | null): string {
 
 export function readSurface(): SurfaceState {
   if (typeof window === "undefined") {
-    return { mode: "theme", color: DEFAULT_SURFACE_COLOR, image: "" };
+    return { mode: "theme", color: DEFAULT_SURFACE_COLOR, image: "", imageDim: 0 };
   }
   try {
     const mode = window.localStorage.getItem(SURFACE_KEY);
@@ -58,35 +67,49 @@ export function readSurface(): SurfaceState {
       mode: isSurfaceMode(mode) ? mode : "theme",
       color: normalizeColor(window.localStorage.getItem(SURFACE_COLOR_KEY)),
       image: normalizeImage(window.localStorage.getItem(SURFACE_IMAGE_KEY)),
+      imageDim: normalizeDim(window.localStorage.getItem(SURFACE_IMAGE_DIM_KEY)),
     };
   } catch {
-    return { mode: "theme", color: DEFAULT_SURFACE_COLOR, image: "" };
+    return { mode: "theme", color: DEFAULT_SURFACE_COLOR, image: "", imageDim: 0 };
   }
 }
 
 /** Apply the surface immediately. Safe to call before React mounts. */
-export function applySurface(mode: SurfaceMode, color: string, image = ""): void {
+export function applySurface(
+  mode: SurfaceMode,
+  color: string,
+  image = "",
+  imageDim = 0,
+): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.dataset.surface = mode;
   root.style.setProperty("--surface-custom-bg", normalizeColor(color));
   const picture = mode === "image" ? normalizeImage(image) : "";
   root.style.setProperty("--surface-image", picture ? `url("${picture}")` : "none");
+  root.style.setProperty("--surface-image-dim", String(normalizeDim(imageDim) / 100));
 }
 
-export function saveSurface(mode: SurfaceMode, color: string, image = ""): void {
+export function saveSurface(
+  mode: SurfaceMode,
+  color: string,
+  image = "",
+  imageDim = 0,
+): void {
   const nextColor = normalizeColor(color);
   const nextImage = mode === "image" ? normalizeImage(image) : image;
+  const nextDim = normalizeDim(imageDim);
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(SURFACE_KEY, mode);
       window.localStorage.setItem(SURFACE_COLOR_KEY, nextColor);
       window.localStorage.setItem(SURFACE_IMAGE_KEY, nextImage);
+      window.localStorage.setItem(SURFACE_IMAGE_DIM_KEY, String(nextDim));
     } catch {
       /* storage can be blocked or full; the look still applies for this session */
     }
   }
-  applySurface(mode, nextColor, nextImage);
+  applySurface(mode, nextColor, nextImage, nextDim);
 }
 
 export function readSurfaceImageFile(file: File): Promise<string> {
@@ -104,6 +127,6 @@ export function readSurfaceImageFile(file: File): Promise<string> {
 /** Read and apply the saved surface; call once at startup. */
 export function initSurface(): SurfaceState {
   const state = readSurface();
-  applySurface(state.mode, state.color, state.image);
+  applySurface(state.mode, state.color, state.image, state.imageDim);
   return state;
 }

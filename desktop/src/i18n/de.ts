@@ -780,6 +780,13 @@ export const de: Translations = {
     hint: "Der Hintergrund liegt über dem Design; Textfarben kommen weiterhin aus ihm.",
     modeImage: "Bild",
     imageFile: "Hintergrundbild",
+    imageDim: "Bild abdunkeln",
+    open: "Design-Einstellungen",
+    textColor: "Textfarbe",
+    windowTextColor: "Fenstertextfarbe",
+    accentColor: "Akzent",
+    auto: "Automatisch",
+    reset: "Farben zurücksetzen",
   },
 
 };

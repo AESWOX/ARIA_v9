@@ -140,7 +140,7 @@ code, kbd, pre, samp, .font-mono, .font-mono-ui {
   justify-content: space-between;
   background: var(--background-base);
   border-bottom: 1px solid color-mix(in srgb, var(--midground-base) 14%, transparent);
-  color: var(--midground-base);
+  color: var(--window-text-color, var(--midground-base));
   user-select: none;
   -webkit-user-select: none;
 }

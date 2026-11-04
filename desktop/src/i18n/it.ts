@@ -780,6 +780,13 @@ export const it: Translations = {
     hint: "Lo sfondo si sovrappone al tema; i colori del testo provengono ancora da esso.",
     modeImage: "Immagine",
     imageFile: "Immagine di sfondo",
+    imageDim: "Scurisci immagine",
+    open: "Impostazioni tema",
+    textColor: "Colore del testo",
+    windowTextColor: "Colore del testo della finestra",
+    accentColor: "Accento",
+    auto: "Auto",
+    reset: "Reimposta colori",
   },
 
 };

@@ -782,6 +782,13 @@ export const uk: Translations = {
     hint: "Фон накладається поверх теми; колір тексту береться з неї.",
     modeImage: "Зображення",
     imageFile: "Фонове зображення",
+    imageDim: "Затемнити зображення",
+    open: "Налаштування теми",
+    textColor: "Колір тексту",
+    windowTextColor: "Колір тексту вікна",
+    accentColor: "Акцент",
+    auto: "Авто",
+    reset: "Скинути кольори",
   },
 
 };

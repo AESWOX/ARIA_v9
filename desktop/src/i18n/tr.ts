@@ -781,6 +781,13 @@ export const tr: Translations = {
     hint: "Arka plan temanın üzerine gelir; metin renkleri yine temadan gelir.",
     modeImage: "Görsel",
     imageFile: "Arka plan görseli",
+    imageDim: "Görseli karart",
+    open: "Tema ayarları",
+    textColor: "Metin rengi",
+    windowTextColor: "Pencere metin rengi",
+    accentColor: "Vurgu",
+    auto: "Otomatik",
+    reset: "Renkleri sıfırla",
   },
 
 };

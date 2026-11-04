@@ -780,6 +780,13 @@ export const ko: Translations = {
     hint: "배경은 테마 위에 표시되며, 텍스트 색상은 테마에서 가져옵니다.",
     modeImage: "이미지",
     imageFile: "배경 이미지",
+    imageDim: "이미지 어둡게",
+    open: "테마 설정",
+    textColor: "텍스트 색상",
+    windowTextColor: "창 텍스트 색상",
+    accentColor: "강조 색",
+    auto: "자동",
+    reset: "색상 초기화",
   },
 
 };

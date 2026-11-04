@@ -780,6 +780,13 @@ export const zhHant: Translations = {
     hint: "背景層位於主題之上；文字顏色仍來自主題。",
     modeImage: "圖片",
     imageFile: "背景圖片",
+    imageDim: "調暗圖片",
+    open: "主題設定",
+    textColor: "文字顏色",
+    windowTextColor: "視窗文字顏色",
+    accentColor: "強調色",
+    auto: "自動",
+    reset: "重設顏色",
   },
 
 };

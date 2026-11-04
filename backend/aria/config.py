@@ -275,6 +275,12 @@ class Settings(BaseSettings):
         default=False,
         description="Allow shell_execute in the default Agent role (general). Always requires approval and stays inside the project root.",
     )
+    agent_shell_timeout_sec: int = Field(
+        default=120,
+        ge=5,
+        le=600,
+        description="Max runtime for an Agent shell command (seconds).",
+    )
 
     @field_validator(
         "gemini_api_keys", "groq_api_keys", "compression_gemini_api_keys",

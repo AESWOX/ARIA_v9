@@ -780,6 +780,13 @@ export const ja: Translations = {
     hint: "背景はテーマの上に重なり、文字色はテーマから取得されます。",
     modeImage: "画像",
     imageFile: "背景画像",
+    imageDim: "画像を暗くする",
+    open: "テーマ設定",
+    textColor: "テキスト色",
+    windowTextColor: "ウィンドウのテキスト色",
+    accentColor: "アクセント",
+    auto: "自動",
+    reset: "色をリセット",
   },
 
 };

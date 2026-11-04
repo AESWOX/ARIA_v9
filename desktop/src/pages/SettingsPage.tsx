@@ -71,6 +71,7 @@ function AgentShellCard() {
   const { toast, showToast } = useToast();
   const [enabled, setEnabled] = useState(false);
   const [root, setRoot] = useState("");
+  const [timeoutSec, setTimeoutSec] = useState(120);
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -81,6 +82,7 @@ function AgentShellCard() {
         setConfig(cfg);
         setEnabled(Boolean(cfg.agent_shell_enabled));
         setRoot(String(cfg.agent_project_root ?? ""));
+        setTimeoutSec(Number(cfg.agent_shell_timeout_sec ?? 120));
       })
       .catch(() => undefined);
   }, []);
@@ -89,7 +91,12 @@ function AgentShellCard() {
     if (!config) return;
     setBusy(true);
     try {
-      const next = { ...config, agent_shell_enabled: enabled, agent_project_root: root.trim() };
+      const next = {
+        ...config,
+        agent_shell_enabled: enabled,
+        agent_project_root: root.trim(),
+        agent_shell_timeout_sec: Math.max(5, Math.min(600, Math.round(timeoutSec) || 120)),
+      };
       await api.saveConfig(next);
       setConfig(next);
       showToast(s?.saved ?? "Agent shell settings saved", "success");
@@ -123,6 +130,17 @@ function AgentShellCard() {
             placeholder={s?.projectRootHint ?? "C:\\path\\to\\project"}
           />
           <span className="text-xs text-muted-foreground">{s?.projectRootHint ?? ""}</span>
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span>Timeout, seconds (5–600)</span>
+          <input
+            type="number"
+            min={5}
+            max={600}
+            className="w-32 border border-border bg-background/40 px-3 py-2 text-sm"
+            value={timeoutSec}
+            onChange={(e) => setTimeoutSec(Number(e.target.value))}
+          />
         </label>
         <div>
           <button

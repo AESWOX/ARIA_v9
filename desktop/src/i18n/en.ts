@@ -889,6 +889,13 @@ export const en: Translations = {
     hint: "Background sits on top of the theme; text colors still come from it.",
     modeImage: "Image",
     imageFile: "Background image",
+    imageDim: "Darken image",
+    open: "Theme settings",
+    textColor: "Text color",
+    windowTextColor: "Window text color",
+    accentColor: "Accent",
+    auto: "Auto",
+    reset: "Reset colors",
   },
 
 };

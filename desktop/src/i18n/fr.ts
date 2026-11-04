@@ -781,6 +781,13 @@ export const fr: Translations = {
     hint: "Le fond se superpose au thème ; les couleurs du texte viennent toujours de lui.",
     modeImage: "Image",
     imageFile: "Image de fond",
+    imageDim: "Assombrir l'image",
+    open: "Réglages du thème",
+    textColor: "Couleur du texte",
+    windowTextColor: "Couleur du texte de la fenêtre",
+    accentColor: "Accent",
+    auto: "Auto",
+    reset: "Réinitialiser les couleurs",
   },
 
 };

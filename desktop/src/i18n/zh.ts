@@ -776,6 +776,13 @@ export const zh: Translations = {
     hint: "背景层位于主题之上；文字颜色仍来自主题。",
     modeImage: "图片",
     imageFile: "背景图片",
+    imageDim: "调暗图片",
+    open: "主题设置",
+    textColor: "文字颜色",
+    windowTextColor: "窗口文字颜色",
+    accentColor: "强调色",
+    auto: "自动",
+    reset: "重置颜色",
   },
 
 };

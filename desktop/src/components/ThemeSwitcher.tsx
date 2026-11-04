@@ -345,13 +345,19 @@ function SurfaceSection() {
   const changeMode = (mode: SurfaceMode) => {
     const next = { ...surface, mode };
     setSurface(next);
-    saveSurface(next.mode, next.color, next.image);
+    saveSurface(next.mode, next.color, next.image, next.imageDim);
   };
 
   const changeColor = (color: string) => {
     const next = { ...surface, color };
     setSurface(next);
-    saveSurface(next.mode, next.color, next.image);
+    saveSurface(next.mode, next.color, next.image, next.imageDim);
+  };
+
+  const changeDim = (imageDim: number) => {
+    const next = { ...surface, imageDim };
+    setSurface(next);
+    saveSurface(next.mode, next.color, next.image, next.imageDim);
   };
 
   const changeImage = async (file: File | undefined) => {
@@ -360,7 +366,7 @@ function SurfaceSection() {
       const image = await readSurfaceImageFile(file);
       const next = { ...surface, mode: "image" as const, image };
       setSurface(next);
-      saveSurface(next.mode, next.color, next.image);
+      saveSurface(next.mode, next.color, next.image, next.imageDim);
     } catch {
       /* too large / unreadable: keep the previous background */
     }
@@ -425,15 +431,32 @@ function SurfaceSection() {
       )}
 
       {surface.mode === "image" && (
-        <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
-          <span>{copy.imageFile}</span>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            onChange={(e) => void changeImage(e.target.files?.[0])}
-            aria-label={copy.imageFile}
-          />
-        </label>
+        <>
+          <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
+            <span>{copy.imageFile}</span>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              onChange={(e) => void changeImage(e.target.files?.[0])}
+              aria-label={copy.imageFile}
+            />
+          </label>
+          <label className="flex flex-col gap-1 px-3 py-1.5 text-xs">
+            <span className="flex items-center justify-between">
+              <span>{copy.imageDim}</span>
+              <span>{surface.imageDim}%</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={surface.imageDim}
+              onChange={(e) => changeDim(Number(e.target.value))}
+              aria-label={copy.imageDim}
+            />
+          </label>
+        </>
       )}
     </>
   );

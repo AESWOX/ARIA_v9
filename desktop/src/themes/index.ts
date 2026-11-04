@@ -18,4 +18,11 @@ export {
   saveSurface,
 } from "./surface";
 export type { SurfaceMode, SurfaceState } from "./surface";
+export {
+  EMPTY_OVERRIDES,
+  applyThemeOverrides,
+  readThemeOverrides,
+  saveThemeOverrides,
+} from "./overrides";
+export type { ThemeOverrides } from "./overrides";
 export type { DashboardTheme, ThemeLayer, ThemeListEntry, ThemeListResponse, ThemePalette } from "./types";

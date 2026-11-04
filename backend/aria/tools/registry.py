@@ -104,6 +104,9 @@ async def _shell_execute(input_json: dict, timeout_sec: int, sandbox_root: str, 
         if reason:
             return {"error": reason}
         cwd = str(root_resolved)
+        from aria.config import get_settings
+
+        timeout_sec = int(get_settings().agent_shell_timeout_sec or timeout_sec)
     return await shell_handler.shell_execute(
         safe_input, timeout_sec=timeout_sec, cwd=cwd, approved=bool(_ctx.get("approved")),
     )

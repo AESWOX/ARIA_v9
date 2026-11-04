@@ -882,6 +882,13 @@ export interface Translations {
     modeCustom: string;
     modeImage: string;
     imageFile: string;
+    imageDim: string;
+    open: string;
+    textColor: string;
+    windowTextColor: string;
+    accentColor: string;
+    auto: string;
+    reset: string;
     customColor: string;
     hint: string;
   };

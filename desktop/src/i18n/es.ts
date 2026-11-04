@@ -781,6 +781,13 @@ export const es: Translations = {
     hint: "El fondo se superpone al tema; los colores del texto siguen viniendo de él.",
     modeImage: "Imagen",
     imageFile: "Imagen de fondo",
+    imageDim: "Oscurecer imagen",
+    open: "Ajustes de tema",
+    textColor: "Color del texto",
+    windowTextColor: "Color del texto de la ventana",
+    accentColor: "Acento",
+    auto: "Automático",
+    reset: "Restablecer colores",
   },
 
 };

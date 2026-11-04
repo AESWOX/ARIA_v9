@@ -50,10 +50,12 @@ export function Backdrop() {
         style={
           {
             backgroundColor: "var(--background-base)",
-            backgroundImage: "var(--surface-image, none), var(--surface-texture, none)",
+            backgroundImage:
+              "linear-gradient(rgba(0,0,0,var(--surface-image-dim, 0)), rgba(0,0,0,var(--surface-image-dim, 0))), var(--surface-image, none), var(--surface-texture, none)",
             backgroundSize:
-              "var(--surface-image-size, auto), var(--surface-texture-size, auto)",
-            backgroundPosition: "center, 0 0",
+              "auto, var(--surface-image-size, auto), var(--surface-texture-size, auto)",
+            backgroundPosition: "center, center, 0 0",
+            backgroundRepeat: "no-repeat, no-repeat, repeat",
             mixBlendMode:
               "var(--surface-blend, var(--component-backdrop-bg-blend-mode, difference))",
           } as unknown as React.CSSProperties

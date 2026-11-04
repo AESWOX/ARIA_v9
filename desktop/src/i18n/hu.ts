@@ -781,6 +781,13 @@ export const hu: Translations = {
     hint: "A háttér a téma fölött van; a szövegszínek továbbra is a témából jönnek.",
     modeImage: "Kép",
     imageFile: "Háttérkép",
+    imageDim: "Kép sötétítése",
+    open: "Téma beállításai",
+    textColor: "Szövegszín",
+    windowTextColor: "Ablak szövegszíne",
+    accentColor: "Kiemelés",
+    auto: "Automatikus",
+    reset: "Színek visszaállítása",
   },
 
 };

@@ -789,6 +789,13 @@ export const ga: Translations = {
     hint: "Tá an cúlra os cionn an téama; tagann dathanna an téacs ón téama fós.",
     modeImage: "Íomhá",
     imageFile: "Íomhá chúlra",
+    imageDim: "Dorchaigh an íomhá",
+    open: "Socruithe téama",
+    textColor: "Dath an téacs",
+    windowTextColor: "Dath téacs na fuinneoige",
+    accentColor: "Aibhsiú",
+    auto: "Uathoibríoch",
+    reset: "Athshocraigh dathanna",
   },
 
 };

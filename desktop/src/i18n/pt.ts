@@ -782,6 +782,13 @@ export const pt: Translations = {
     hint: "O fundo fica sobre o tema; as cores do texto continuam vindo dele.",
     modeImage: "Imagem",
     imageFile: "Imagem de fundo",
+    imageDim: "Escurecer imagem",
+    open: "Configurações de tema",
+    textColor: "Cor do texto",
+    windowTextColor: "Cor do texto da janela",
+    accentColor: "Destaque",
+    auto: "Automático",
+    reset: "Redefinir cores",
   },
 
 };
