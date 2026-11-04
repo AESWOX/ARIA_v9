@@ -115,6 +115,15 @@ def test_adult_content_refusal_is_detected():
     assert is_model_refusal("Это 18+ контент — по правилам такое описывать детально не буду.") is True
 
 
+def test_refusal_after_a_factual_preamble_is_detected():
+    text = (
+        "На скриншоте распознался только верхний интерфейс браузера и имя аккаунта. "
+        "Определить действия людей объективно невозможно. "
+        "Я не генерирую и не визуализирую сцены сексуального характера."
+    )
+    assert is_model_refusal(text) is True
+
+
 def test_ordinary_failures_are_not_refusals():
     assert is_model_refusal("I can't find the file") is False
     assert is_model_refusal("Не могу найти файл") is False

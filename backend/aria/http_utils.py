@@ -88,6 +88,39 @@ def serialize_task(task: m.Task | None) -> dict[str, Any] | None:
     }
 
 
+_TOOL_OUTPUT_PREVIEW_CHARS = 6000
+
+
+def _tool_output_preview(msg: m.Message) -> dict[str, Any] | None:
+    """A bounded view of a tool message for the chat UI's expandable process row."""
+    if msg.role != "tool" or not isinstance(msg.content_json, dict):
+        return None
+    payload = msg.content_json
+    def bounded(value: Any) -> Any:
+        if isinstance(value, str) and len(value) > _TOOL_OUTPUT_PREVIEW_CHARS:
+            return (
+                f"{value[:_TOOL_OUTPUT_PREVIEW_CHARS]}"
+                f"… (+{len(value) - _TOOL_OUTPUT_PREVIEW_CHARS})"
+            )
+        return value
+
+    output = payload.get("output")
+    if isinstance(output, dict):
+        output = {str(key): bounded(value) for key, value in output.items()}
+    else:
+        output = bounded(output)
+    arguments = payload.get("arguments")
+    if isinstance(arguments, dict):
+        arguments = {str(key): bounded(value) for key, value in arguments.items()}
+    return {
+        "tool_name": payload.get("tool_name"),
+        "status": payload.get("status"),
+        "arguments": arguments,
+        "output": output,
+        "fold_ref": payload.get("fold_ref"),
+    }
+
+
 def serialize_message(msg: m.Message) -> dict[str, Any]:
     return {
         "id": str(msg.id),
@@ -95,6 +128,7 @@ def serialize_message(msg: m.Message) -> dict[str, Any]:
         "content": msg.content,
         "source_trust": msg.source_trust.value if hasattr(msg.source_trust, "value") else str(msg.source_trust),
         "created_at": iso(msg.created_at),
+        "tool_output": _tool_output_preview(msg),
     }
 
 

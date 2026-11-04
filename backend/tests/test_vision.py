@@ -209,6 +209,33 @@ def test_main_model_refusal_does_not_hide_the_vision_result():
     assert _last_successful_tool_text(history, "vision_analyze") == "Detailed factual description."
 
 
+def test_tool_output_preview_is_serialized_for_the_chat_ui():
+    from aria.http_utils import _TOOL_OUTPUT_PREVIEW_CHARS, serialize_message
+
+    long_text = "y" * (_TOOL_OUTPUT_PREVIEW_CHARS + 10)
+    message = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000000",
+        role="tool",
+        content="vision_analyze -> ok",
+        source_trust="trusted",
+        created_at=None,
+        content_json={
+            "tool_name": "vision_analyze",
+            "status": "ok",
+            "arguments": {"file_path": "x.png"},
+            "output": {"text": long_text},
+        },
+    )
+
+    data = serialize_message(message)
+
+    assert data["tool_output"]["tool_name"] == "vision_analyze"
+    assert data["tool_output"]["status"] == "ok"
+    assert data["tool_output"]["arguments"] == {"file_path": "x.png"}
+    assert data["tool_output"]["output"]["text"].endswith("… (+10)")
+    assert len(data["tool_output"]["output"]["text"]) < len(long_text)
+
+
 def test_render_tool_result_keeps_full_vision_description():
     from aria.core import loop as loop_mod
 

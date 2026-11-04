@@ -42,6 +42,24 @@ REFUSAL_PREFIXES: tuple[str, ...] = (
     "i am unable to describe",
 )
 
+# Refusals are not always at the start: the model first explains what it saw,
+# then refuses the explicit part ("я не генерирую и не визуализирую сцены…",
+# live 04.11). These markers are explicit enough to match anywhere in the text;
+# a plain "не могу найти файл" is not in the list.
+REFUSAL_MARKERS: tuple[str, ...] = (
+    "я не генерирую",
+    "не визуализирую",
+    "не буду визуализировать",
+    "сцены сексуального характера",
+    "не могу описать это изображение",
+    "не могу помочь с описанием",
+    "i don't generate",
+    "i do not generate",
+    "i won't visualize",
+    "i cannot describe this image",
+    "i can't describe this image",
+)
+
 SAFETY_FINISH_REASONS: frozenset[str] = frozenset(
     {"content_filter", "safety", "prohibited_content", "blocklist"}
 )
@@ -62,6 +80,8 @@ def is_model_refusal(
     if not stripped:
         return not has_tool_calls and reason != "tool_calls"
     head = stripped.lower()
+    if any(marker in head for marker in REFUSAL_MARKERS):
+        return True
     return any(head.startswith(prefix) for prefix in REFUSAL_PREFIXES)
 
 
