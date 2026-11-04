@@ -408,8 +408,16 @@ export default function NativeChatPage() {
     }
   };
 
+  const toolHint = (name: string) => {
+    const ext = name.toLowerCase().split(".").pop() ?? "";
+    if (["png", "jpg", "jpeg", "webp", "gif", "bmp"].includes(ext)) return "vision_analyze";
+    if (["mp3", "wav", "m4a", "ogg", "webm", "flac"].includes(ext)) return "audio_transcribe";
+    return "file_extract";
+  };
   const attachmentBlock = attachments.length
-    ? `\n\nAttached files:\n${attachments.map((a) => `- ${a.path} (${a.name})`).join("\n")}`
+    ? `\n\nAttached files:\n${attachments
+        .map((a) => `- ${a.path} (${a.name}) — use ${toolHint(a.name)}`)
+        .join("\n")}`
     : "";
   const outgoing = (text: string) => (text + attachmentBlock).trim();
 
@@ -785,6 +793,7 @@ export default function NativeChatPage() {
             ref={fileInputRef}
             type="file"
             multiple
+            accept=".pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.doc,.xls,.ppt,.txt,.md,.csv,.tsv,.json,.log,.xml,.yaml,.yml,.html,.png,.jpg,.jpeg,.webp,.gif,.bmp,.mp3,.wav,.m4a,.ogg,.webm,.flac"
             className="hidden"
             onChange={(e) => void addFiles(e.target.files)}
           />

@@ -97,7 +97,7 @@ HANDLER_TOOLS = sorted(n for n, s in TOOL_REGISTRY.items() if s.handler is not N
 
 
 def test_registry_has_26_tools_and_delegate_is_special_case():
-    assert len(TOOL_REGISTRY) == 26, f"в реестре {len(TOOL_REGISTRY)} тулов, обновите ожидаемое число"
+    assert len(TOOL_REGISTRY) == 28, f"в реестре {len(TOOL_REGISTRY)} тулов, обновите ожидаемое число"
     assert [n for n, s in TOOL_REGISTRY.items() if s.handler is None] == ["delegate_task"]
 
 
@@ -134,6 +134,8 @@ CASES = {
     "friend_memory_read": (lambda sb: {}, lambda o: "entries" in o and "total" in o),
     "make_plan": (lambda sb: {}, lambda o: isinstance(o, dict) and o.get("error")),
     "tool_output_read": (lambda sb: {"ref": "11111111-1111-1111-1111-111111111111"}, lambda o: isinstance(o, dict) and o.get("error")),
+    "file_extract": (lambda sb: {"path": "hello.txt"}, lambda o: "hello from sandbox" in o.get("text", "")),
+    "audio_transcribe": (lambda sb: {"path": "hello.txt"}, lambda o: isinstance(o, dict) and o.get("error")),
 }
 
 

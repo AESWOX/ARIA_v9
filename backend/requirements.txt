@@ -10,6 +10,7 @@ python-multipart==0.0.32
 python-dotenv==1.2.2
 alembic==1.13.3
 croniter==6.0.0
+pypdf==6.21.4
 
 # Optional, only needed if CODEX_ENABLED=true in .env. Not pinned here on
 # purpose -- it's a 120MB+ prebuilt binary download, not a real Python dep,

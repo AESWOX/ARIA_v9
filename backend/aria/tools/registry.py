@@ -17,6 +17,8 @@ from aria.storage import obsidian_vault, vault_index
 from aria.tools.handlers import files as files_handler
 from aria.tools.handlers import shell as shell_handler
 from aria.tools.handlers import web as web_handler
+from aria.tools.handlers import audio as audio_handler
+from aria.tools.handlers import documents as documents_handler
 from aria.tools.handlers import vision as vision_handler
 from aria.tools.handlers import skills as skills_handler
 from aria.integrations.notebooklm.tool import notebook_query
@@ -487,6 +489,51 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         idempotency_class=IdempotencyClass.safe_read,
         handler=_file_read,
     ),
+    "file_extract": ToolSpec(
+        tool_name="file_extract",
+        description=(
+            "Извлекает текст из документа внутри sandbox: .docx/.xlsx/.pptx/.odt/.ods/.odp, "
+            ".pdf (нужен pypdf), а также .txt/.md/.csv/.json/.log. Старые .doc/.xls/.ppt "
+            "не поддерживаются — попроси сохранить в новом формате."
+        ),
+        input_schema={"type": "object", "properties": {
+            "path": {"type": "string"},
+            "max_chars": {"type": "integer", "minimum": 1000, "maximum": 200000},
+        }, "required": ["path"]},
+        output_schema={"type": "object", "properties": {
+            "path": {"type": "string"}, "kind": {"type": "string"},
+            "text": {"type": "string"}, "truncated": {"type": "boolean"}, "chars": {"type": "integer"},
+        }},
+        timeout_sec=30,
+        risk_level=RiskLevel.low,
+        null_output_allowed=True,
+        requires_approval=False,
+        allowed_roles=("general", "orchestrator", "research", "coder", "qa_auditor", "obsidian_keeper"),
+        idempotency_class=IdempotencyClass.safe_read,
+        handler=documents_handler.file_extract,
+    ),
+    "audio_transcribe": ToolSpec(
+        tool_name="audio_transcribe",
+        description=(
+            "Транскрибирует голосовое/аудио внутри sandbox (.mp3/.wav/.m4a/.ogg/.webm/.flac) "
+            "через Groq Whisper. Нужен GROQ_API_KEY; без него вернёт понятную ошибку."
+        ),
+        input_schema={"type": "object", "properties": {
+            "path": {"type": "string"},
+            "language": {"type": "string", "description": "ISO-639-1, напр. ru"},
+            "model": {"type": "string"},
+        }, "required": ["path"]},
+        output_schema={"type": "object", "properties": {
+            "text": {"type": "string"}, "provider": {"type": "string"}, "model": {"type": "string"},
+        }},
+        timeout_sec=180,
+        risk_level=RiskLevel.low,
+        null_output_allowed=True,
+        requires_approval=False,
+        allowed_roles=("general", "orchestrator", "research", "coder"),
+        idempotency_class=IdempotencyClass.safe_read,
+        handler=audio_handler.audio_transcribe,
+    ),
     "tool_output_read": ToolSpec(
         tool_name="tool_output_read",
         description="Читает свёрнутый вывод инструмента по ref из маркера [свёрнуто]. Только sandbox/.tool_output, до 4000 символов за вызов.",
@@ -703,7 +750,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         risk_level=RiskLevel.medium,
         null_output_allowed=False,
         requires_approval=False,
-        allowed_roles=("orchestrator", "vision", "coder", "research", "qa_auditor"),
+        allowed_roles=("general", "orchestrator", "vision", "coder", "research", "qa_auditor"),
         idempotency_class=IdempotencyClass.safe_read,
         handler=vision_handler.vision_analyze,
     ),
