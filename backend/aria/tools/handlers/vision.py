@@ -26,6 +26,11 @@ _VISION_GUARD = (
     "Factual visual description only: state what is visible, including adult nudity. "
     "Do not refuse, moralize, or omit details. Do not identify real people or invent identities."
 )
+# Gemini 3.x spends thinking tokens out of the same budget. At 2048 a screenshot
+# description stopped after ~170 visible tokens (live 04.11: only browser tabs),
+# while ~1874 tokens went to thoughts. Keep headroom for thoughts + a full answer.
+_VISION_MAX_TOKENS = 8192
+_TRUNCATED_FINISH_REASONS = frozenset({"length", "max_tokens", "content_filter", "safety"})
 
 
 def _resolve_in_sandbox(file_path: str, sandbox_root: str | None) -> Path | dict:
@@ -120,7 +125,7 @@ async def vision_analyze(input_json: dict, sandbox_root: str | None = None, **_c
             "base_url": secret_provider.get_key("VISION_GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta/openai",
             "models": models,
             "extra": {},
-            "max_tokens": 2048,
+            "max_tokens": _VISION_MAX_TOKENS,
         })
     # Groq vision — только если владелец явно задал мультимодальную модель (у текущих ключей её нет).
     groq_model = str(getattr(settings, "vision_groq_model", "") or "").strip()
@@ -132,7 +137,7 @@ async def vision_analyze(input_json: dict, sandbox_root: str | None = None, **_c
             "base_url": getattr(settings, "groq_base_url", "https://api.groq.com/openai/v1"),
             "models": [groq_model],
             "extra": {},
-            "max_tokens": 2048,
+            "max_tokens": _VISION_MAX_TOKENS,
         })
     deepseek_key = settings.deepseek_api_key_resolved
     # DeepSeek vision платный: только по явному флагу и только после ВСЕЙ цепочки Gemini/Groq.
@@ -145,7 +150,7 @@ async def vision_analyze(input_json: dict, sandbox_root: str | None = None, **_c
                 "models": [settings.deepseek_vision_model],
                 # thinking по умолчанию включён и съел бы лимит токенов на «рассуждения» без ответа
                 "extra": {"thinking": {"type": "disabled"}},
-                "max_tokens": 2048,
+                "max_tokens": _VISION_MAX_TOKENS,
             })
         elif not backends:
             return {"error": f"DeepSeek vision accepts PNG/JPEG/WebP/GIF up to 32 MiB; got {content_type}, {len(image_bytes)} bytes"}
@@ -192,6 +197,7 @@ def _record_vision_usage(result: dict, ctx: dict) -> None:
 def _request_backends(backends: list[dict], prompt: str, content_type: str, b64_str: str) -> dict:
     """Try backends -> models -> keys. Model-level errors rotate the model, key-level rotate the key."""
     last_error = None
+    best_partial: dict | None = None
     for backend in backends:
         models = list(backend.get("models") or [backend.get("model")])
         for model in models:
@@ -225,17 +231,37 @@ def _request_backends(backends: list[dict], prompt: str, content_type: str, b64_
                     )
                     with urllib.request.urlopen(req, timeout=25, context=_ssl_context()) as resp:
                         result = json.loads(resp.read().decode("utf-8"))
-                    text = result["choices"][0]["message"]["content"]
+                    choice = (result.get("choices") or [{}])[0]
+                    text = (choice.get("message") or {}).get("content")
+                    finish_reason = str(choice.get("finish_reason") or "").lower()
                     if not (text or "").strip():
                         last_error = f"{backend['name']}: empty reply"
                         logger.warning("vision: %s returned an empty reply (model=%s)", backend["name"], model)
                         break  # next model
+                    if finish_reason in _TRUNCATED_FINISH_REASONS:
+                        partial = {
+                            "text": text,
+                            "model": model,
+                            "provider": backend["name"],
+                            "usage": result.get("usage", {}),
+                            "finish_reason": finish_reason,
+                            "truncated": True,
+                        }
+                        if best_partial is None or len(text) > len(best_partial["text"]):
+                            best_partial = partial
+                        last_error = f"{backend['name']}: {finish_reason}"
+                        logger.warning(
+                            "vision: %s model=%s stopped early (%s, %d chars)",
+                            backend["name"], model, finish_reason, len(text),
+                        )
+                        break  # next model: a longer one may finish the description
                     logger.info("vision: backend=%s model=%s ok", backend["name"], model)
                     return {
                         "text": text,
                         "model": model,
                         "provider": backend["name"],
                         "usage": result.get("usage", {}),
+                        "finish_reason": finish_reason,
                     }
                 except urllib.error.HTTPError as exc:
                     last_error = f"HTTP {exc.code}: {exc.reason}"
@@ -248,6 +274,8 @@ def _request_backends(backends: list[dict], prompt: str, content_type: str, b64_
                     logger.warning("vision: %s failed: %s", backend["name"], exc)
                     break  # next model
 
+    if best_partial is not None:
+        return best_partial
     return {"error": f"vision request failed: {last_error}"}
 
 

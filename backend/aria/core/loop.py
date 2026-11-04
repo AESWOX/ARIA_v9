@@ -86,6 +86,12 @@ def _load_persona() -> str:
 
 # A22: сколько символов результата тула показываем модели (остальное — в БД и UI).
 MAX_TOOL_RESULT_CHARS = 6000
+# Content tools return the answer itself, not a diagnostic payload. Truncating a
+# successful image/document description at 6k made the main model see only the
+# browser chrome and claim the rest was cut (live 04.11). These get a higher cap
+# and the plain `output.text`, without the JSON wrapper/escape overhead.
+MAX_TEXT_TOOL_RESULT_CHARS = 20000
+_PLAIN_TEXT_TOOLS = frozenset({"vision_analyze", "file_extract", "audio_transcribe"})
 FOLD_HEAD_CHARS = 1600
 FOLD_TAIL_CHARS = 700
 
@@ -184,19 +190,29 @@ def _render_tool_result(msg: m.Message) -> str | None:
         return None
     name = str(payload.get("tool_name") or "tool")
     status = str(payload.get("status") or "unknown")
-    try:
-        body = json.dumps(payload.get("output"), ensure_ascii=False, default=str)
-    except (TypeError, ValueError):
-        body = str(payload.get("output"))
+    output = payload.get("output")
+    plain_text = output.get("text") if isinstance(output, dict) else None
+    if name in _PLAIN_TEXT_TOOLS and isinstance(plain_text, str) and plain_text.strip():
+        body = plain_text
+        if len(body) > MAX_TEXT_TOOL_RESULT_CHARS:
+            body = (
+                f"{body[:MAX_TEXT_TOOL_RESULT_CHARS]}"
+                f"...[truncated {len(body) - MAX_TEXT_TOOL_RESULT_CHARS} chars]"
+            )
+    else:
+        try:
+            body = json.dumps(output, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            body = str(output)
     fold_ref = payload.get("fold_ref")
-    if fold_ref and len(body) > FOLD_HEAD_CHARS + FOLD_TAIL_CHARS:
+    if name not in _PLAIN_TEXT_TOOLS and fold_ref and len(body) > FOLD_HEAD_CHARS + FOLD_TAIL_CHARS:
         omitted = len(body) - FOLD_HEAD_CHARS - FOLD_TAIL_CHARS
         body = (
             f"{body[:FOLD_HEAD_CHARS]}\n...[свёрнуто: {omitted} символов пропущено, ref={fold_ref}, "
             f"прочитать диапазон: tool_output_read(ref={fold_ref}, start={FOLD_HEAD_CHARS}, end={FOLD_HEAD_CHARS + omitted})]...\n"
             f"{body[-FOLD_TAIL_CHARS:]}"
         )
-    elif len(body) > MAX_TOOL_RESULT_CHARS:
+    elif name not in _PLAIN_TEXT_TOOLS and len(body) > MAX_TOOL_RESULT_CHARS:
         body = f"{body[:MAX_TOOL_RESULT_CHARS]}...[truncated {len(body) - MAX_TOOL_RESULT_CHARS} chars]"
     args = payload.get("arguments")
     args_attr = ""
@@ -230,6 +246,29 @@ def _last_successful_tool_text(history: list[m.Message], tool_name: str) -> str 
         if isinstance(text, str) and text.strip():
             return text.strip()
     return None
+
+
+_VERBATIM_MARKERS = ("дословно", "verbatim", "word for word", "точь-в-точь", "слово в слово")
+
+
+def _asks_for_verbatim(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in _VERBATIM_MARKERS)
+
+
+def _prefer_tool_text(final_text: str, tool_text: str | None, refused: bool) -> bool:
+    """True when a successful content tool's text should be the user-facing answer.
+
+    A refusal always yields to the tool's factual text. A summary also yields when
+    the tool returned a substantial description and the model's answer covers less
+    than half of it: in the live 04.11 case the model saw a 6k-truncated result,
+    said "the answer is cut", and invented a different JSON when asked verbatim.
+    """
+    if not tool_text:
+        return False
+    if refused:
+        return True
+    return len(tool_text) >= 1200 and len(final_text.strip()) < len(tool_text) * 0.5
 
 
 def _build_messages(role_prompt: str, history: list[m.Message]) -> list[ChatMessage]:
@@ -495,10 +534,15 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
 
         if not response.tool_calls:
             final_text = response.text or ""
-            if refused:
-                vision_text = _last_successful_tool_text(history, "vision_analyze")
-                if vision_text:
-                    final_text = vision_text
+            vision_text = _last_successful_tool_text(history, "vision_analyze")
+            last_user_text = next(
+                (str(msg.content or "") for msg in reversed(history) if msg.role == "user"), ""
+            )
+            if _asks_for_verbatim(last_user_text) and vision_text:
+                # "Дай дословно" is a request for the tool output, not a retelling.
+                final_text = vision_text
+            elif _prefer_tool_text(final_text, vision_text, refused):
+                final_text = vision_text
             with session_scope() as db:
                 session = repo.get_session(db, task.session_id)
                 repo.append_message(db, session, role="assistant", content=final_text)

@@ -27,6 +27,20 @@ SAMPLE_GEMINI_RESPONSE = {
 SAMPLE_ERROR_RESPONSE = json.dumps({"error": {"message": "API key not valid"}})
 
 
+class _Resp:
+    def __init__(self, payload: dict):
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self._body
+
+
 @pytest.fixture
 def no_deepseek_key():
     """Settings without a DeepSeek key, whatever other tests left in env or the key store.
@@ -85,11 +99,51 @@ class TestVisionAnalyzeOffline:
         body = json.loads(mock.call_args.args[0].data.decode("utf-8"))
         texts = [p.get("text", "") for p in body["messages"][0]["content"] if p.get("type") == "text"]
         assert any("adult nudity" in text for text in texts)
+        # Gemini 3.x thinking tokens share this budget; 2048 truncated the answer.
+        assert body["max_tokens"] >= 8192
 
     async def test_tool_timeout_covers_the_model_fallback_chain(self):
         from aria.tools.registry import TOOL_REGISTRY
 
         assert TOOL_REGISTRY["vision_analyze"].timeout_sec >= 90
+
+    async def test_truncated_reply_tries_next_model(self):
+        truncated = {
+            "choices": [{"message": {"content": "only browser tabs"}, "finish_reason": "length"}],
+            "usage": {},
+        }
+        complete = {
+            "choices": [{"message": {"content": "full page description"}, "finish_reason": "stop"}],
+            "usage": {},
+        }
+        with patch("aria.secrets.secret_provider.get_key_list", return_value=["fake-key"]):
+            with patch("urllib.request.urlopen", side_effect=[_Resp(truncated), _Resp(complete)]) as mock:
+                result = await vision_analyze({"file_path": str(TEST_IMAGE)}, sandbox_root=SANDBOX)
+
+        assert result["text"] == "full page description"
+        assert result["finish_reason"] == "stop"
+        assert mock.call_count == 2
+
+    async def test_all_truncated_returns_longest_partial_with_flag(self):
+        first = {
+            "choices": [{"message": {"content": "short"}, "finish_reason": "length"}],
+            "usage": {},
+        }
+        second = {
+            "choices": [{"message": {"content": "much longer partial description"}, "finish_reason": "content_filter"}],
+            "usage": {},
+        }
+        third = {
+            "choices": [{"message": {"content": "medium partial"}, "finish_reason": "safety"}],
+            "usage": {},
+        }
+        with patch("aria.secrets.secret_provider.get_key_list", return_value=["fake-key"]):
+            with patch("urllib.request.urlopen", side_effect=[_Resp(first), _Resp(second), _Resp(third)]):
+                result = await vision_analyze({"file_path": str(TEST_IMAGE)}, sandbox_root=SANDBOX)
+
+        assert result["truncated"] is True
+        assert result["text"] == "much longer partial description"
+        assert result["finish_reason"] == "content_filter"
 
     async def test_successful_analysis_with_base64(self):
         with open(TEST_IMAGE, "rb") as f:
@@ -153,6 +207,111 @@ def test_main_model_refusal_does_not_hide_the_vision_result():
         )
     ]
     assert _last_successful_tool_text(history, "vision_analyze") == "Detailed factual description."
+
+
+def test_render_tool_result_keeps_full_vision_description():
+    from aria.core import loop as loop_mod
+
+    text = "Полное фактическое описание кадра. " * 400
+    assert len(text) > loop_mod.MAX_TOOL_RESULT_CHARS
+    message = SimpleNamespace(
+        content_json={
+            "tool_name": "vision_analyze",
+            "status": "ok",
+            "output": {"text": text, "model": "gemini-3.6-flash"},
+        }
+    )
+
+    rendered = loop_mod._render_tool_result(message)
+
+    assert text in rendered
+    assert "truncated" not in rendered
+
+
+def test_render_tool_result_caps_plain_text_at_its_own_limit():
+    from aria.core import loop as loop_mod
+
+    text = "x" * (loop_mod.MAX_TEXT_TOOL_RESULT_CHARS + 500)
+    message = SimpleNamespace(
+        content_json={"tool_name": "vision_analyze", "status": "ok", "output": {"text": text}}
+    )
+
+    rendered = loop_mod._render_tool_result(message)
+
+    assert "truncated 500 chars" in rendered
+    assert len(rendered) < len(text)
+
+
+def test_verbatim_request_is_detected():
+    from aria.core.loop import _asks_for_verbatim
+
+    assert _asks_for_verbatim("какой ответ тебе пришёл дословно?") is True
+    assert _asks_for_verbatim("Give it to me verbatim, word for word") is True
+    assert _asks_for_verbatim("что на картинке?") is False
+
+
+def test_prefer_tool_text_rules():
+    from aria.core.loop import _prefer_tool_text
+
+    assert _prefer_tool_text("short", "a" * 2000, refused=False) is True
+    assert _prefer_tool_text("a" * 2000, "b" * 2000, refused=False) is False
+    assert _prefer_tool_text("short", "a" * 2000, refused=True) is True
+    assert _prefer_tool_text("short", "small", refused=False) is False
+    assert _prefer_tool_text("short", None, refused=True) is False
+
+
+async def test_model_summary_is_replaced_by_full_vision_text():
+    from aria.core import loop as loop_mod
+    from aria.db import models as m
+    from aria.db import repository as repo
+    from aria.db.base import session_scope
+    from aria.db.enums import TaskStatus
+    from aria.llm.router import ProviderRouter
+    from tests.test_compliance_v2 import FakeProvider
+
+    vision_text = "Полное описание содержимого изображения. " * 100
+    summary = "Ответ обрезан: виден только верх браузера."
+    provider = FakeProvider(text=summary)
+    router = ProviderRouter()
+    router.register(provider)
+    sandbox = str(FIXTURE_DIR)
+
+    with session_scope() as db:
+        session = repo.create_session(db, "vision relay")
+        task = repo.create_task(db, session, role="general", objective="describe the image")
+        repo.set_task_status(db, task, TaskStatus.approved)
+        repo.append_message(
+            db,
+            session,
+            role="tool",
+            content="vision_analyze -> ok",
+            content_json={
+                "tool_name": "vision_analyze",
+                "status": "ok",
+                "output": {"text": vision_text},
+            },
+        )
+        task_id, session_id = task.id, session.id
+
+    async def _no_finalize(*_args, **_kwargs):
+        return None
+
+    original = loop_mod.finalize_task
+    loop_mod.finalize_task = _no_finalize
+    try:
+        await loop_mod.execute_agent_loop(task_id, router, sandbox)
+        with session_scope() as db:
+            answers = [
+                msg.content
+                for msg in repo.list_messages(db, session_id, limit=1000)
+                if msg.role == "assistant"
+            ]
+        assert answers and answers[-1] == vision_text.strip()
+    finally:
+        loop_mod.finalize_task = original
+        with session_scope() as db:
+            db.query(m.Task).filter(m.Task.id == task_id).delete()
+            db.query(m.Session).filter(m.Session.id == session_id).delete()
 
 
 @pytest.fixture
