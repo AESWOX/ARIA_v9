@@ -1,15 +1,16 @@
 import { useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import type { ChatUsage } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { formatUsd } from "./ChatTopBar";
 
-/* UI-2: session inspector. Overview shows cost, calls, tokens and the models
-   used; Context shows how much of the model window this chat occupies. It is
-   a read-only panel: all numbers come from GET /chat/sessions/{id}/usage. */
+/* UI-2 / UI-3 feedback: the inspector is an accordion, not a tab strip.
+   Overview shows cost, calls, tokens and the models used; Context shows how
+   much of the model window this chat occupies. Read-only: all numbers come
+   from GET /chat/sessions/{id}/usage. */
 
-type Tab = "overview" | "context";
+type Section = "overview" | "context";
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -17,6 +18,28 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium">{value}</span>
     </div>
+  );
+}
+
+function SectionHeader({
+  label,
+  open,
+  onToggle,
+}: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      className="flex w-full items-center justify-between gap-2 border-t border-border/60 py-1.5 text-left text-muted-foreground hover:text-foreground"
+    >
+      <span>{label}</span>
+      <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+    </button>
   );
 }
 
@@ -31,15 +54,15 @@ export function SessionInspector({
 }) {
   const { t, locale } = useI18n();
   const copy = t.chatInspector;
-  const [tab, setTab] = useState<Tab>("overview");
-  const overview = tab === "overview";
+  const [open, setOpen] = useState<Section | null>("overview");
   const pct = usage?.context_pct ?? null;
   const bar = pct == null ? 0 : Math.max(0, Math.min(100, pct));
   const unpriced = usage?.unpriced_messages ?? 0;
+  const toggle = (section: Section) => setOpen((current) => (current === section ? null : section));
 
   return (
     <div className="border-b border-border bg-background/60 px-3 py-2 text-xs">
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-1 flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate font-medium" title={title}>
           {title || "—"}
         </span>
@@ -53,24 +76,10 @@ export function SessionInspector({
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
-      <div className="mb-2 flex gap-1">
-        <button
-          type="button"
-          onClick={() => setTab("overview")}
-          className={cn("border border-border px-2 py-0.5", overview && "bg-foreground/10")}
-        >
-          {t.sessions.overview}
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("context")}
-          className={cn("border border-border px-2 py-0.5", !overview && "bg-foreground/10")}
-        >
-          {copy.context}
-        </button>
-      </div>
-      {overview ? (
-        <div className="grid gap-2 md:grid-cols-2">
+
+      <SectionHeader label={t.sessions.overview} open={open === "overview"} onToggle={() => toggle("overview")} />
+      {open === "overview" && (
+        <div className="grid gap-2 pb-1 md:grid-cols-2">
           <div className="space-y-1">
             <Row
               label={copy.cost}
@@ -125,8 +134,11 @@ export function SessionInspector({
             )}
           </div>
         </div>
-      ) : (
-        <div className="space-y-1">
+      )}
+
+      <SectionHeader label={copy.context} open={open === "context"} onToggle={() => toggle("context")} />
+      {open === "context" && (
+        <div className="space-y-1 pb-1">
           <Row
             label={copy.context}
             value={

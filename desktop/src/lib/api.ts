@@ -2307,11 +2307,21 @@ export interface ChatSessionRow {
   last_reply_at?: string | null;
 }
 
+export interface ChatMsgToolOutput {
+  tool_name?: string | null;
+  status?: string | null;
+  arguments?: Record<string, unknown> | null;
+  output?: Record<string, unknown> | null;
+  fold_ref?: string | null;
+}
+
 export interface ChatMsg {
   id: string;
   role: string;
   content: string;
   created_at: string | null;
+  /** UI: expandable process row for role="tool". */
+  tool_output?: ChatMsgToolOutput | null;
 }
 
 export type RunMode = "agent" | "plan";

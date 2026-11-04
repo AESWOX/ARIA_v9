@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Check, Loader2, MessageCircle, Paperclip, Plus, RotateCcw, Send, Square, X } from "lucide-react";
+import { AlertTriangle, Check, Loader2, MessageCircle, Plus, RotateCcw, Send, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { CHAT_MODES, normalizeChatMode, type ChatMode } from "@/lib/chat-modes";
 import { formatLocalTime, processingSeconds } from "@/lib/message-timing";
@@ -13,6 +13,7 @@ import { TeamPanel } from "@/components/TeamPanel";
 import { TaskSpecPanel, type ClarifyQuestion } from "@/components/TaskSpecPanel";
 import { ChatTopBar } from "@/components/ChatTopBar";
 import { SessionInspector } from "@/components/SessionInspector";
+import { ToolCallGroup } from "@/components/ToolCallGroup";
 
 /* ------------------------------------------------------------------ */
 /*  NativeChatPage - /chat. Message -> model -> reply, saved per       */
@@ -84,7 +85,6 @@ export default function NativeChatPage() {
   const [clock, setClock] = useState(() => Date.now());
   const [attachments, setAttachments] = useState<{ name: string; path: string }[]>([]);
   const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const [taskQuestions, setTaskQuestions] = useState<ClarifyQuestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -416,7 +416,7 @@ export default function NativeChatPage() {
       setError(errMessage(e));
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+
     }
   };
 
@@ -624,7 +624,15 @@ export default function NativeChatPage() {
           {!loading && messages.length === 0 && (
             <p className="text-xs text-muted-foreground">Write a message below to start.</p>
           )}
-          {messages.map((m) => {
+          {messages.map((m, index) => {
+            if (m.role === "tool") {
+              if (messages[index - 1]?.role === "tool") return null;
+              const group: ChatMsg[] = [];
+              for (let j = index; j < messages.length && messages[j].role === "tool"; j += 1) {
+                group.push(messages[j]);
+              }
+              return <ToolCallGroup key={m.id} messages={group} />;
+            }
             const sentLabel = formatLocalTime(m.created_at, locale);
             const seconds =
               m.role === "assistant"
@@ -824,34 +832,32 @@ export default function NativeChatPage() {
             {uploading && <span className="text-xs text-muted-foreground">{t.common.loading}</span>}
           </div>
         )}
-        <div className="flex gap-2 p-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.doc,.xls,.ppt,.txt,.md,.csv,.tsv,.json,.log,.xml,.yaml,.yml,.html,.png,.jpg,.jpeg,.webp,.gif,.bmp,.mp3,.wav,.m4a,.ogg,.webm,.flac"
-            className="hidden"
-            onChange={(e) => void addFiles(e.target.files)}
-          />
-          <Button
-            ghost
-            onClick={() => fileInputRef.current?.click()}
-            disabled={sending || runBusy(run) || uploading}
-            aria-label="Attach files"
-            title="Attach files"
-          >
-            <Paperclip className="h-4 w-4" />
-          </Button>
+        <div
+          className="flex gap-2 p-2"
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            if (e.dataTransfer.files.length === 0) return;
+            e.preventDefault();
+            void addFiles(e.dataTransfer.files);
+          }}
+        >
           <textarea
             className="min-h-[56px] flex-1 resize-none border border-border bg-background/40 px-3 py-2 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/30"
             placeholder={
               mode === "chat"
-                ? "Message ARIA...  (Enter to send, Shift+Enter for a new line)"
-                : "Describe the task...  (Enter to start, Shift+Enter for a new line)"
+                ? "Message ARIA...  (Enter to send, Shift+Enter for a new line; drop or paste files)"
+                : "Describe the task...  (Enter to start, Shift+Enter for a new line; drop or paste files)"
             }
             value={input}
             disabled={sending || runBusy(run)}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => {
+              if (e.clipboardData.files.length === 0) return;
+              e.preventDefault();
+              void addFiles(e.clipboardData.files);
+            }}
             onKeyDown={onKeyDown}
           />
           {mode === "chat" && sending && activeId && (

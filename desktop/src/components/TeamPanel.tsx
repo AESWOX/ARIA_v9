@@ -72,6 +72,13 @@ export function TeamPanel({
         className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
+        title={
+          "Run setup — how this task is executed. " +
+          "Who works: one model does everything, or a boss plans and helpers run the steps. " +
+          "Result: no check / quick completeness check / independent model re-check. " +
+          "Reasoning: fast, balanced or deep thinking before the answer. " +
+          "Expand to change; settings apply to the next run."
+        }
       >
         {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
         Run setup: {boss ? "boss + helpers" : "one model"} · result: {AUDIT_LABEL[profile.audit]} · reasoning: {THINK_LABEL[profile.thinking]}
@@ -79,7 +86,12 @@ export function TeamPanel({
       {open && (
         <div className="space-y-1 py-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-muted-foreground">Who works</span>
+            <span
+              className="text-muted-foreground"
+              title="One model: the same model plans and executes. Boss + helpers: a stronger model splits the task and delegates steps to cheaper/faster helpers (Agent mode)."
+            >
+              Who works
+            </span>
             {(["solo", "boss"] as const).map((st) => (
               <button
                 type="button" key={st} disabled={disabled} onClick={() => set("style", st)}
@@ -89,7 +101,10 @@ export function TeamPanel({
                 {st === "solo" ? "One model" : "Boss + helpers"}
               </button>
             ))}
-            <label className="flex items-center gap-1">
+            <label
+              className="flex items-center gap-1"
+              title="Off: pick a model class (strong/medium/free/fast) and the router chooses a concrete model with fallback. On: pin exact provider models."
+            >
               <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} /> Pick exact models
             </label>
           </div>
@@ -105,8 +120,13 @@ export function TeamPanel({
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-1">
               <span className="text-muted-foreground">Check result</span>
-              <select className="border border-border bg-background px-1 py-0.5" value={profile.audit} disabled={disabled}
-                onChange={(e) => set("audit", e.target.value as RunProfile["audit"])}>
+              <select
+                className="border border-border bg-background px-1 py-0.5"
+                value={profile.audit}
+                disabled={disabled}
+                title="How the result is checked. No check — fastest. Quick — checks that the answer is complete and well-formed. Independent — a separate model re-reads the result and the task."
+                onChange={(e) => set("audit", e.target.value as RunProfile["audit"])}
+              >
                 <option value="off">No check</option>
                 <option value="light">Quick (answer is complete and well-formed)</option>
                 <option value="strict">Independent (a separate model re-checks it)</option>
@@ -114,8 +134,13 @@ export function TeamPanel({
             </label>
             <label className="flex items-center gap-1">
               <span className="text-muted-foreground">Reasoning</span>
-              <select className="border border-border bg-background px-1 py-0.5" value={profile.thinking} disabled={disabled}
-                onChange={(e) => set("thinking", e.target.value as RunProfile["thinking"])}>
+              <select
+                className="border border-border bg-background px-1 py-0.5"
+                value={profile.thinking}
+                disabled={disabled}
+                title="How much the model thinks before answering. Fast — no extra reasoning tokens. Balanced — some. Deep — more reasoning, slower and more expensive."
+                onChange={(e) => set("thinking", e.target.value as RunProfile["thinking"])}
+              >
                 <option value="off">Fast (no extra thinking)</option>
                 <option value="medium">Balanced</option>
                 <option value="high">Deep (slower, costs more)</option>

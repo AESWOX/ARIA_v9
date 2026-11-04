@@ -44,6 +44,7 @@ _BUILTIN_THEMES: tuple[tuple[str, str, str], ...] = (
     ("mono", "Mono", "Clean grayscale — minimal and focused"),
     ("cyberpunk", "Cyberpunk", "Neon green on black — matrix terminal"),
     ("rose", "Rosé", "Soft pink and warm ivory — easy on the eyes"),
+    ("opencode", "OpenCode", "Neutral slate dark theme with soft blue accents"),
 )
 
 _BUILTIN_THEME_NAMES = {name for name, _, _ in _BUILTIN_THEMES}
