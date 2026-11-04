@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2, Loader2 } from "lucide-react";
+import { Maximize2, Minimize2, Loader2, Info } from "lucide-react";
 import type { ChatModels, ChatUsage, RunProfile, ProfileSeat } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -41,7 +41,7 @@ function Chip({ children, title, tone }: { children: React.ReactNode; title?: st
 }
 
 export function ChatTopBar({
-  title, mode, profile, models, busy, waiting, costToday, costTodayUnpriced, usage, focus, onToggleFocus,
+  title, mode, profile, models, busy, waiting, costToday, costTodayUnpriced, usage, focus, inspectorOpen, onToggleInspector, onToggleFocus,
 }: {
   title: string;
   mode: string;
@@ -54,6 +54,8 @@ export function ChatTopBar({
   costTodayUnpriced: number;
   usage: ChatUsage | null;
   focus: boolean;
+  inspectorOpen: boolean;
+  onToggleInspector: () => void;
   onToggleFocus: () => void;
 }) {
   return (
@@ -93,6 +95,15 @@ export function ChatTopBar({
           {costTodayUnpriced > 0 && ` +${costTodayUnpriced} unpriced`}
         </Chip>
       )}
+      <button
+        type="button"
+        onClick={onToggleInspector}
+        title={usage ? "Session details" : "Session details (no usage yet)"}
+        aria-pressed={inspectorOpen}
+        className={cn("border border-border p-1 text-muted-foreground hover:bg-foreground/5", inspectorOpen && "bg-foreground/10")}
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
       <button
         type="button"
         onClick={onToggleFocus}

@@ -857,4 +857,16 @@ export interface Translations {
     sentAt: string;
     tookSeconds: string;
   };
+
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: string;
+    cost: string;
+    cacheHit: string;
+    messages: string;
+    window: string;
+    budget: string;
+    unpriced: string;
+    noCalls: string;
+  };
 }

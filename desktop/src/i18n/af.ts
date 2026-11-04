@@ -755,4 +755,16 @@ export const af: Translations = {
     sentAt: "Gestuur {time}",
     tookSeconds: "het {seconds} s geneem",
   },
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: "Konteks",
+    cost: "Koste",
+    cacheHit: "Kas-treffers",
+    messages: "Boodskappe",
+    window: "Venster",
+    budget: "Kompressiebegroting",
+    unpriced: "+{count} sonder prys",
+    noCalls: "Nog geen modeloproepe nie",
+  },
+
 };

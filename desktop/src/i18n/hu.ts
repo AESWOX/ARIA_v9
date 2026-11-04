@@ -755,4 +755,16 @@ export const hu: Translations = {
     sentAt: "Elküldve {time}",
     tookSeconds: "feldolgozás {seconds} mp",
   },
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: "Kontextus",
+    cost: "Költség",
+    cacheHit: "Gyorsítótár-találat",
+    messages: "Üzenetek",
+    window: "Ablak",
+    budget: "Tömörítési keret",
+    unpriced: "+{count} ár nélkül",
+    noCalls: "Még nincs modellhívás",
+  },
+
 };

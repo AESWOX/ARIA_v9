@@ -2412,11 +2412,23 @@ export interface ChatSendResult {
   stopped?: boolean;
 }
 
-/** 19.6a/19.6: context and cost of the open chat (GET /chat/sessions/{id}/usage). */
+/** UI-2: one row per provider/model in the session inspector. */
+export interface ChatUsageModel {
+  provider_id: string;
+  model: string | null;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number | null;
+  priced: boolean;
+}
+
+/** 19.6a/19.6 + UI-2: context, cost and aggregates of the open chat (GET /chat/sessions/{id}/usage). */
 export interface ChatUsage {
   context_tokens: number;
   context_window: number | null;
   context_pct: number | null;
+  context_budget: number | null;
   session_cost: number | null;
   session_cost_complete: boolean;
   /** D-38: some calls are priced, some are not — show the partial sum, not silence. */
@@ -2424,6 +2436,17 @@ export interface ChatUsage {
   priced: boolean;
   priced_messages: number;
   unpriced_messages: number;
+  cache_hit_ratio: number | null;
+  /** UI-2: aggregates across all llm_usage rows of the session. */
+  total_prompt_tokens: number;
+  total_completion_tokens: number;
+  total_reasoning_tokens: number;
+  total_tokens: number;
+  calls: number;
+  first_call_at: string | null;
+  last_call_at: string | null;
+  by_model: ChatUsageModel[];
+  message_count: number;
 }
 
 /** Encode each path segment but keep the "/" separators. */

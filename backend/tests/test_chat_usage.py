@@ -17,6 +17,7 @@ KEYS = {
     "context_tokens",
     "context_window",
     "context_pct",
+    "context_budget",
     "session_cost",
     "session_cost_complete",
     "session_cost_partial",
@@ -24,6 +25,15 @@ KEYS = {
     "priced_messages",
     "unpriced_messages",
     "cache_hit_ratio",
+    "total_prompt_tokens",
+    "total_completion_tokens",
+    "total_reasoning_tokens",
+    "total_tokens",
+    "calls",
+    "first_call_at",
+    "last_call_at",
+    "by_model",
+    "message_count",
 }
 
 

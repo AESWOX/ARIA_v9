@@ -784,4 +784,16 @@ export const ru: Translations = {
     sentAt: "Отправлено {time}",
     tookSeconds: "обработка {seconds} с",
   },
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: "Контекст",
+    cost: "Стоимость",
+    cacheHit: "Попадание в кэш",
+    messages: "Сообщения",
+    window: "Окно",
+    budget: "Бюджет сжатия",
+    unpriced: "+{count} без цены",
+    noCalls: "Вызовов модели ещё нет",
+  },
+
 };

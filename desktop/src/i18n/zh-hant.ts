@@ -754,4 +754,16 @@ export const zhHant: Translations = {
     sentAt: "傳送於 {time}",
     tookSeconds: "耗時 {seconds} 秒",
   },
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: "上下文",
+    cost: "費用",
+    cacheHit: "快取命中",
+    messages: "訊息",
+    window: "視窗",
+    budget: "壓縮預算",
+    unpriced: "+{count} 筆未定價",
+    noCalls: "尚無模型呼叫",
+  },
+
 };

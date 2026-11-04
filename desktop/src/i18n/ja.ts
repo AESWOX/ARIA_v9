@@ -754,4 +754,16 @@ export const ja: Translations = {
     sentAt: "送信 {time}",
     tookSeconds: "処理 {seconds} 秒",
   },
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: "コンテキスト",
+    cost: "コスト",
+    cacheHit: "キャッシュヒット",
+    messages: "メッセージ",
+    window: "ウィンドウ",
+    budget: "圧縮予算",
+    unpriced: "+{count} 件未計価",
+    noCalls: "まだモデル呼び出しはありません",
+  },
+
 };

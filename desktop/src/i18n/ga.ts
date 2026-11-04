@@ -763,4 +763,16 @@ export const ga: Translations = {
     sentAt: "Seolta {time}",
     tookSeconds: "mhair {seconds} soic",
   },
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: "Comhthéacs",
+    cost: "Costas",
+    cacheHit: "Amasú taisce",
+    messages: "Teachtaireachtaí",
+    window: "Fuinneog",
+    budget: "Buiséad comhbhrúite",
+    unpriced: "+{count} gan phraghas",
+    noCalls: "Níl aon ghlao samhail fós",
+  },
+
 };

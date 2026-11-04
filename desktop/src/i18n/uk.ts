@@ -756,4 +756,16 @@ export const uk: Translations = {
     sentAt: "Надіслано {time}",
     tookSeconds: "обробка {seconds} с",
   },
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: "Контекст",
+    cost: "Вартість",
+    cacheHit: "Влучання в кеш",
+    messages: "Повідомлення",
+    window: "Вікно",
+    budget: "Бюджет стиснення",
+    unpriced: "+{count} без ціни",
+    noCalls: "Викликів моделі ще немає",
+  },
+
 };

@@ -863,4 +863,16 @@ export const en: Translations = {
     sentAt: "Sent {time}",
     tookSeconds: "took {seconds} s",
   },
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: "Context",
+    cost: "Cost",
+    cacheHit: "Cache hit",
+    messages: "Messages",
+    window: "Window",
+    budget: "Compression budget",
+    unpriced: "+{count} unpriced",
+    noCalls: "No model calls yet",
+  },
+
 };

@@ -754,4 +754,16 @@ export const ko: Translations = {
     sentAt: "보냄 {time}",
     tookSeconds: "{seconds}초 소요",
   },
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: "컨텍스트",
+    cost: "비용",
+    cacheHit: "캐시 적중",
+    messages: "메시지",
+    window: "창",
+    budget: "압축 예산",
+    unpriced: "+{count} 가격 미정",
+    noCalls: "아직 모델 호출 없음",
+  },
+
 };

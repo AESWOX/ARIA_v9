@@ -755,4 +755,16 @@ export const tr: Translations = {
     sentAt: "Gönderildi {time}",
     tookSeconds: "{seconds} sn sürdü",
   },
+  // UI-2: session inspector in chat.
+  chatInspector: {
+    context: "Bağlam",
+    cost: "Maliyet",
+    cacheHit: "Önbellek isabeti",
+    messages: "Mesajlar",
+    window: "Pencere",
+    budget: "Sıkıştırma bütçesi",
+    unpriced: "+{count} fiyatsız",
+    noCalls: "Henüz model çağrısı yok",
+  },
+
 };

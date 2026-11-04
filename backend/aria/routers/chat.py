@@ -499,12 +499,43 @@ async def chat_session_usage(session_id: uuid.UUID, _: str = Depends(require_run
                 if row.context_window
             ]
             context_window = min(windows) if windows else None
-        costs = list(
-            db.execute(select(m.LlmUsage.cost_usd).where(m.LlmUsage.session_id == session_id)).scalars()
+        usage_rows = list(
+            db.execute(select(m.LlmUsage).where(m.LlmUsage.session_id == session_id)).scalars()
         )
-        cache_rows = db.execute(
-            select(m.LlmUsage.prompt_hit, m.LlmUsage.prompt_miss).where(m.LlmUsage.session_id == session_id)
-        ).all()
+        costs = [row.cost_usd for row in usage_rows]
+        cache_rows = [(row.prompt_hit, row.prompt_miss) for row in usage_rows]
+        total_prompt_tokens = sum(int(row.prompt_total or 0) for row in usage_rows)
+        total_completion_tokens = sum(int(row.completion or 0) for row in usage_rows)
+        total_reasoning_tokens = sum(int(row.reasoning or 0) for row in usage_rows)
+        calls = len(usage_rows)
+        call_times = [row.created_at for row in usage_rows if row.created_at]
+        by_model: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in usage_rows:
+            key = (row.provider_id, row.model or "")
+            bucket = by_model.setdefault(
+                key,
+                {
+                    "provider_id": row.provider_id,
+                    "model": row.model,
+                    "calls": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "cost_usd": 0.0,
+                    "priced": True,
+                },
+            )
+            bucket["calls"] += 1
+            bucket["prompt_tokens"] += int(row.prompt_total or 0)
+            bucket["completion_tokens"] += int(row.completion or 0)
+            if row.cost_usd is None:
+                bucket["priced"] = False
+            else:
+                bucket["cost_usd"] += float(row.cost_usd)
+        models_used = sorted(
+            by_model.values(), key=lambda item: (-item["calls"], item["provider_id"], item["model"] or "")
+        )
+        for bucket in models_used:
+            bucket["cost_usd"] = round(bucket["cost_usd"], 6) if bucket["cost_usd"] else None
     known = [(h, mi) for h, mi in cache_rows if h is not None and mi is not None]
     cache_hits = sum(int(h) for h, _mi in known)
     cache_total = sum(int(h) + int(mi) for h, mi in known)
@@ -515,10 +546,12 @@ async def chat_session_usage(session_id: uuid.UUID, _: str = Depends(require_run
     session_cost_partial = priced_messages > 0 and unpriced_messages > 0
     priced_total = sum(float(c) for c in costs if c is not None)
     context_pct = round(context_tokens / context_window * 100, 1) if context_window else None
+    threshold = int(get_settings().compression_token_threshold or 0)
     return {
         "context_tokens": context_tokens,
         "context_window": context_window,
         "context_pct": context_pct,
+        "context_budget": threshold or None,
         "session_cost": round(priced_total, 6) if priced_messages else None,
         "session_cost_complete": session_cost_complete,
         "session_cost_partial": session_cost_partial,
@@ -526,6 +559,15 @@ async def chat_session_usage(session_id: uuid.UUID, _: str = Depends(require_run
         "priced_messages": priced_messages,
         "unpriced_messages": unpriced_messages,
         "cache_hit_ratio": cache_hit_ratio,
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+        "total_reasoning_tokens": total_reasoning_tokens,
+        "total_tokens": total_prompt_tokens + total_completion_tokens,
+        "calls": calls,
+        "first_call_at": min(call_times).isoformat() if call_times else None,
+        "last_call_at": max(call_times).isoformat() if call_times else None,
+        "by_model": models_used,
+        "message_count": len(history),
     }
 
 

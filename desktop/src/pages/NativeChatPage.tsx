@@ -12,6 +12,7 @@ import { Markdown } from "@/components/Markdown";
 import { TeamPanel } from "@/components/TeamPanel";
 import { TaskSpecPanel, type ClarifyQuestion } from "@/components/TaskSpecPanel";
 import { ChatTopBar } from "@/components/ChatTopBar";
+import { SessionInspector } from "@/components/SessionInspector";
 
 /* ------------------------------------------------------------------ */
 /*  NativeChatPage - /chat. Message -> model -> reply, saved per       */
@@ -91,6 +92,7 @@ export default function NativeChatPage() {
   const [mode, setMode] = useState<ChatMode>("chat");
   const [run, setRun] = useState<RunState | null>(null);
   const [usage, setUsage] = useState<ChatUsage | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const usageInFlight = useRef(false);
   const usageTick = useRef(0);
   const [decidingId, setDecidingId] = useState<string | null>(null);
@@ -589,8 +591,17 @@ export default function NativeChatPage() {
           costTodayUnpriced={costTodayUnpriced}
           usage={usage}
           focus={focus}
+          inspectorOpen={inspectorOpen}
+          onToggleInspector={() => setInspectorOpen((open) => !open)}
           onToggleFocus={() => applyFocus(!focus)}
         />
+        {inspectorOpen && (
+          <SessionInspector
+            usage={usage}
+            title={sessions.find((x) => x.id === activeId)?.title ?? ""}
+            onClose={() => setInspectorOpen(false)}
+          />
+        )}
         {notConfigured && (
           <div className="flex items-start gap-2 border-b border-border bg-amber-500/10 p-3 text-xs">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
