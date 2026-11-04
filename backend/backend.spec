@@ -24,12 +24,15 @@ if _os.path.isdir('data/skills'):
             if _os.path.isdir(_os.path.join('data/skills', _name)):
                 datas.append((_os.path.join('data/skills', _name), _os.path.join('data/skills', _name)))
 binaries = []
-hiddenimports = ['aria.main', 'aria.config', 'aria.api.auth', 'aria.api.http', 'aria.api.ws', 'aria.core.loop', 'aria.core.delegate', 'aria.core.state_machine', 'aria.core.roles', 'aria.core.audit', 'aria.core.events', 'aria.db.models', 'aria.db.repository', 'aria.db.base', 'aria.llm.router', 'aria.llm.key_pool', 'aria.llm.compression', 'aria.llm.providers.base', 'aria.llm.providers.openai_compatible', 'aria.llm.providers.stub', 'aria.tools.registry', 'aria.tools.validators', 'aria.tools.handlers.files', 'aria.tools.handlers.shell', 'aria.tools.handlers.web', 'aria.storage.obsidian_vault', 'aria.storage.b2_client', 'aria.scheduler.jobs', 'aria.routers.providers', 'aria.routers.storage', 'aria.routers.sessions', 'aria.routers.tasks', 'aria.routers.system', 'aria.routers.vault', 'aria.routers.config', 'uvicorn', 'sqlalchemy', 'pydantic', 'pydantic_settings', 'alembic', 'httpx', 'httpx_sse', 'websockets', 'openai', 'dotenv', 'yaml', 'alembic.config', 'alembic.command', 'alembic.runtime.migration', 'alembic.environment', 'alembic.script']
+hiddenimports = ['aria.main', 'aria.config', 'aria.api.auth', 'aria.api.http', 'aria.api.ws', 'aria.core.loop', 'aria.core.delegate', 'aria.core.state_machine', 'aria.core.roles', 'aria.core.audit', 'aria.core.events', 'aria.db.models', 'aria.db.repository', 'aria.db.base', 'aria.llm.router', 'aria.llm.key_pool', 'aria.llm.compression', 'aria.llm.providers.base', 'aria.llm.providers.openai_compatible', 'aria.llm.providers.stub', 'aria.tools.registry', 'aria.tools.validators', 'aria.tools.handlers.files', 'aria.tools.handlers.shell', 'aria.tools.handlers.web', 'aria.tools.handlers.vision', 'aria.tools.handlers.documents', 'aria.tools.handlers.audio', 'aria.storage.obsidian_vault', 'aria.storage.b2_client', 'aria.scheduler.jobs', 'aria.routers.providers', 'aria.routers.storage', 'aria.routers.sessions', 'aria.routers.tasks', 'aria.routers.system', 'aria.routers.vault', 'aria.routers.config', 'uvicorn', 'sqlalchemy', 'pydantic', 'pydantic_settings', 'alembic', 'httpx', 'httpx_sse', 'websockets', 'openai', 'dotenv', 'yaml', 'alembic.config', 'alembic.command', 'alembic.runtime.migration', 'alembic.environment', 'alembic.script']
 tmp_ret = collect_all('uvicorn')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('starlette')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('fastapi')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# P0 attachments: pypdf is imported lazily inside documents.file_extract, so collect it explicitly.
+tmp_ret = collect_all('pypdf')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 # SSL-1: urllib needs certifi's cacert.pem inside the frozen bundle.
 datas += collect_data_files('certifi')
