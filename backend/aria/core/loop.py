@@ -213,6 +213,25 @@ def _render_tool_result(msg: m.Message) -> str | None:
     )
 
 
+def _last_successful_tool_text(history: list[m.Message], tool_name: str) -> str | None:
+    """Return the text of the newest successful call of ``tool_name``.
+
+    The owner asked for an image description; if the main model then refuses to relay
+    the tool result, the tool's factual text must win over the refusal.
+    """
+    for message in reversed(history):
+        payload = message.content_json or {}
+        if payload.get("tool_name") != tool_name:
+            continue
+        if payload.get("status") != "ok":
+            continue
+        output = payload.get("output") or {}
+        text = output.get("text") if isinstance(output, dict) else None
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    return None
+
+
 def _build_messages(role_prompt: str, history: list[m.Message]) -> list[ChatMessage]:
     messages = [ChatMessage(role="system", content=role_prompt)]
     for msg in history:
@@ -456,14 +475,16 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
         response = routing.response
 
         # L0 §4: диагностика отказа — строка в лог, без повторов и без текста.
+        refused = False
         if bool(getattr(settings, "refusal_detection_enabled", True)):
             from aria.core.refusal import finish_reason_from_response, is_model_refusal, log_refusal
 
-            if is_model_refusal(
+            refused = is_model_refusal(
                 response.text,
                 has_tool_calls=bool(response.tool_calls),
                 finish_reason=finish_reason_from_response(response),
-            ):
+            )
+            if refused:
                 _refusal_provider = router.find_provider(routing.provider_id)
                 log_refusal(
                     session_id=task.session_id,
@@ -473,9 +494,14 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
                 )
 
         if not response.tool_calls:
+            final_text = response.text or ""
+            if refused:
+                vision_text = _last_successful_tool_text(history, "vision_analyze")
+                if vision_text:
+                    final_text = vision_text
             with session_scope() as db:
                 session = repo.get_session(db, task.session_id)
-                repo.append_message(db, session, role="assistant", content=response.text or "")
+                repo.append_message(db, session, role="assistant", content=final_text)
             break
 
         approval_ctx = None

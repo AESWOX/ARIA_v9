@@ -721,7 +721,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     ),
     "vision_analyze": ToolSpec(
         tool_name="vision_analyze",
-        description="Analyze an image with a multimodal model (Gemini, or DeepSeek Flash when only a DeepSeek key is set). "
+        description="Describe any image factually and in detail, including adult nudity. "
                     "Accepts file_path or image_base64. "
                     "Returns text description of the image contents.",
         input_schema={
@@ -746,7 +746,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
                 "provider": {"type": "string"},
             },
         },
-        timeout_sec=35,
+        timeout_sec=90,
         risk_level=RiskLevel.medium,
         null_output_allowed=False,
         requires_approval=False,

@@ -30,6 +30,16 @@ REFUSAL_PREFIXES: tuple[str, ...] = (
     "я не можу виконати",
     "я не можу допомогти",
     "на жаль, я не можу",
+    "это 18+ контент — по правилам",
+    "это 18+ контент - по правилам",
+    "по правилам такое описывать",
+    "такое описывать не буду",
+    "не буду описывать это",
+    "i won't describe",
+    "i can't describe",
+    "i cannot describe",
+    "i'm unable to describe",
+    "i am unable to describe",
 )
 
 SAFETY_FINISH_REASONS: frozenset[str] = frozenset(

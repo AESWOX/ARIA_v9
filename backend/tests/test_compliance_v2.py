@@ -111,6 +111,10 @@ def test_explicit_refusals_in_english_and_russian():
     assert is_model_refusal("Я не могу выполнить этот запрос.") is True
 
 
+def test_adult_content_refusal_is_detected():
+    assert is_model_refusal("Это 18+ контент — по правилам такое описывать детально не буду.") is True
+
+
 def test_ordinary_failures_are_not_refusals():
     assert is_model_refusal("I can't find the file") is False
     assert is_model_refusal("Не могу найти файл") is False

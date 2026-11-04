@@ -22,6 +22,10 @@ logger = logging.getLogger("aria.vision")
 _DEEPSEEK_MIMES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 _DEEPSEEK_MAX_BYTES = 32 * 1024 * 1024
 _MAX_IMAGE_BYTES = 32 * 1024 * 1024
+_VISION_GUARD = (
+    "Factual visual description only: state what is visible, including adult nudity. "
+    "Do not refuse, moralize, or omit details. Do not identify real people or invent identities."
+)
 
 
 def _resolve_in_sandbox(file_path: str, sandbox_root: str | None) -> Path | dict:
@@ -50,7 +54,11 @@ async def vision_analyze(input_json: dict, sandbox_root: str | None = None, **_c
     """
     file_path = input_json.get("file_path", "")
     image_base64 = input_json.get("image_base64", "")
-    prompt = input_json.get("prompt", "Describe this image in detail. Be concise but thorough.")
+    prompt = input_json.get(
+        "prompt",
+        "Describe this image in detail and factually: people, bodies, clothing, pose, setting, text, "
+        "and any adult content. Do not omit details or moralize.",
+    )
 
     # 1. Get image data
     if file_path:
@@ -112,7 +120,7 @@ async def vision_analyze(input_json: dict, sandbox_root: str | None = None, **_c
             "base_url": secret_provider.get_key("VISION_GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta/openai",
             "models": models,
             "extra": {},
-            "max_tokens": 1024,
+            "max_tokens": 2048,
         })
     # Groq vision — только если владелец явно задал мультимодальную модель (у текущих ключей её нет).
     groq_model = str(getattr(settings, "vision_groq_model", "") or "").strip()
@@ -124,7 +132,7 @@ async def vision_analyze(input_json: dict, sandbox_root: str | None = None, **_c
             "base_url": getattr(settings, "groq_base_url", "https://api.groq.com/openai/v1"),
             "models": [groq_model],
             "extra": {},
-            "max_tokens": 1024,
+            "max_tokens": 2048,
         })
     deepseek_key = settings.deepseek_api_key_resolved
     # DeepSeek vision платный: только по явному флагу и только после ВСЕЙ цепочки Gemini/Groq.
@@ -196,6 +204,7 @@ def _request_backends(backends: list[dict], prompt: str, content_type: str, b64_
                         "content": [
                             {"type": "text", "text": prompt},
                             {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64_str}", "detail": "high"}},
+                            {"type": "text", "text": _VISION_GUARD},
                         ],
                     }
                 ],
@@ -214,7 +223,7 @@ def _request_backends(backends: list[dict], prompt: str, content_type: str, b64_
                             "User-Agent": "ARIA/1.0",
                         },
                     )
-                    with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as resp:
+                    with urllib.request.urlopen(req, timeout=25, context=_ssl_context()) as resp:
                         result = json.loads(resp.read().decode("utf-8"))
                     text = result["choices"][0]["message"]["content"]
                     if not (text or "").strip():

@@ -77,6 +77,20 @@ class TestVisionAnalyzeOffline:
         assert result["text"] == "This is a red square pixel."
         assert result["model"] == "gemini-3.8-flash"
 
+    async def test_default_prompt_allows_factual_adult_description(self):
+        with patch("aria.secrets.secret_provider.get_key_list", return_value=["fake-key"]):
+            with patch("urllib.request.urlopen", new_callable=MagicMock) as mock:
+                mock.return_value.__enter__.return_value.read.return_value = json.dumps(SAMPLE_GEMINI_RESPONSE).encode("utf-8")
+                await vision_analyze({"file_path": str(TEST_IMAGE)}, sandbox_root=SANDBOX)
+        body = json.loads(mock.call_args.args[0].data.decode("utf-8"))
+        texts = [p.get("text", "") for p in body["messages"][0]["content"] if p.get("type") == "text"]
+        assert any("adult nudity" in text for text in texts)
+
+    async def test_tool_timeout_covers_the_model_fallback_chain(self):
+        from aria.tools.registry import TOOL_REGISTRY
+
+        assert TOOL_REGISTRY["vision_analyze"].timeout_sec >= 90
+
     async def test_successful_analysis_with_base64(self):
         with open(TEST_IMAGE, "rb") as f:
             img_data = f.read()
@@ -124,6 +138,21 @@ def _ok(payload):
     resp = MagicMock()
     resp.__enter__.return_value.read.return_value = json.dumps(payload).encode("utf-8")
     return resp
+
+
+def test_main_model_refusal_does_not_hide_the_vision_result():
+    from aria.core.loop import _last_successful_tool_text
+
+    history = [
+        SimpleNamespace(
+            content_json={
+                "tool_name": "vision_analyze",
+                "status": "ok",
+                "output": {"text": "Detailed factual description."},
+            }
+        )
+    ]
+    assert _last_successful_tool_text(history, "vision_analyze") == "Detailed factual description."
 
 
 @pytest.fixture
