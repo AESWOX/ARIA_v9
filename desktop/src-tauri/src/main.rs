@@ -34,6 +34,19 @@ struct AppState {
     shutdown: Arc<AtomicBool>,
 }
 
+/// Windows: console programs spawned from a GUI app otherwise flash a black
+/// console window. Applies to the backend sidecar and to `taskkill`/`netstat`.
+fn no_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 /// Bind to an ephemeral port, learn it, then release — caller must use it before
 /// the OS recycles it (typically 60s on Windows; plenty for our spawn window).
 fn find_free_port() -> Result<u16, String> {
@@ -70,11 +83,12 @@ fn cleanup_zombie(pid_path: &PathBuf) {
     };
 
     // On Windows, try to kill by PID via taskkill
-    let _ = Command::new("taskkill")
-        .args(["/f", "/pid", &pid.to_string()])
+    let mut kill = Command::new("taskkill");
+    kill.args(["/f", "/pid", &pid.to_string()])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+        .stderr(Stdio::null());
+    no_window(&mut kill);
+    let _ = kill.status();
 
     std::thread::sleep(Duration::from_millis(200));
     let _ = fs::remove_file(pid_path);
@@ -83,12 +97,13 @@ fn cleanup_zombie(pid_path: &PathBuf) {
 /// Try to kill any process listening on `port` by parsing `netstat` output.
 fn kill_process_on_port(port: u16) {
     if cfg!(windows) {
-        let output = Command::new("netstat")
+        let mut netstat = Command::new("netstat");
+        netstat
             .args(["-ano"])
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-            .ok();
+            .stderr(Stdio::null());
+        no_window(&mut netstat);
+        let output = netstat.output().ok();
         if let Some(out) = output {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let needle = format!(":{}", port);
@@ -96,11 +111,12 @@ fn kill_process_on_port(port: u16) {
                 if line.contains("LISTENING") && line.contains(&needle) {
                     // Last column is PID
                     let pid = line.split_whitespace().last().unwrap_or("");
-                    let _ = Command::new("taskkill")
-                        .args(["/f", "/pid", pid])
+                    let mut kill = Command::new("taskkill");
+                    kill.args(["/f", "/pid", pid])
                         .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .status();
+                        .stderr(Stdio::null());
+                    no_window(&mut kill);
+                    let _ = kill.status();
                 }
             }
         }
@@ -184,6 +200,7 @@ fn launch_backend(app: &AppHandle, plan: &LaunchPlan) -> Result<Child, String> {
         command
     };
 
+    no_window(&mut command);
     let child = match command
         .arg("--port")
         .arg(plan.port.to_string())
