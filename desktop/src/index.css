@@ -349,3 +349,15 @@ code { font-size: 0.875rem; }
   --surface-blend: normal;
 }
 
+/* Vendor globals paint every <code> block with --midground and reuse the same
+   token for ::selection. That reads as a constant glow on code (owner report
+   04.11). Keep code neutral; give selection a calm readable contrast. */
+code {
+  background: transparent;
+}
+
+*::selection {
+  background: color-mix(in srgb, var(--midground-base) 42%, transparent);
+  color: var(--background-base);
+}
+

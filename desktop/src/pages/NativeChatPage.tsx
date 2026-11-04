@@ -433,6 +433,18 @@ export default function NativeChatPage() {
     : "";
   const outgoing = (text: string) => (text + attachmentBlock).trim();
 
+  const copyChatText = useCallback(async () => {
+    const parts = messages
+      .filter((message) => message.role === "user" || message.role === "assistant")
+      .map((message) => `${message.role === "user" ? "You" : "ARIA"}:\n${message.content}`);
+    if (parts.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(parts.join("\n\n"));
+    } catch {
+      /* clipboard can be blocked; the button simply does nothing */
+    }
+  }, [messages]);
+
   const send = async (retry = false) => {
     const text = input.trim();
     if (sending || (!retry && !text && attachments.length === 0)) return;
@@ -592,16 +604,12 @@ export default function NativeChatPage() {
           usage={usage}
           focus={focus}
           inspectorOpen={inspectorOpen}
+          onCopyChat={() => void copyChatText()}
           onToggleInspector={() => setInspectorOpen((open) => !open)}
           onToggleFocus={() => applyFocus(!focus)}
         />
-        {inspectorOpen && (
-          <SessionInspector
-            usage={usage}
-            title={sessions.find((x) => x.id === activeId)?.title ?? ""}
-            onClose={() => setInspectorOpen(false)}
-          />
-        )}
+        <div className="flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {notConfigured && (
           <div className="flex items-start gap-2 border-b border-border bg-amber-500/10 p-3 text-xs">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
@@ -770,26 +778,6 @@ export default function NativeChatPage() {
           </div>
         )}
 
-        <TaskSpecPanel
-          key={run?.task_id ?? "none"}
-          taskId={run?.task_id ?? null}
-          taskStatus={run?.status ?? null}
-          sessionId={activeId}
-          questions={taskQuestions}
-          busy={mode !== "chat" && (runBusy(run) || sending)}
-          onAnswered={async () => {
-            setTaskQuestions(null);
-            if (activeId) {
-              await loadMessages(activeId);
-              setRun(await api.runState(activeId).catch(() => null));
-            }
-          }}
-          onError={(m) => setError(m)}
-        />
-
-        {profile && (
-          <TeamPanel profile={profile} models={models} disabled={sending || runBusy(run)} notes={profileNotes} onChange={changeProfile} />
-        )}
         <div className="flex items-center gap-1 border-t border-border px-2 pt-2" role="radiogroup" aria-label="Mode">
           {CHAT_MODES.map((md) => (
             <button
@@ -873,6 +861,36 @@ export default function NativeChatPage() {
           <Button onClick={() => void send(false)} disabled={sending || runBusy(run) || !input.trim()} aria-label="Send">
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
+        </div>
+          </div>
+          {inspectorOpen && (
+            <aside className="flex w-[340px] shrink-0 flex-col overflow-y-auto border-l border-border bg-background/40">
+              <SessionInspector
+                usage={usage}
+                title={sessions.find((x) => x.id === activeId)?.title ?? ""}
+                onClose={() => setInspectorOpen(false)}
+              />
+              <TaskSpecPanel
+                key={run?.task_id ?? "none"}
+                taskId={run?.task_id ?? null}
+                taskStatus={run?.status ?? null}
+                sessionId={activeId}
+                questions={taskQuestions}
+                busy={mode !== "chat" && (runBusy(run) || sending)}
+                onAnswered={async () => {
+                  setTaskQuestions(null);
+                  if (activeId) {
+                    await loadMessages(activeId);
+                    setRun(await api.runState(activeId).catch(() => null));
+                  }
+                }}
+                onError={(m) => setError(m)}
+              />
+              {profile && (
+                <TeamPanel profile={profile} models={models} disabled={sending || runBusy(run)} notes={profileNotes} onChange={changeProfile} />
+              )}
+            </aside>
+          )}
         </div>
       </div>
     </div>

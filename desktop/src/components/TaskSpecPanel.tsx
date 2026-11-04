@@ -60,7 +60,7 @@ export function TaskSpecPanel({
   const [plan, setPlan] = useState<TaskPlanView | null>(null);
   const [children, setChildren] = useState<ChildTask[]>([]);
   const [audits, setAudits] = useState<AuditRow[]>([]);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
 
   const load = async () => {
     if (!taskId) return;
@@ -75,6 +75,12 @@ export function TaskSpecPanel({
   };
 
   useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [taskId]);
+
+  // Questions must never be hidden behind a collapsed accordion. The owner can
+  // still collapse it again; it only auto-opens when the question set changes.
+  useEffect(() => {
+    if (questions && questions.length > 0) setOpen(true);
+  }, [questions]);
 
   // 19.6: пока задача идёт, панель должна показывать актуальные шаги, а не снимок старта.
   useEffect(() => {
@@ -126,7 +132,13 @@ export function TaskSpecPanel({
 
   return (
     <div className="border-t border-border bg-background/60 px-3 py-2 text-xs">
-      <button type="button" className="flex w-full items-center gap-1 text-left font-medium" onClick={() => setOpen(!open)}>
+      <button
+        type="button"
+        className="flex w-full items-center gap-1 text-left font-medium"
+        onClick={() => setOpen(!open)}
+        title={open ? "Collapse task details" : "Expand task details"}
+        aria-expanded={open}
+      >
         <ListTree className="h-3 w-3" />
         {L.planTitle ?? "Task contract and plan"}
         <span className="ml-auto text-muted-foreground">

@@ -1,4 +1,5 @@
-import { Maximize2, Minimize2, Loader2, Info } from "lucide-react";
+import { useState } from "react";
+import { Check, Copy, Maximize2, Minimize2, Loader2, Info } from "lucide-react";
 import type { ChatModels, ChatUsage, RunProfile, ProfileSeat } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -41,7 +42,7 @@ function Chip({ children, title, tone }: { children: React.ReactNode; title?: st
 }
 
 export function ChatTopBar({
-  title, mode, profile, models, busy, waiting, costToday, costTodayUnpriced, usage, focus, inspectorOpen, onToggleInspector, onToggleFocus,
+  title, mode, profile, models, busy, waiting, costToday, costTodayUnpriced, usage, focus, inspectorOpen, onCopyChat, onToggleInspector, onToggleFocus,
 }: {
   title: string;
   mode: string;
@@ -55,9 +56,17 @@ export function ChatTopBar({
   usage: ChatUsage | null;
   focus: boolean;
   inspectorOpen: boolean;
+  /** Copies only the chat transcript (user + assistant), never the UI chrome. */
+  onCopyChat: () => void | Promise<void>;
   onToggleInspector: () => void;
   onToggleFocus: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    await onCopyChat();
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
   return (
     <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
       <div className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>
@@ -95,6 +104,15 @@ export function ChatTopBar({
           {costTodayUnpriced > 0 && ` +${costTodayUnpriced} unpriced`}
         </Chip>
       )}
+      <button
+        type="button"
+        onClick={() => void handleCopy()}
+        title="Copy chat text (user + assistant messages only)"
+        aria-label="Copy chat text"
+        className="border border-border p-1 text-muted-foreground hover:bg-foreground/5"
+      >
+        {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+      </button>
       <button
         type="button"
         onClick={onToggleInspector}

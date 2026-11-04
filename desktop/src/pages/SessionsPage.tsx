@@ -35,7 +35,6 @@ import type {
   SessionInfo,
   SessionMessage,
   SessionSearchResult,
-  SessionStoreStats,
   StatusResponse,
 } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
@@ -754,7 +753,6 @@ export default function SessionsPage() {
   const lastClickedIndexRef = useRef<number | null>(null);
   const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false);
   const [deletingSelected, setDeletingSelected] = useState(false);
-  const [stats, setStats] = useState<SessionStoreStats | null>(null);
   const [pruneOpen, setPruneOpen] = useState(false);
   const [pruneDays, setPruneDays] = useState("90");
   const [pruning, setPruning] = useState(false);
@@ -824,17 +822,6 @@ export default function SessionsPage() {
         if (!silent) setLoading(false);
       });
   }, []);
-
-  const loadStats = useCallback(() => {
-    api
-      .getSessionStats()
-      .then(setStats)
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    loadStats();
-  }, [loadStats]);
 
   // Refs for the overview poll's new-session detection. The poll effect
   // below is mounted once with stable deps, so it reads the current page
@@ -960,7 +947,6 @@ export default function SessionsPage() {
           // ticks down without waiting for the next page navigation.
           refreshEmptyCount();
           showToast(t.sessions.sessionDeleted, "success");
-          loadStats();
         } catch {
           showToast(t.sessions.failedToDelete, "error");
           throw new Error("delete failed");
@@ -970,7 +956,6 @@ export default function SessionsPage() {
         expandedId,
         refreshEmptyCount,
         showToast,
-        loadStats,
         t.sessions.sessionDeleted,
         t.sessions.failedToDelete,
       ],
@@ -1122,12 +1107,11 @@ export default function SessionsPage() {
           prev.map((s) => (s.id === id ? { ...s, title } : s)),
         );
         showToast("Session renamed", "success");
-        loadStats();
       } catch {
         showToast("Failed to rename session", "error");
       }
     },
-    [showToast, loadStats],
+    [showToast],
   );
 
   const handleExport = useCallback(
@@ -1177,13 +1161,12 @@ export default function SessionsPage() {
       setPruneOpen(false);
       loadSessions(0);
       setPage(0);
-      loadStats();
     } catch {
       showToast("Failed to prune sessions", "error");
     } finally {
       setPruning(false);
     }
-  }, [pruneDays, showToast, loadSessions, loadStats]);
+  }, [pruneDays, showToast, loadSessions]);
 
   const pendingSession = sessionDelete.pendingId
     ? sessions.find((s) => s.id === sessionDelete.pendingId)
@@ -1345,44 +1328,6 @@ export default function SessionsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {stats && (
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border border-border bg-background-base/40 px-4 py-3">
-          <div className="flex flex-col">
-            <span className="text-lg font-semibold tabular-nums leading-none">
-              {stats.total}
-            </span>
-            <span className="text-xs text-muted-foreground">Total</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-lg font-semibold tabular-nums leading-none text-success">
-              {stats.active_store}
-            </span>
-            <span className="text-xs text-muted-foreground">Active in store</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-lg font-semibold tabular-nums leading-none">
-              {stats.archived}
-            </span>
-            <span className="text-xs text-muted-foreground">Archived</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-lg font-semibold tabular-nums leading-none">
-              {stats.messages}
-            </span>
-            <span className="text-xs text-muted-foreground">Messages</span>
-          </div>
-          {Object.keys(stats.by_source).length > 0 && (
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-              {Object.entries(stats.by_source).map(([src, count]) => (
-                <Badge key={src} tone="outline" className="text-xs">
-                  {src}: {count}
-                </Badge>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {alerts.length > 0 && (
         <div className="border border-destructive/30 bg-destructive/[0.06] p-4">
