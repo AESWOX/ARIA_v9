@@ -192,6 +192,16 @@ class Settings(BaseSettings):
     # Vision: deepseek-flash (V4.1) принимает изображения, deepseek-v4-pro НЕТ (docs: Models & Pricing, Vision).
     # Поэтому для картинок берётся только Flash, а не premium-модель.
     deepseek_vision_model: str = "deepseek-flash"
+    # P0: DeepSeek Vision — платный last-resort. По умолчанию OFF: сначала вся цепочка Gemini.
+    vision_deepseek_fallback: bool = Field(
+        default=False,
+        description="Allow paid DeepSeek vision as the last resort after all Gemini models/keys.",
+    )
+    # Groq Vision: у текущих ключей vision-моделей нет (проверено 2026-11-04). Пусто = выключено.
+    vision_groq_model: str = Field(
+        default="",
+        description="Groq vision model id (e.g. a multimodal Llama). Empty = disabled.",
+    )
     # DeepSeek V4 thinks by default (effort=high) and bills reasoning tokens as output.
     # off = {"thinking": {"type": "disabled"}}; low|high|max = reasoning_effort.
     deepseek_chat_thinking: str = "off"

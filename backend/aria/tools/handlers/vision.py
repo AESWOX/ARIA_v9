@@ -90,25 +90,51 @@ async def vision_analyze(input_json: dict, sandbox_root: str | None = None, **_c
     from aria.secrets import secret_provider
 
     backends: list[dict] = []
+    settings = get_settings()
     gemini_keys = secret_provider.get_key_list("VISION_GEMINI_API_KEYS") or secret_provider.get_key_list("GEMINI_API_KEYS")
     if gemini_keys:
+        requested = str(input_json.get("model") or "").strip()
+        # P0: не одна жёсткая модель, а цепочка ARIA (gemini_flash_chain) + запасные flash.
+        chain = list(getattr(settings, "gemini_flash_chain", []) or [])
+        # Запасные модели добавляем только когда реальная цепочка ARIA известна (не пустая).
+        candidates = ([requested] if requested else []) + chain
+        if chain:
+            candidates += ["gemini-2.5-flash", "gemini-2.0-flash"]
+        models: list[str] = []
+        for candidate in candidates:
+            if candidate and candidate not in models:
+                models.append(candidate)
+        if not models:
+            models = ["gemini-3.8-flash"]
         backends.append({
             "name": "gemini",
             "keys": gemini_keys,
             "base_url": secret_provider.get_key("VISION_GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta/openai",
-            "model": input_json.get("model", "gemini-3.8-flash"),
+            "models": models,
             "extra": {},
             "max_tokens": 1024,
         })
-    settings = get_settings()
+    # Groq vision — только если владелец явно задал мультимодальную модель (у текущих ключей её нет).
+    groq_model = str(getattr(settings, "vision_groq_model", "") or "").strip()
+    groq_keys = list(getattr(settings, "groq_api_keys_list", []) or [])
+    if groq_model and groq_keys:
+        backends.append({
+            "name": "groq",
+            "keys": groq_keys,
+            "base_url": getattr(settings, "groq_base_url", "https://api.groq.com/openai/v1"),
+            "models": [groq_model],
+            "extra": {},
+            "max_tokens": 1024,
+        })
     deepseek_key = settings.deepseek_api_key_resolved
-    if deepseek_key:
+    # DeepSeek vision платный: только по явному флагу и только после ВСЕЙ цепочки Gemini/Groq.
+    if deepseek_key and bool(getattr(settings, "vision_deepseek_fallback", False)):
         if content_type in _DEEPSEEK_MIMES and len(image_bytes) <= _DEEPSEEK_MAX_BYTES:
             backends.append({
                 "name": "deepseek",
                 "keys": [deepseek_key],
                 "base_url": settings.deepseek_base_url,
-                "model": settings.deepseek_vision_model,
+                "models": [settings.deepseek_vision_model],
                 # thinking по умолчанию включён и съел бы лимит токенов на «рассуждения» без ответа
                 "extra": {"thinking": {"type": "disabled"}},
                 "max_tokens": 2048,
@@ -116,7 +142,11 @@ async def vision_analyze(input_json: dict, sandbox_root: str | None = None, **_c
         elif not backends:
             return {"error": f"DeepSeek vision accepts PNG/JPEG/WebP/GIF up to 32 MiB; got {content_type}, {len(image_bytes)} bytes"}
     if not backends:
-        return {"error": "no vision API keys available (set GEMINI_API_KEYS, VISION_GEMINI_API_KEYS or DEEPSEEK_API_KEY)"}
+        return {"error": (
+            "no vision API keys available: set GEMINI_API_KEYS. "
+            "DeepSeek fallback is OFF by default (paid); enable VISION_DEEPSEEK_FALLBACK=1 "
+            "and DEEPSEEK_API_KEY only if you accept the cost."
+        )}
 
     # 4. Blocking HTTP runs off the event loop (a 30 s key timeout used to freeze every other request)
     result = await asyncio.to_thread(_request_backends, backends, prompt, content_type, b64_str)
@@ -152,60 +182,62 @@ def _record_vision_usage(result: dict, ctx: dict) -> None:
 
 
 def _request_backends(backends: list[dict], prompt: str, content_type: str, b64_str: str) -> dict:
-    """Try backends in order, keys round-robin inside each. Blocking (urllib): call via asyncio.to_thread."""
+    """Try backends -> models -> keys. Model-level errors rotate the model, key-level rotate the key."""
     last_error = None
     for backend in backends:
-        url = f"{backend['base_url'].rstrip('/')}/chat/completions"
-        body = {
-            "model": backend["model"],
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64_str}", "detail": "high"}},
-                    ],
-                }
-            ],
-            "max_tokens": backend["max_tokens"],
-            **backend["extra"],
-        }
-        data = json.dumps(body).encode("utf-8")
-        for key in backend["keys"]:
-            try:
-                req = urllib.request.Request(
-                    url,
-                    data=data,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {key}",
-                        "User-Agent": "ARIA/1.0",
-                    },
-                )
-                with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as resp:
-                    result = json.loads(resp.read().decode("utf-8"))
-                text = result["choices"][0]["message"]["content"]
-                if not (text or "").strip():
-                    last_error = f"{backend['name']}: empty reply"
-                    logger.warning("vision: %s returned an empty reply (model=%s)", backend["name"], backend["model"])
-                    break
-                logger.info("vision: backend=%s model=%s ok", backend["name"], backend["model"])
-                return {
-                    "text": text,
-                    "model": backend["model"],
-                    "provider": backend["name"],
-                    "usage": result.get("usage", {}),
-                }
-            except urllib.error.HTTPError as exc:
-                last_error = f"HTTP {exc.code}: {exc.reason}"
-                logger.warning("vision: %s HTTP %s (model=%s)", backend["name"], exc.code, backend["model"])
-                if exc.code in (429, 401, 402, 403):
-                    continue  # try next key
-                break
-            except Exception as exc:  # noqa: BLE001
-                last_error = str(exc)
-                logger.warning("vision: %s failed: %s", backend["name"], exc)
-                break
+        models = list(backend.get("models") or [backend.get("model")])
+        for model in models:
+            url = f"{backend['base_url'].rstrip('/')}/chat/completions"
+            body = {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64_str}", "detail": "high"}},
+                        ],
+                    }
+                ],
+                "max_tokens": backend["max_tokens"],
+                **backend["extra"],
+            }
+            data = json.dumps(body).encode("utf-8")
+            for key in backend["keys"]:
+                try:
+                    req = urllib.request.Request(
+                        url,
+                        data=data,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {key}",
+                            "User-Agent": "ARIA/1.0",
+                        },
+                    )
+                    with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as resp:
+                        result = json.loads(resp.read().decode("utf-8"))
+                    text = result["choices"][0]["message"]["content"]
+                    if not (text or "").strip():
+                        last_error = f"{backend['name']}: empty reply"
+                        logger.warning("vision: %s returned an empty reply (model=%s)", backend["name"], model)
+                        break  # next model
+                    logger.info("vision: backend=%s model=%s ok", backend["name"], model)
+                    return {
+                        "text": text,
+                        "model": model,
+                        "provider": backend["name"],
+                        "usage": result.get("usage", {}),
+                    }
+                except urllib.error.HTTPError as exc:
+                    last_error = f"HTTP {exc.code}: {exc.reason}"
+                    logger.warning("vision: %s HTTP %s (model=%s)", backend["name"], exc.code, model)
+                    if exc.code in (429, 401, 402, 403):
+                        continue  # key-level: next key
+                    break  # model-level (404/503/5xx): next model
+                except Exception as exc:  # noqa: BLE001
+                    last_error = str(exc)
+                    logger.warning("vision: %s failed: %s", backend["name"], exc)
+                    break  # next model
 
     return {"error": f"vision request failed: {last_error}"}
 

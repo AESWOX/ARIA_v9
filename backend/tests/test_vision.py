@@ -92,11 +92,12 @@ class TestVisionAnalyzeOffline:
 
     async def test_http_error_triggers_key_rotation(self, no_deepseek_key):
         from urllib.error import HTTPError
+
+        def always_429(req, **kwargs):
+            raise HTTPError(req.full_url, 429, "Too Many Requests", {}, None)
+
         with patch("aria.secrets.secret_provider.get_key_list", return_value=["bad-key", "bad-key-2"]):
-            with patch("urllib.request.urlopen", side_effect=[
-                HTTPError("http://test", 429, "Too Many Requests", {}, None),
-                HTTPError("http://test", 429, "Too Many Requests", {}, None),
-            ]):
+            with patch("urllib.request.urlopen", side_effect=always_429):
                 result = await vision_analyze({"file_path": str(TEST_IMAGE)}, sandbox_root=SANDBOX)
 
         assert "error" in result
@@ -128,6 +129,10 @@ def _ok(payload):
 @pytest.fixture
 def deepseek_key(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-deepseek-vision-1234567890")
+    from aria import config
+
+    # DeepSeek vision теперь платный last-resort и по умолчанию выключен.
+    monkeypatch.setattr(config.get_settings(), "vision_deepseek_fallback", True)
 
 
 class TestVisionDeepSeekBackend:
@@ -155,21 +160,24 @@ class TestVisionDeepSeekBackend:
         assert mock.call_count == 1
 
     async def test_falls_back_to_deepseek_when_gemini_is_rate_limited(self, deepseek_key):
+        def route(req, **kwargs):
+            if "deepseek" in req.full_url:
+                return _ok(SAMPLE_DEEPSEEK_RESPONSE)
+            raise HTTPError(req.full_url, 429, "Too Many Requests", {}, None)
+
         with patch("aria.secrets.secret_provider.get_key_list", return_value=["gem-key"]):
-            with patch("urllib.request.urlopen", side_effect=[
-                HTTPError("http://test", 429, "Too Many Requests", {}, None),
-                _ok(SAMPLE_DEEPSEEK_RESPONSE),
-            ]) as mock:
+            with patch("urllib.request.urlopen", side_effect=route) as mock:
                 result = await vision_analyze({"file_path": str(TEST_IMAGE)}, sandbox_root=SANDBOX)
         assert result["provider"] == "deepseek" and result["text"] == "A red square."
-        assert mock.call_count == 2
+        assert mock.call_count >= 2
 
     async def test_both_backends_failing_reports_the_last_error(self, deepseek_key):
+        def route(req, **kwargs):
+            code = 402 if "deepseek" in req.full_url else 429
+            raise HTTPError(req.full_url, code, "err", {}, None)
+
         with patch("aria.secrets.secret_provider.get_key_list", return_value=["gem-key"]):
-            with patch("urllib.request.urlopen", side_effect=[
-                HTTPError("http://test", 429, "Too Many Requests", {}, None),
-                HTTPError("http://test", 402, "Payment Required", {}, None),
-            ]):
+            with patch("urllib.request.urlopen", side_effect=route):
                 result = await vision_analyze({"file_path": str(TEST_IMAGE)}, sandbox_root=SANDBOX)
         assert "error" in result and "402" in result["error"]
 
