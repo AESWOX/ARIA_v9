@@ -80,3 +80,11 @@ def test_persona_file_has_no_adult_samples_just_boundaries():
     lowered = PERSONA_TEXT.lower()
     assert "hard limits" in lowered
     assert "no sexual content involving minors" in lowered
+
+
+def test_prompt_allows_factual_adult_image_description_and_stops_unrequested_stories():
+    lowered = chat_mod._system_prompt().lower()
+    assert "adult nudity" in lowered
+    assert "unrequested story" in lowered
+    assert "ask one concrete question" in lowered
+    assert "relay it as the result" in lowered

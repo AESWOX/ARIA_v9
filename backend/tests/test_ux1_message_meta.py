@@ -13,7 +13,7 @@ def test_page_shows_send_time_and_processing_time():
     assert "processingSeconds(" in page
     assert "t.chatMeta.sentAt" in page
     assert "t.chatMeta.tookSeconds" in page
-    assert "title={title || undefined}" in page
+    assert "title={meta || undefined}" in page
 
 
 def test_every_locale_has_chat_meta_keys():

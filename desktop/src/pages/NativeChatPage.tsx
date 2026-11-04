@@ -79,6 +79,8 @@ export default function NativeChatPage() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendStartedAt, setSendStartedAt] = useState<number | null>(null);
+  const [clock, setClock] = useState(() => Date.now());
   const [attachments, setAttachments] = useState<{ name: string; path: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -299,6 +301,14 @@ export default function NativeChatPage() {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, sending, run, taskQuestions, streamingText]);
 
+  useEffect(() => {
+    if (!sending) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 200);
+    return () => window.clearInterval(timer);
+  }, [sending]);
+
+  const elapsedSeconds = sendStartedAt === null ? null : Math.max(0, (clock - sendStartedAt) / 1000);
+
   const openSession = async (id: string) => {
     if (sending || id === activeId) return;
     setActiveId(id);
@@ -336,7 +346,7 @@ export default function NativeChatPage() {
     await syncProfile(sid);
     setMessages((prev) => [
       ...prev,
-      { id: `local-${Date.now()}`, role: "user", content: text, created_at: null },
+      { id: `local-${Date.now()}`, role: "user", content: text, created_at: new Date().toISOString() },
     ]);
     setInput("");
     const res = await api.runPost(sid, { content: text, mode: runMode });
@@ -426,6 +436,8 @@ export default function NativeChatPage() {
     if (sending || (!retry && !text && attachments.length === 0)) return;
     if (runBusy(run)) return;
     setSending(true);
+    setSendStartedAt(Date.now());
+    setClock(Date.now());
     setError(null);
     const outgoingText = outgoing(text);
     try {
@@ -445,7 +457,7 @@ export default function NativeChatPage() {
       if (!retry) {
         setMessages((prev) => [
           ...prev,
-          { id: `local-${Date.now()}`, role: "user", content: outgoingText, created_at: null },
+          { id: `local-${Date.now()}`, role: "user", content: outgoingText, created_at: new Date().toISOString() },
         ]);
         setInput("");
       }
@@ -491,6 +503,7 @@ export default function NativeChatPage() {
     } finally {
       setStreamingText(null);
       setSending(false);
+      setSendStartedAt(null);
       void refreshSessions();
     }
   };
@@ -601,21 +614,24 @@ export default function NativeChatPage() {
             <p className="text-xs text-muted-foreground">Write a message below to start.</p>
           )}
           {messages.map((m) => {
-            const sent = formatLocalTime(m.created_at, locale);
+            const sentLabel = formatLocalTime(m.created_at, locale);
             const seconds =
               m.role === "assistant"
                 ? processingSeconds(previousUser.get(m.id)?.created_at, m.created_at)
                 : null;
-            const title = [
-              sent ? t.chatMeta.sentAt.replace("{time}", sent) : null,
+            const meta = [
+              sentLabel ? t.chatMeta.sentAt.replace("{time}", sentLabel) : null,
               seconds != null ? t.chatMeta.tookSeconds.replace("{seconds}", seconds.toFixed(1)) : null,
             ]
               .filter((part): part is string => Boolean(part))
               .join(" · ");
             return (
-              <div key={m.id} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
+              <div
+                key={m.id}
+                className={cn("flex flex-col gap-0.5", m.role === "user" ? "items-end" : "items-start")}
+              >
                 <div
-                  title={title || undefined}
+                  title={meta || undefined}
                   className={cn(
                     focus ? "max-w-[92%] border border-border px-3 py-2" : "max-w-[85%] border border-border px-3 py-2",
                     m.role === "user" ? "bg-foreground/10" : "bg-background/60",
@@ -634,11 +650,14 @@ export default function NativeChatPage() {
                     </div>
                   )}
                 </div>
+                {meta && (
+                  <div className="px-1 text-[10px] text-muted-foreground">{meta}</div>
+                )}
               </div>
             );
           })}
           {sending && streamingText !== null && streamingText !== "" && (
-            <div className="flex justify-start">
+            <div className="flex flex-col items-start gap-0.5">
               <div
                 className={cn(
                   focus ? "max-w-[92%]" : "max-w-[85%]",
@@ -647,11 +666,17 @@ export default function NativeChatPage() {
               >
                 <Markdown content={streamingText} />
               </div>
+              {elapsedSeconds != null && (
+                <div className="px-1 text-[10px] text-muted-foreground">
+                  {elapsedSeconds.toFixed(1)} s
+                </div>
+              )}
             </div>
           )}
           {sending && (streamingText === null || streamingText === "") && (
-            <div className="text-xs text-muted-foreground">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Loader2 className="inline h-3 w-3 animate-spin" /> thinking...
+              {elapsedSeconds != null && <span>{elapsedSeconds.toFixed(1)} s</span>}
             </div>
           )}
           <div ref={bottomRef} />

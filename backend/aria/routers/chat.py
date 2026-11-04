@@ -51,6 +51,9 @@ _monotonic = time.monotonic
 
 CHAT_PROVIDER_CLASS = "free_tier_reasoning"  # Gemini Flash first, then Groq
 CHAT_FALLBACK_CLASSES = ("standard_reasoning",)  # DeepSeek chat, then Gemini Pro (A20)
+# A stuck provider must not hold the chat for three minutes: fail over sooner.
+CHAT_STREAM_TIMEOUT_SEC = 30
+CHAT_CALL_TIMEOUT_SEC = 40
 HISTORY_MESSAGES = 40
 HISTORY_CHAR_BUDGET = 60_000
 MAX_CONTENT_CHARS = 20_000
@@ -685,7 +688,7 @@ async def _run_nonstream(session_id: uuid.UUID, request: Request, prepared: _Pre
             prepared.chat_class,
             prepared.prompt,
             [],
-            timeout_sec=60,
+            timeout_sec=CHAT_CALL_TIMEOUT_SEC,
             resilient=True,
             fallback_classes=prepared.chat_fallback,
             prefer_provider_id=prepared.chat_prefer,
@@ -812,7 +815,7 @@ async def _stream_events(session_id: uuid.UUID, request: Request, prepared: _Pre
 
     async def consume() -> None:
         try:
-            async for chunk in provider.stream(prepared.prompt, [], 60):
+            async for chunk in provider.stream(prepared.prompt, [], CHAT_STREAM_TIMEOUT_SEC):
                 await queue.put(("chunk", chunk))
                 if chunk.final:
                     return
