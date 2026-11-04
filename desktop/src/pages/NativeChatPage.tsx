@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Check, Loader2, MessageCircle, Plus, RotateCcw, Send, Square, X } from "lucide-react";
+import { AlertTriangle, Check, Loader2, MessageCircle, Paperclip, Plus, RotateCcw, Send, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { CHAT_MODES, normalizeChatMode, type ChatMode } from "@/lib/chat-modes";
 import { formatLocalTime, processingSeconds } from "@/lib/message-timing";
@@ -79,6 +79,9 @@ export default function NativeChatPage() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [attachments, setAttachments] = useState<{ name: string; path: string }[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const [taskQuestions, setTaskQuestions] = useState<ClarifyQuestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -384,15 +387,44 @@ export default function NativeChatPage() {
     else if (lastUserMessage) previousUser.set(message.id, lastUserMessage);
   }
 
+  const addFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const added: { name: string; path: string }[] = [];
+      for (const file of Array.from(files)) {
+        const safe = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "file";
+        const target = `chat-uploads/${Date.now()}-${added.length}-${safe}`;
+        const res = await api.uploadFile(target, file, true);
+        added.push({ name: file.name, path: res.path });
+      }
+      setAttachments((prev) => [...prev, ...added].slice(0, 10));
+    } catch (e) {
+      setError(errMessage(e));
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const attachmentBlock = attachments.length
+    ? `\n\nAttached files:\n${attachments.map((a) => `- ${a.path} (${a.name})`).join("\n")}`
+    : "";
+  const outgoing = (text: string) => (text + attachmentBlock).trim();
+
   const send = async (retry = false) => {
     const text = input.trim();
-    if (sending || (!retry && !text)) return;
+    if (sending || (!retry && !text && attachments.length === 0)) return;
     if (runBusy(run)) return;
     setSending(true);
     setError(null);
+    const outgoingText = outgoing(text);
     try {
       if (mode !== "chat" && !retry) {
-        await sendRun(text, mode);
+        await sendRun(outgoingText, mode);
+        setInput("");
+        setAttachments([]);
         return;
       }
       // the status banner may be stale (e.g. key saved in another tab)
@@ -405,16 +437,19 @@ export default function NativeChatPage() {
       if (!retry) {
         setMessages((prev) => [
           ...prev,
-          { id: `local-${Date.now()}`, role: "user", content: text, created_at: null },
+          { id: `local-${Date.now()}`, role: "user", content: outgoingText, created_at: null },
         ]);
         setInput("");
       }
       const sent = await api.chatSendStream(
         sid,
-        retry ? { retry: true } : { content: text },
+        retry
+          ? { retry: true }
+          : { content: outgoingText, attachments: attachments.map((a) => a.path) },
         (delta) => setStreamingText((prev) => (prev ?? "") + delta),
       );
       setStreamingText(null);
+      if (!retry) setAttachments([]);
       // 19.6: Stop вернул {"type":"stopped"} — ассистент не сохранён, это не ошибка.
       if (sent.stopped) {
         await loadMessages(sid);
@@ -725,7 +760,43 @@ export default function NativeChatPage() {
             {CHAT_MODES.find((md) => md.id === mode)?.hint}
           </span>
         </div>
+        {(attachments.length > 0 || uploading) && (
+          <div className="flex flex-wrap items-center gap-1 px-2 pt-2">
+            {attachments.map((a, i) => (
+              <span
+                key={`${a.path}-${i}`}
+                className="flex items-center gap-1 border border-border px-2 py-0.5 text-xs"
+              >
+                {a.name}
+                <button
+                  type="button"
+                  aria-label="Remove attachment"
+                  onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            {uploading && <span className="text-xs text-muted-foreground">{t.common.loading}</span>}
+          </div>
+        )}
         <div className="flex gap-2 p-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => void addFiles(e.target.files)}
+          />
+          <Button
+            ghost
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending || runBusy(run) || uploading}
+            aria-label="Attach files"
+            title="Attach files"
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
           <textarea
             className="min-h-[56px] flex-1 resize-none border border-border bg-background/40 px-3 py-2 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/30"
             placeholder={

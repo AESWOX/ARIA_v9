@@ -807,7 +807,7 @@ export const api = {
     }),
   chatMessages: (sessionId: string) =>
     fetchJSON<ChatMsg[]>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`),
-  chatSend: (sessionId: string, body: { content?: string; retry?: boolean }) =>
+  chatSend: (sessionId: string, body: { content?: string; retry?: boolean; attachments?: string[] }) =>
     fetchJSON<ChatSendResult>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -825,7 +825,7 @@ export const api = {
    */
   chatSendStream: async (
     sessionId: string,
-    body: { content?: string; retry?: boolean },
+    body: { content?: string; retry?: boolean; attachments?: string[] },
     onDelta?: (text: string) => void,
   ): Promise<ChatSendResult> => {
     const base = await resolveBase();

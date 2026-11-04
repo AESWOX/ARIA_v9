@@ -129,6 +129,21 @@ def test_tool_request_while_task_runs_returns_short_message():
     assert rec.submitted == [] and provider.calls == 0
 
 
+def test_attachments_force_agent_even_for_small_talk():
+    """Attach: файл в сообщении = нужен инструмент, даже если текст — «привет»."""
+    client, rec, provider = _client()
+    sid = _session()
+
+    r = client.post(
+        f"/chat/sessions/{sid}/send",
+        json={"content": "привет", "attachments": ["chat-uploads/a.png"]},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["mode"] == "agent" and len(rec.submitted) == 1
+    assert provider.calls == 0
+
+
 def test_streaming_chat_switch_reports_the_mode():
     client, rec, _ = _client()
     sid = _session()

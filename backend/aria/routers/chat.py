@@ -102,12 +102,17 @@ async def _switch_to_agent(session_id: uuid.UUID, payload: dict[str, Any], reque
     content = str(payload.get("content") or "").strip()
     if not content or payload.get("retry"):
         return None
-    if clarifier.is_small_talk(content):
-        logger.debug("chat→agent skipped: small talk")
-        return None
-    if not clarifier.needs_tools(content):
-        logger.debug("chat→agent skipped: no tool intent")
-        return None
+    # P0 attach: файл(ы) в сообщении всегда требуют инструментов (file_read/vision).
+    has_attachments = bool(payload.get("attachments"))
+    if has_attachments:
+        logger.info("chat→agent: attachments present, switching to Agent")
+    else:
+        if clarifier.is_small_talk(content):
+            logger.debug("chat→agent skipped: small talk")
+            return None
+        if not clarifier.needs_tools(content):
+            logger.debug("chat→agent skipped: no tool intent")
+            return None
     runner = getattr(request.app.state, "task_runner", None)
     if runner is None:
         return None
