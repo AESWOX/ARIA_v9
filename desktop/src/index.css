@@ -344,3 +344,8 @@ code { font-size: 0.875rem; }
   --background: color-mix(in srgb, var(--surface-custom-bg, #101418) 100%, transparent) !important;
 }
 
+:root[data-surface="image"] {
+  --surface-image-size: cover;
+  --surface-blend: normal;
+}
+

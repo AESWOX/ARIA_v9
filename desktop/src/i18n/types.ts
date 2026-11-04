@@ -880,6 +880,8 @@ export interface Translations {
     modeWhite: string;
     modeTextured: string;
     modeCustom: string;
+    modeImage: string;
+    imageFile: string;
     customColor: string;
     hint: string;
   };

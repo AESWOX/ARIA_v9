@@ -887,6 +887,8 @@ export const en: Translations = {
     modeCustom: "Custom",
     customColor: "Custom color",
     hint: "Background sits on top of the theme; text colors still come from it.",
+    modeImage: "Image",
+    imageFile: "Background image",
   },
 
 };

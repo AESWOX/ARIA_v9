@@ -9,12 +9,12 @@ I18N = SRC / "i18n"
 
 def test_surface_modes_are_wired_into_startup_and_css():
     surface = (SRC / "themes" / "surface.ts").read_text(encoding="utf-8")
-    for mode in ("theme", "white", "textured", "custom"):
+    for mode in ("theme", "white", "textured", "custom", "image"):
         assert f'"{mode}"' in surface
     main = (SRC / "main.tsx").read_text(encoding="utf-8")
     assert "initSurface()" in main
     css = (SRC / "index.css").read_text(encoding="utf-8")
-    for mode in ("white", "textured", "custom"):
+    for mode in ("white", "textured", "custom", "image"):
         assert f':root[data-surface="{mode}"]' in css, mode
 
 
@@ -39,6 +39,8 @@ def test_every_locale_has_appearance_keys():
         "modeWhite",
         "modeTextured",
         "modeCustom",
+        "modeImage",
+        "imageFile",
         "customColor",
         "hint",
     )

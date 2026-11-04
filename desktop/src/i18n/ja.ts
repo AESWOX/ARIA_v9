@@ -778,6 +778,8 @@ export const ja: Translations = {
     modeCustom: "カスタムカラー",
     customColor: "カスタムカラー",
     hint: "背景はテーマの上に重なり、文字色はテーマから取得されます。",
+    modeImage: "画像",
+    imageFile: "背景画像",
   },
 
 };

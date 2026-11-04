@@ -779,6 +779,8 @@ export const fr: Translations = {
     modeCustom: "Couleur personnalisée",
     customColor: "Couleur personnalisée",
     hint: "Le fond se superpose au thème ; les couleurs du texte viennent toujours de lui.",
+    modeImage: "Image",
+    imageFile: "Image de fond",
   },
 
 };

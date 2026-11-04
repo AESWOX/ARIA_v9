@@ -774,6 +774,8 @@ export const zh: Translations = {
     modeCustom: "自定义颜色",
     customColor: "自定义颜色",
     hint: "背景层位于主题之上；文字颜色仍来自主题。",
+    modeImage: "图片",
+    imageFile: "背景图片",
   },
 
 };

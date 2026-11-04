@@ -11,6 +11,7 @@ import {
   SURFACE_MODES,
   THEME_DEFAULT_FONT_ID,
   readSurface,
+  readSurfaceImageFile,
   saveSurface,
   useTheme,
 } from "@/themes";
@@ -338,18 +339,31 @@ function SurfaceSection() {
     white: copy.modeWhite,
     textured: copy.modeTextured,
     custom: copy.modeCustom,
+    image: copy.modeImage,
   };
 
   const changeMode = (mode: SurfaceMode) => {
     const next = { ...surface, mode };
     setSurface(next);
-    saveSurface(next.mode, next.color);
+    saveSurface(next.mode, next.color, next.image);
   };
 
   const changeColor = (color: string) => {
     const next = { ...surface, color };
     setSurface(next);
-    saveSurface(next.mode, next.color);
+    saveSurface(next.mode, next.color, next.image);
+  };
+
+  const changeImage = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const image = await readSurfaceImageFile(file);
+      const next = { ...surface, mode: "image" as const, image };
+      setSurface(next);
+      saveSurface(next.mode, next.color, next.image);
+    } catch {
+      /* too large / unreadable: keep the previous background */
+    }
   };
 
   return (
@@ -406,6 +420,18 @@ function SurfaceSection() {
             value={surface.color}
             onChange={(e) => changeColor(e.target.value)}
             aria-label={copy.customColor}
+          />
+        </label>
+      )}
+
+      {surface.mode === "image" && (
+        <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
+          <span>{copy.imageFile}</span>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={(e) => void changeImage(e.target.files?.[0])}
+            aria-label={copy.imageFile}
           />
         </label>
       )}

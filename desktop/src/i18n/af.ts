@@ -779,6 +779,8 @@ export const af: Translations = {
     modeCustom: "Eie kleur",
     customColor: "Eie kleur",
     hint: "Die agtergrond lê bo-op die tema; tekskleure kom steeds daaruit.",
+    modeImage: "Beeld",
+    imageFile: "Agtergrondbeeld",
   },
 
 };

@@ -778,6 +778,8 @@ export const it: Translations = {
     modeCustom: "Colore personalizzato",
     customColor: "Colore personalizzato",
     hint: "Lo sfondo si sovrappone al tema; i colori del testo provengono ancora da esso.",
+    modeImage: "Immagine",
+    imageFile: "Immagine di sfondo",
   },
 
 };

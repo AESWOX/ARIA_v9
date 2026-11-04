@@ -778,6 +778,8 @@ export const ko: Translations = {
     modeCustom: "사용자 색상",
     customColor: "사용자 색상",
     hint: "배경은 테마 위에 표시되며, 텍스트 색상은 테마에서 가져옵니다.",
+    modeImage: "이미지",
+    imageFile: "배경 이미지",
   },
 
 };

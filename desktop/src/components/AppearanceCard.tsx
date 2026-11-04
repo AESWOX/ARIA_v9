@@ -5,6 +5,7 @@ import {
   SURFACE_MODES,
   THEME_DEFAULT_FONT_ID,
   readSurface,
+  readSurfaceImageFile,
   saveSurface,
   useTheme,
 } from "@/themes";
@@ -26,18 +27,31 @@ export function AppearanceCard() {
     white: copy.modeWhite,
     textured: copy.modeTextured,
     custom: copy.modeCustom,
+    image: copy.modeImage,
   };
 
   const changeMode = (mode: SurfaceMode) => {
     const next = { ...surface, mode };
     setSurface(next);
-    saveSurface(next.mode, next.color);
+    saveSurface(next.mode, next.color, next.image);
   };
 
   const changeColor = (color: string) => {
     const next = { ...surface, color };
     setSurface(next);
-    saveSurface(next.mode, next.color);
+    saveSurface(next.mode, next.color, next.image);
+  };
+
+  const changeImage = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const image = await readSurfaceImageFile(file);
+      const next = { ...surface, mode: "image" as const, image };
+      setSurface(next);
+      saveSurface(next.mode, next.color, next.image);
+    } catch {
+      /* too large / unreadable: keep the previous background */
+    }
   };
 
   const selectClass = "border border-border bg-background/40 px-2 py-1.5 text-sm";
@@ -92,6 +106,17 @@ export function AppearanceCard() {
           <label className="flex items-center gap-2 text-sm">
             <span>{copy.customColor}</span>
             <input type="color" value={surface.color} onChange={(e) => changeColor(e.target.value)} />
+          </label>
+        )}
+
+        {surface.mode === "image" && (
+          <label className="flex items-center gap-2 text-sm">
+            <span>{copy.imageFile}</span>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              onChange={(e) => void changeImage(e.target.files?.[0])}
+            />
           </label>
         )}
       </CardContent>

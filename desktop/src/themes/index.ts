@@ -9,10 +9,12 @@ export {
 export type { FontChoice, FontCategory } from "./fonts";
 export {
   DEFAULT_SURFACE_COLOR,
+  MAX_SURFACE_IMAGE_BYTES,
   SURFACE_MODES,
   applySurface,
   initSurface,
   readSurface,
+  readSurfaceImageFile,
   saveSurface,
 } from "./surface";
 export type { SurfaceMode, SurfaceState } from "./surface";

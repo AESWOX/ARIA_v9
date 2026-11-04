@@ -778,6 +778,8 @@ export const de: Translations = {
     modeCustom: "Eigene Farbe",
     customColor: "Eigene Farbe",
     hint: "Der Hintergrund liegt über dem Design; Textfarben kommen weiterhin aus ihm.",
+    modeImage: "Bild",
+    imageFile: "Hintergrundbild",
   },
 
 };

@@ -787,6 +787,8 @@ export const ga: Translations = {
     modeCustom: "Dath saincheaptha",
     customColor: "Dath saincheaptha",
     hint: "Tá an cúlra os cionn an téama; tagann dathanna an téacs ón téama fós.",
+    modeImage: "Íomhá",
+    imageFile: "Íomhá chúlra",
   },
 
 };

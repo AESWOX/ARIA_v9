@@ -780,6 +780,8 @@ export const pt: Translations = {
     modeCustom: "Cor personalizada",
     customColor: "Cor personalizada",
     hint: "O fundo fica sobre o tema; as cores do texto continuam vindo dele.",
+    modeImage: "Imagem",
+    imageFile: "Imagem de fundo",
   },
 
 };

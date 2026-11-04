@@ -779,6 +779,8 @@ export const hu: Translations = {
     modeCustom: "Egyéni szín",
     customColor: "Egyéni szín",
     hint: "A háttér a téma fölött van; a szövegszínek továbbra is a témából jönnek.",
+    modeImage: "Kép",
+    imageFile: "Háttérkép",
   },
 
 };

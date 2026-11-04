@@ -778,6 +778,8 @@ export const zhHant: Translations = {
     modeCustom: "自訂顏色",
     customColor: "自訂顏色",
     hint: "背景層位於主題之上；文字顏色仍來自主題。",
+    modeImage: "圖片",
+    imageFile: "背景圖片",
   },
 
 };

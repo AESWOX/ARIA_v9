@@ -808,6 +808,8 @@ export const ru: Translations = {
     modeCustom: "Свой цвет",
     customColor: "Свой цвет",
     hint: "Фон накладывается поверх темы; цвет текста берётся из неё.",
+    modeImage: "Изображение",
+    imageFile: "Фоновое изображение",
   },
 
 };

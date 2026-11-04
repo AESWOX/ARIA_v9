@@ -779,6 +779,8 @@ export const tr: Translations = {
     modeCustom: "Özel renk",
     customColor: "Özel renk",
     hint: "Arka plan temanın üzerine gelir; metin renkleri yine temadan gelir.",
+    modeImage: "Görsel",
+    imageFile: "Arka plan görseli",
   },
 
 };

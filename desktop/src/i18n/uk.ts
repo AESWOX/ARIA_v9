@@ -780,6 +780,8 @@ export const uk: Translations = {
     modeCustom: "Власний колір",
     customColor: "Власний колір",
     hint: "Фон накладається поверх теми; колір тексту береться з неї.",
+    modeImage: "Зображення",
+    imageFile: "Фонове зображення",
   },
 
 };
