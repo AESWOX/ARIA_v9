@@ -299,31 +299,6 @@ export const defaultLargeTheme: DashboardTheme = {
   },
 };
 
-export const opencodeTheme: DashboardTheme = {
-  name: "opencode",
-  label: "OpenCode",
-  description: "Neutral slate dark theme with soft blue accents",
-  palette: {
-    background: { hex: "#14161c", alpha: 1 },
-    midground: { hex: "#cdd6f4", alpha: 1 },
-    foreground: { hex: "#ffffff", alpha: 0 },
-    warmGlow: "rgba(137, 180, 250, 0.22)",
-    noiseOpacity: 0.35,
-  },
-  typography: {
-    ...DEFAULT_TYPOGRAPHY,
-    fontSans: `"Inter", ${SYSTEM_SANS}`,
-    fontMono: `"JetBrains Mono", ${SYSTEM_MONO}`,
-    baseSize: "14px",
-    lineHeight: "1.5",
-  },
-  layout: {
-    ...DEFAULT_LAYOUT,
-    radius: "0.4rem",
-  },
-  terminalBackground: "#0f1117",
-};
-
 export const BUILTIN_THEMES: Record<string, DashboardTheme> = {
   default: defaultTheme,
   "default-large": defaultLargeTheme,
@@ -333,5 +308,4 @@ export const BUILTIN_THEMES: Record<string, DashboardTheme> = {
   mono: monoTheme,
   cyberpunk: cyberpunkTheme,
   rose: roseTheme,
-  opencode: opencodeTheme,
 };
