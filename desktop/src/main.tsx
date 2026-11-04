@@ -7,7 +7,9 @@ import { WindowChrome } from "./components/WindowChrome";
 import { SystemActionsProvider } from "./contexts/SystemActions";
 import { I18nProvider } from "./i18n";
 import { exposePluginSDK } from "./plugins";
-import { ThemeProvider } from "./themes";
+import { ThemeProvider, initSurface } from "./themes";
+
+initSurface();
 
 /** The splash (static markup in index.html) stays at least this long after navigation start. */
 const SPLASH_MIN_MS = 1500;

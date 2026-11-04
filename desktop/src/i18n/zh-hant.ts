@@ -766,4 +766,18 @@ export const zhHant: Translations = {
     noCalls: "尚無模型呼叫",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "外觀",
+    theme: "主題",
+    font: "字型",
+    background: "背景",
+    modeTheme: "跟隨主題",
+    modeWhite: "白色",
+    modeTextured: "紋理",
+    modeCustom: "自訂顏色",
+    customColor: "自訂顏色",
+    hint: "背景層位於主題之上；文字顏色仍來自主題。",
+  },
+
 };

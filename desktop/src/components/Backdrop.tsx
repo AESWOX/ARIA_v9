@@ -50,6 +50,8 @@ export function Backdrop() {
         style={
           {
             backgroundColor: "var(--background-base)",
+            backgroundImage: "var(--surface-texture, none)",
+            backgroundSize: "var(--surface-texture-size, auto)",
             mixBlendMode:
               "var(--component-backdrop-bg-blend-mode, difference)",
           } as unknown as React.CSSProperties

@@ -796,4 +796,18 @@ export const ru: Translations = {
     noCalls: "Вызовов модели ещё нет",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "Внешний вид",
+    theme: "Тема",
+    font: "Шрифт",
+    background: "Фон",
+    modeTheme: "Как в теме",
+    modeWhite: "Белый",
+    modeTextured: "Текстура",
+    modeCustom: "Свой цвет",
+    customColor: "Свой цвет",
+    hint: "Фон накладывается поверх темы; цвет текста берётся из неё.",
+  },
+
 };

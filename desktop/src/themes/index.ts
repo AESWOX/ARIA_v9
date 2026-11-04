@@ -7,4 +7,13 @@ export {
   isOverrideFont,
 } from "./fonts";
 export type { FontChoice, FontCategory } from "./fonts";
+export {
+  DEFAULT_SURFACE_COLOR,
+  SURFACE_MODES,
+  applySurface,
+  initSurface,
+  readSurface,
+  saveSurface,
+} from "./surface";
+export type { SurfaceMode, SurfaceState } from "./surface";
 export type { DashboardTheme, ThemeLayer, ThemeListEntry, ThemeListResponse, ThemePalette } from "./types";

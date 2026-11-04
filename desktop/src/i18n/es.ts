@@ -767,4 +767,18 @@ export const es: Translations = {
     noCalls: "Aún no hay llamadas al modelo",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "Apariencia",
+    theme: "Tema",
+    font: "Fuente",
+    background: "Fondo",
+    modeTheme: "Como el tema",
+    modeWhite: "Blanco",
+    modeTextured: "Textura",
+    modeCustom: "Color propio",
+    customColor: "Color propio",
+    hint: "El fondo se superpone al tema; los colores del texto siguen viniendo de él.",
+  },
+
 };

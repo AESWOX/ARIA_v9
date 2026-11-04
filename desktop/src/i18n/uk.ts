@@ -768,4 +768,18 @@ export const uk: Translations = {
     noCalls: "Викликів моделі ще немає",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "Зовнішній вигляд",
+    theme: "Тема",
+    font: "Шрифт",
+    background: "Фон",
+    modeTheme: "Як у темі",
+    modeWhite: "Білий",
+    modeTextured: "Текстура",
+    modeCustom: "Власний колір",
+    customColor: "Власний колір",
+    hint: "Фон накладається поверх теми; колір тексту береться з неї.",
+  },
+
 };

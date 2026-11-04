@@ -766,4 +766,18 @@ export const ja: Translations = {
     noCalls: "まだモデル呼び出しはありません",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "外観",
+    theme: "テーマ",
+    font: "フォント",
+    background: "背景",
+    modeTheme: "テーマに合わせる",
+    modeWhite: "ホワイト",
+    modeTextured: "テクスチャ",
+    modeCustom: "カスタムカラー",
+    customColor: "カスタムカラー",
+    hint: "背景はテーマの上に重なり、文字色はテーマから取得されます。",
+  },
+
 };

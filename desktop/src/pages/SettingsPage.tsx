@@ -21,6 +21,7 @@ import { H2 } from "@vendor/ui/ui/components/typography/h2";
 import { Toast } from "@vendor/ui/ui/components/toast";
 import { useToast } from "@vendor/ui/hooks/use-toast";
 import { useI18n } from "@/i18n";
+import { AppearanceCard } from "@/components/AppearanceCard";
 import { api } from "@/lib/api";
 
 type SettingsLink = {
@@ -145,6 +146,7 @@ export default function SettingsPage() {
       <H2 variant="sm" className="text-muted-foreground">
         Settings
       </H2>
+      <AppearanceCard />
       <AgentShellCard />
       {GROUPS.map((group) => (
         <div key={group.title} className="flex flex-col gap-3">

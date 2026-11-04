@@ -766,4 +766,18 @@ export const de: Translations = {
     noCalls: "Noch keine Modellaufrufe",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "Aussehen",
+    theme: "Design",
+    font: "Schrift",
+    background: "Hintergrund",
+    modeTheme: "Wie Design",
+    modeWhite: "Weiß",
+    modeTextured: "Struktur",
+    modeCustom: "Eigene Farbe",
+    customColor: "Eigene Farbe",
+    hint: "Der Hintergrund liegt über dem Design; Textfarben kommen weiterhin aus ihm.",
+  },
+
 };

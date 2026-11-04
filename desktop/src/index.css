@@ -320,3 +320,27 @@ code { font-size: 0.875rem; }
   display: none;
 }
 
+/* UI-3: user-selected surface layer on top of the active theme. These use
+   !important because ThemeProvider writes the palette as inline styles and
+   the surface must survive every theme switch. */
+:root[data-surface="white"] {
+  --foreground-base: #ffffff !important;
+  --foreground: color-mix(in srgb, #ffffff 100%, transparent) !important;
+  --foreground-alpha: 1 !important;
+  --warm-glow: rgba(255, 189, 56, 0.12) !important;
+}
+
+:root[data-surface="textured"] {
+  --surface-texture: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--midground-base) 22%, transparent) 1px,
+    transparent 1.5px
+  );
+  --surface-texture-size: 24px 24px;
+}
+
+:root[data-surface="custom"] {
+  --background-base: var(--surface-custom-bg, #101418) !important;
+  --background: color-mix(in srgb, var(--surface-custom-bg, #101418) 100%, transparent) !important;
+}
+

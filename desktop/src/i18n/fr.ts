@@ -767,4 +767,18 @@ export const fr: Translations = {
     noCalls: "Aucun appel modèle pour l'instant",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "Apparence",
+    theme: "Thème",
+    font: "Police",
+    background: "Fond",
+    modeTheme: "Comme le thème",
+    modeWhite: "Blanc",
+    modeTextured: "Texturé",
+    modeCustom: "Couleur personnalisée",
+    customColor: "Couleur personnalisée",
+    hint: "Le fond se superpose au thème ; les couleurs du texte viennent toujours de lui.",
+  },
+
 };

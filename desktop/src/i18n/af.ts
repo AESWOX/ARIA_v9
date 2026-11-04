@@ -767,4 +767,18 @@ export const af: Translations = {
     noCalls: "Nog geen modeloproepe nie",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "Voorkoms",
+    theme: "Tema",
+    font: "Lettertipe",
+    background: "Agtergrond",
+    modeTheme: "Soos tema",
+    modeWhite: "Wit",
+    modeTextured: "Tekstuur",
+    modeCustom: "Eie kleur",
+    customColor: "Eie kleur",
+    hint: "Die agtergrond lê bo-op die tema; tekskleure kom steeds daaruit.",
+  },
+
 };

@@ -767,4 +767,18 @@ export const tr: Translations = {
     noCalls: "Henüz model çağrısı yok",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "Görünüm",
+    theme: "Tema",
+    font: "Yazı tipi",
+    background: "Arka plan",
+    modeTheme: "Tema gibi",
+    modeWhite: "Beyaz",
+    modeTextured: "Dokulu",
+    modeCustom: "Özel renk",
+    customColor: "Özel renk",
+    hint: "Arka plan temanın üzerine gelir; metin renkleri yine temadan gelir.",
+  },
+
 };

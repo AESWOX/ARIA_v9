@@ -762,4 +762,18 @@ export const zh: Translations = {
     noCalls: "尚无模型调用",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "外观",
+    theme: "主题",
+    font: "字体",
+    background: "背景",
+    modeTheme: "跟随主题",
+    modeWhite: "白色",
+    modeTextured: "纹理",
+    modeCustom: "自定义颜色",
+    customColor: "自定义颜色",
+    hint: "背景层位于主题之上；文字颜色仍来自主题。",
+  },
+
 };

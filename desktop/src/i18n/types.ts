@@ -869,4 +869,18 @@ export interface Translations {
     unpriced: string;
     noCalls: string;
   };
+
+  // UI-3: Appearance card in Settings (theme, font, surface).
+  appearance: {
+    title: string;
+    theme: string;
+    font: string;
+    background: string;
+    modeTheme: string;
+    modeWhite: string;
+    modeTextured: string;
+    modeCustom: string;
+    customColor: string;
+    hint: string;
+  };
 }

@@ -775,4 +775,18 @@ export const ga: Translations = {
     noCalls: "Níl aon ghlao samhail fós",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "Cuma",
+    theme: "Téama",
+    font: "Cló",
+    background: "Cúlra",
+    modeTheme: "Mar an téama",
+    modeWhite: "Bán",
+    modeTextured: "Uigeach",
+    modeCustom: "Dath saincheaptha",
+    customColor: "Dath saincheaptha",
+    hint: "Tá an cúlra os cionn an téama; tagann dathanna an téacs ón téama fós.",
+  },
+
 };

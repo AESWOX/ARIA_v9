@@ -766,4 +766,18 @@ export const ko: Translations = {
     noCalls: "아직 모델 호출 없음",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "모양",
+    theme: "테마",
+    font: "글꼴",
+    background: "배경",
+    modeTheme: "테마와 동일",
+    modeWhite: "흰색",
+    modeTextured: "질감",
+    modeCustom: "사용자 색상",
+    customColor: "사용자 색상",
+    hint: "배경은 테마 위에 표시되며, 텍스트 색상은 테마에서 가져옵니다.",
+  },
+
 };

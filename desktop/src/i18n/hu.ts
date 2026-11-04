@@ -767,4 +767,18 @@ export const hu: Translations = {
     noCalls: "Még nincs modellhívás",
   },
 
+  // UI-3: appearance settings.
+  appearance: {
+    title: "Megjelenés",
+    theme: "Téma",
+    font: "Betűtípus",
+    background: "Háttér",
+    modeTheme: "Téma szerint",
+    modeWhite: "Fehér",
+    modeTextured: "Textúrázott",
+    modeCustom: "Egyéni szín",
+    customColor: "Egyéni szín",
+    hint: "A háttér a téma fölött van; a szövegszínek továbbra is a témából jönnek.",
+  },
+
 };
