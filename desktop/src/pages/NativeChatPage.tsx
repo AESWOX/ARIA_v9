@@ -83,6 +83,7 @@ export default function NativeChatPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const [sendStartedAt, setSendStartedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(() => Date.now());
@@ -181,6 +182,12 @@ export default function NativeChatPage() {
   const changeProfile = (next: RunProfile) => {
     profileDirty.current = true;
     setProfile(next);
+  };
+
+  const changeInput = (value: string) => {
+    setInput(value);
+    const key = activeId ?? "draft";
+    setDrafts((prev) => ({ ...prev, [key]: value }));
   };
 
   /** Save the selection to the session before a send, so the backend uses it (and keeps it after restart). */
@@ -352,6 +359,7 @@ export default function NativeChatPage() {
     if (sending || id === activeId) return;
     setActiveId(id);
     setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setInput(drafts[id] ?? "");
     setError(null);
     setMessages([]);
     setRun(null);
@@ -407,6 +415,7 @@ export default function NativeChatPage() {
   const newChat = () => {
     if (sending) return;
     setActiveId(null);
+    setInput(drafts["draft"] ?? "");
     setMessages([]);
     setError(null);
     setRun(null);
@@ -430,6 +439,7 @@ export default function NativeChatPage() {
       { id: `local-${Date.now()}`, role: "user", content: text, created_at: new Date().toISOString() },
     ]);
     setInput("");
+    setDrafts({});
     const res = await api.runPost(sid, { content: text, mode: runMode });
     // Гейт уточнений (Agent): бэкенд отвечает queued:false + questions — показываем карточку,
     // а не ошибку «already queued».
@@ -537,6 +547,7 @@ export default function NativeChatPage() {
       if (mode !== "chat" && !retry) {
         await sendRun(outgoingText, "agent");
         setInput("");
+    setDrafts({});
         setAttachments([]);
         return;
       }
@@ -554,6 +565,7 @@ export default function NativeChatPage() {
           { id: `local-${Date.now()}`, role: "user", content: outgoingText, created_at: new Date().toISOString() },
         ]);
         setInput("");
+    setDrafts({});
       }
       const sent = await api.chatSendStream(
         sid,
@@ -817,7 +829,7 @@ export default function NativeChatPage() {
 
         <ChatComposer
           input={input}
-          onInputChange={setInput}
+          onInputChange={changeInput}
           attachments={attachments}
           uploading={uploading}
           onAddFiles={(files) => void addFiles(files)}
@@ -865,7 +877,15 @@ export default function NativeChatPage() {
                 onError={(m) => setError(m)}
               />
               {profile && (
-                <TeamPanel profile={profile} models={models} disabled={sending || runBusy(run)} notes={profileNotes} onChange={changeProfile} />
+                <TeamPanel
+                  profile={profile}
+                  models={models}
+                  disabled={sending || runBusy(run)}
+                  notes={profileNotes}
+                  onChange={changeProfile}
+                  allowBoss={mode === "plan"}
+                  onRequestPlan={() => setMode("plan")}
+                />
               )}
             </aside>
           )}

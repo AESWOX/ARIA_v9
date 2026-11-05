@@ -84,11 +84,21 @@ export function ChatComposer({
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 52), 168)}px`;
   }, [input]);
 
+  useEffect(() => {
+    if (!advancedOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onToggleAdvanced();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [advancedOpen, onToggleAdvanced]);
+
   const disabled = sending || busy;
   const active = CHAT_MODES.find((item) => item.id === mode) ?? CHAT_MODES[0];
 
   return (
     <div className="relative border-t border-border bg-background/80 p-2">
+      {advancedOpen && <div className="fixed inset-0 z-20" onClick={onToggleAdvanced} />}
       {advancedOpen && profile && models && (
         <div className="absolute bottom-full left-2 right-2 z-30 mb-1 max-h-[60vh] overflow-y-auto border border-border bg-background p-2 shadow-lg">
           <TeamPanel
@@ -124,7 +134,17 @@ export function ChatComposer({
         </div>
       )}
 
-      <div className="mx-auto flex w-full max-w-[920px] flex-col gap-2 rounded-xl border border-border bg-background/70 p-2 shadow-sm">
+      <div
+        className="mx-auto flex w-full max-w-[920px] flex-col gap-2 rounded-xl border border-border bg-background/70 p-2 shadow-sm"
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+        }}
+        onDrop={(event) => {
+          if (event.dataTransfer.files.length === 0) return;
+          event.preventDefault();
+          onAddFiles(event.dataTransfer.files);
+        }}
+      >
         {(attachments.length > 0 || uploading) && (
           <div className="flex flex-wrap items-center gap-1">
             {attachments.map((item, index) => (
