@@ -183,7 +183,7 @@ def test_verify_pin_returns_bool(client):
 def test_themes_catalog(client):
     body = client.get("/dashboard/themes", headers=_h()).json()
     names = {t["name"] for t in body["themes"]}
-    assert len(names) == 8 and "default" in names
+    assert len(names) == 11 and {"default", "black", "white", "gray"} <= names
     assert body["active"] in names
     assert all(t["label"] and t["description"] for t in body["themes"])
 
@@ -246,6 +246,28 @@ def test_ui_prefs_rejects_invalid_surface_and_oversized_image(client):
     assert client.put("/dashboard/prefs", json={"surface_dim": 101}, headers=_h()).status_code == 400
     huge = "data:image/png;base64," + "A" * 4_300_000
     assert client.put("/dashboard/prefs", json={"surface_image": huge}, headers=_h()).status_code == 400
+
+
+def test_ui_prefs_store_open_tabs_and_active_tab(client):
+    before = client.get("/dashboard/prefs", headers=_h()).json()
+    try:
+        r = client.put(
+            "/dashboard/prefs",
+            json={"open_tabs": ["a", "b", "a"], "active_tab": "b"},
+            headers=_h(),
+        )
+        assert r.status_code == 200
+        got = client.get("/dashboard/prefs", headers=_h()).json()
+        assert got["open_tabs"] == ["a", "b"]
+        assert got["active_tab"] == "b"
+        assert client.put("/dashboard/prefs", json={"open_tabs": "nope"}, headers=_h()).status_code == 400
+        assert client.put("/dashboard/prefs", json={"active_tab": 7}, headers=_h()).status_code == 400
+    finally:
+        client.put(
+            "/dashboard/prefs",
+            json={"open_tabs": before.get("open_tabs", []), "active_tab": before.get("active_tab")},
+            headers=_h(),
+        )
 
 
 def test_dashboard_plugins_is_empty_list(client):

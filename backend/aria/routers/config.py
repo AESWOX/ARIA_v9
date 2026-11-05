@@ -45,6 +45,9 @@ _BUILTIN_THEMES: tuple[tuple[str, str, str], ...] = (
     ("mono", "Mono", "Clean grayscale — minimal and focused"),
     ("cyberpunk", "Cyberpunk", "Neon green on black — matrix terminal"),
     ("rose", "Rosé", "Soft pink and warm ivory — easy on the eyes"),
+    ("black", "Black", "Deep black — the default 0.2.1 look"),
+    ("white", "White", "Light canvas with dark text"),
+    ("gray", "Gray", "Neutral gray without a colour accent"),
 )
 
 _BUILTIN_THEME_NAMES = {name for name, _, _ in _BUILTIN_THEMES}
@@ -256,13 +259,15 @@ _SURFACE_COLOR_RE = re.compile(r"^#[0-9a-f]{6}$", re.IGNORECASE)
 _SURFACE_IMAGE_RE = re.compile(r"^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=\s]+$", re.IGNORECASE)
 _MAX_SURFACE_IMAGE_CHARS = 4_200_000
 _DASHBOARD_DEFAULTS: dict[str, Any] = {
-    "theme": "default",
+    "theme": "black",
     "font": "theme",
     "surface_mode": "theme",
     "surface_color": "#101418",
     "surface_image": "",
     "surface_dim": 0,
     "overrides": {"textColor": "", "windowTextColor": "", "accentColor": ""},
+    "open_tabs": [],
+    "active_tab": None,
 }
 
 
@@ -275,6 +280,8 @@ def _dashboard_defaults() -> dict[str, Any]:
         "surface_image": _DASHBOARD_DEFAULTS["surface_image"],
         "surface_dim": _DASHBOARD_DEFAULTS["surface_dim"],
         "overrides": dict(_DASHBOARD_DEFAULTS["overrides"]),
+        "open_tabs": list(_DASHBOARD_DEFAULTS["open_tabs"]),
+        "active_tab": _DASHBOARD_DEFAULTS["active_tab"],
     }
 
 
@@ -305,6 +312,16 @@ def _dashboard_prefs_payload(raw: dict[str, Any]) -> dict[str, Any]:
             value = overrides.get(key)
             if isinstance(value, str) and (value == "" or _SURFACE_COLOR_RE.fullmatch(value)):
                 prefs["overrides"][key] = value
+    tabs = raw.get("open_tabs")
+    if isinstance(tabs, list):
+        clean: list[str] = []
+        for value in tabs:
+            if isinstance(value, str) and value.strip() and len(value) <= 64 and value not in clean:
+                clean.append(value.strip())
+        prefs["open_tabs"] = clean[:50]
+    active = raw.get("active_tab")
+    if isinstance(active, str) and len(active) <= 64:
+        prefs["active_tab"] = active
     return prefs
 
 
@@ -334,6 +351,15 @@ def _validate_dashboard_prefs(raw: dict[str, Any]) -> dict[str, Any]:
             value = overrides.get(key)
             if value is not None and (not isinstance(value, str) or (value and not _SURFACE_COLOR_RE.fullmatch(value))):
                 raise HTTPException(status_code=400, detail=f"overrides.{key} must be #rrggbb or empty")
+    tabs = raw.get("open_tabs")
+    if tabs is not None:
+        if not isinstance(tabs, list) or any(not isinstance(item, str) for item in tabs):
+            raise HTTPException(status_code=400, detail="open_tabs must be a list of strings")
+        if len(tabs) > 50 or any(len(item) > 64 for item in tabs):
+            raise HTTPException(status_code=400, detail="open_tabs is limited to 50 ids of 64 chars")
+    active = raw.get("active_tab")
+    if active is not None and (not isinstance(active, str) or len(active) > 64):
+        raise HTTPException(status_code=400, detail="active_tab must be a string or null")
     return _dashboard_prefs_payload(raw)
 
 
@@ -448,7 +474,7 @@ async def verify_pin(payload: dict[str, Any], _: str = Depends(require_runtime_t
 async def dashboard_themes_alias(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
     prefs = _load_dashboard_prefs()
     return {
-        "active": prefs.get("theme", "default"),
+        "active": prefs.get("theme", "black"),
         "themes": [
             {"name": name, "label": label, "description": description}
             for name, label, description in _BUILTIN_THEMES

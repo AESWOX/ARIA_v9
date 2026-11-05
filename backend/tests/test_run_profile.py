@@ -150,8 +150,13 @@ def test_models_endpoint_and_profile_persistence_and_default():
     got = c.get(f"/chat/sessions/{sid}/profile").json()
     assert got["saved"] and got["profile"]["workers"] == {"model": "free-a"} and got["profile"]["audit"] == "light"
     # «после перезапуска»: профиль берётся из БД, новая сессия получает последний выбор
+    with session_scope() as db:
+        repo.set_agent_state(db, runprofile.DEFAULT_KEY, {}, source="test")
     sid2 = c.post("/chat/sessions", json={}).json()["session_id"]
-    assert c.get(f"/chat/sessions/{sid2}/profile").json()["profile"]["style"] == "boss"
+    assert c.get(f"/chat/sessions/{sid2}/profile").json()["profile"]["style"] == "solo"
+    assert c.put("/chat/profile", json=body).status_code == 200
+    sid3 = c.post("/chat/sessions", json={}).json()["session_id"]
+    assert c.get(f"/chat/sessions/{sid3}/profile").json()["profile"]["style"] == "boss"
     assert c.put(f"/chat/sessions/{sid}/profile", json={"style": "swarm"}).status_code == 400
     assert c.put(f"/chat/sessions/{sid}/profile", json={"main": {"model": "nope"}}).status_code == 400
 

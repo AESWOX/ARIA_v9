@@ -145,9 +145,16 @@ def get_profile(db: Any, session_id: Any) -> dict | None:
     return None
 
 
-def save_profile(db: Any, session_id: Any, profile: dict) -> None:
+def save_profile(db: Any, session_id: Any, profile: dict, *, use_for_new: bool = False) -> None:
+    """Save the run profile for one session; touching `use_for_new` also updates the default."""
     profile = {**profile, "audit_explicit": True}
     repo.set_agent_state(db, f"run_profile:{session_id}", profile, source="user")
+    if use_for_new:
+        repo.set_agent_state(db, DEFAULT_KEY, profile, source="user")
+
+
+def save_default_profile(db: Any, profile: dict) -> None:
+    profile = {**profile, "audit_explicit": True}
     repo.set_agent_state(db, DEFAULT_KEY, profile, source="user")
 
 

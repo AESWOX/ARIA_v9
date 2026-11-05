@@ -459,15 +459,27 @@ async def chat_get_profile(session_id: uuid.UUID, _: str = Depends(require_runti
     return {"profile": profile or runprofile.builtin_profile(), "saved": bool(profile)}
 
 
+@router.put("/profile")
+async def chat_put_default_profile(
+    payload: dict[str, Any], request: Request, _: str = Depends(require_runtime_token)
+) -> dict[str, Any]:
+    """Explicit "use for new chats": only this endpoint changes the default profile."""
+    profile, notes = _validated_profile(payload, request)
+    with session_scope() as db:
+        runprofile.save_default_profile(db, profile)
+    return {"profile": profile, "notes": notes}
+
+
 @router.put("/sessions/{session_id}/profile")
 async def chat_put_profile(
     session_id: uuid.UUID, payload: dict[str, Any], request: Request, _: str = Depends(require_runtime_token)
 ) -> dict[str, Any]:
     profile, notes = _validated_profile(payload, request)
+    use_for_new = str(request.query_params.get("use_for_new") or "").lower() in ("1", "true", "yes")
     with session_scope() as db:
         if repo.get_session(db, session_id) is None:
             raise HTTPException(status_code=404, detail="session not found")
-        runprofile.save_profile(db, session_id, profile)
+        runprofile.save_profile(db, session_id, profile, use_for_new=use_for_new)
     return {"profile": profile, "notes": notes}
 
 

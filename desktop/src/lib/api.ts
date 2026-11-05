@@ -886,8 +886,17 @@ export const api = {
     ),
   chatModels: () => fetchJSON<ChatModels>("/api/chat/models"),
   chatDefaultProfile: () => fetchJSON<{ profile: RunProfile; saved: boolean }>("/api/chat/profile"),
-  chatSaveProfile: (sessionId: string, profile: RunProfile) =>
-    fetchJSON<{ profile: RunProfile; notes: string[] }>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/profile`, {
+  chatSaveProfile: (sessionId: string, profile: RunProfile, useForNew = false) =>
+    fetchJSON<{ profile: RunProfile; notes: string[] }>(
+      `/api/chat/sessions/${encodeURIComponent(sessionId)}/profile${useForNew ? "?use_for_new=true" : ""}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profile),
+      },
+    ),
+  chatSaveDefaultProfile: (profile: RunProfile) =>
+    fetchJSON<{ profile: RunProfile; notes: string[] }>("/api/chat/profile", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(profile),
@@ -2794,6 +2803,8 @@ export interface DashboardPrefs {
   surface_color: string;
   surface_image: string;
   surface_dim: number;
+  open_tabs?: string[];
+  active_tab?: string | null;
   overrides: {
     textColor: string;
     windowTextColor: string;
