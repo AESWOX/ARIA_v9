@@ -361,6 +361,8 @@ export default function NativeChatPage() {
     setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
     setInput(drafts[id] ?? "");
     setError(null);
+    profileDirty.current = false;
+    api.chatSessionProfile(id).then((result) => setProfile(result.profile)).catch(() => undefined);
     setMessages([]);
     setRun(null);
     setTaskQuestions(null);
@@ -416,6 +418,8 @@ export default function NativeChatPage() {
     if (sending) return;
     setActiveId(null);
     setInput(drafts["draft"] ?? "");
+    profileDirty.current = false;
+    api.chatDefaultProfile().then((result) => setProfile(result.profile)).catch(() => undefined);
     setMessages([]);
     setError(null);
     setRun(null);
