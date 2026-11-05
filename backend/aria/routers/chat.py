@@ -60,6 +60,9 @@ MAX_CONTENT_CHARS = 20_000
 DEFAULT_TITLES = {"", "Untitled session", "New chat"}
 SYSTEM_PROMPT_BASE = (
     "You are ARIA, a helpful assistant running locally on the user's machine. "
+    "You are in Chat mode: no tools are available in this mode. "
+    "If the user asks for a tool, file, web, shell, or other action, say plainly that Chat has no tools "
+    "and that they need to switch to Agent; do not claim you have no access. "
     "Reply in the language the user writes in. Be concise and honest; say so when you are unsure."
 )
 # L0/L1: contract and persona are part of the stable system prefix (PR-1),
@@ -704,8 +707,12 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
     )
     prompt = _build_prompt(history, context_blocks)
     hint = runprofile.thinking_hint(profile)
+    # Language follows the user's current message, never the UI locale.
+    from aria.core.clarifier import language_instruction
+
+    language_hint = language_instruction(last_user_text)
     # PR-1: thinking_hint больше не дописывается в messages[0] — он тоже ломал кэш.
-    prompt = _attach_dynamic(prompt, hint)
+    prompt = _attach_dynamic(prompt, "\n\n".join(part for part in (hint, language_hint) if part))
     # PR-7: DLP применяется к исходящему промпту и снимается с ответа. Только чат —
     # агентский цикл не трогаем: плейсхолдеры сломали бы пути и команды в tool calls.
     prompt, dlp_applied = _dlp_mask(prompt, session_id)

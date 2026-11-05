@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +20,7 @@ import {
 } from "@/themes";
 import type { SurfaceMode } from "@/themes";
 import { useI18n } from "@/i18n";
+import { api } from "@/lib/api";
 
 /* One "Theme settings" dialog: theme, font, background mode, image dimmer and
    the user's text/window-text/accent colors. The old Settings card grew into a
@@ -38,6 +39,30 @@ export function ThemeSettingsDialog({
   const { theme, themeName, availableThemes, setTheme, fontId, setFont } = useTheme();
   const [surface, setSurface] = useState(() => readSurface());
   const [colors, setColors] = useState(() => readThemeOverrides());
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // The dialog is opened after the async provider hydration; read the durable
+  // copy so a large image is still shown even when localStorage rejected it.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api
+      .getDashboardPrefs()
+      .then((prefs) => {
+        if (cancelled) return;
+        setSurface({
+          mode: prefs.surface_mode,
+          color: prefs.surface_color,
+          image: prefs.surface_image,
+          imageDim: prefs.surface_dim,
+        });
+        setColors(prefs.overrides);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const modeLabel: Record<SurfaceMode, string> = {
     theme: copy.modeTheme,
@@ -51,12 +76,23 @@ export function ThemeSettingsDialog({
     setColors(next);
     saveThemeOverrides(next);
     applyThemeOverrides(next, theme.palette.midground.hex, theme.palette.warmGlow);
+    void api.saveDashboardPrefs({ overrides: next }).catch(() => undefined);
   };
 
   const changeSurface = (patch: Partial<typeof surface>) => {
     const next = { ...surface, ...patch };
     setSurface(next);
     saveSurface(next.mode, next.color, next.image, next.imageDim);
+    const payload = {
+      surface_mode: next.mode,
+      surface_color: next.color,
+      surface_dim: next.imageDim,
+    } as Parameters<typeof api.saveDashboardPrefs>[0];
+    // Do not resend a multi-megabyte data URL while the owner drags the dim slider.
+    if (Object.prototype.hasOwnProperty.call(patch, "image")) {
+      payload.surface_image = next.image;
+    }
+    void api.saveDashboardPrefs(payload).catch(() => undefined);
   };
 
   const changeImage = async (file: File | undefined) => {
@@ -134,14 +170,53 @@ export function ThemeSettingsDialog({
 
           {surface.mode === "image" && (
             <>
-              <label className={colorRow}>
-                <span>{copy.imageFile}</span>
+              <div className="space-y-2">
+                <span className="text-xs text-muted-foreground">{copy.imageFile}</span>
                 <input
+                  ref={fileInputRef}
                   type="file"
                   accept="image/png,image/jpeg,image/webp,image/gif"
-                  onChange={(e) => void changeImage(e.target.files?.[0])}
+                  className="sr-only"
+                  onChange={(e) => {
+                    void changeImage(e.target.files?.[0]);
+                    e.currentTarget.value = "";
+                  }}
                 />
-              </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="border border-border bg-background/40 px-3 py-1.5 text-sm hover:bg-foreground/5"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {copy.chooseImage ?? "Choose image"}
+                  </button>
+                  {surface.image ? (
+                    <>
+                      <span className="text-xs text-muted-foreground">
+                        {copy.imageSelected ?? "Image selected"}
+                      </span>
+                      <button
+                        type="button"
+                        className="text-xs text-muted-foreground underline"
+                        onClick={() => changeSurface({ image: "", mode: "theme" })}
+                      >
+                        {copy.removeImage ?? "Remove"}
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      {copy.noImage ?? "No image selected"}
+                    </span>
+                  )}
+                </div>
+                {surface.image && (
+                  <img
+                    src={surface.image}
+                    alt=""
+                    className="max-h-28 w-full border border-border object-cover"
+                  />
+                )}
+              </div>
               <label className="flex flex-col gap-1">
                 <span className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>{copy.imageDim}</span>

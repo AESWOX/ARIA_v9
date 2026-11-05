@@ -210,6 +210,44 @@ def test_font_roundtrip(client):
     client.put("/dashboard/font", json={"font": previous}, headers=_h())
 
 
+def test_ui_prefs_roundtrip_keeps_theme_and_surface(client):
+    previous = client.get("/dashboard/prefs", headers=_h()).json()
+    assert previous["surface_mode"] in {"theme", "white", "textured", "custom", "image"}
+    assert previous["surface_dim"] >= 0
+    try:
+        r = client.put(
+            "/dashboard/prefs",
+            json={
+                "surface_mode": "custom",
+                "surface_color": "#123456",
+                "surface_dim": 37,
+                "overrides": {"textColor": "#abcdef", "windowTextColor": "", "accentColor": "#010203"},
+            },
+            headers=_h(),
+        )
+        assert r.status_code == 200
+        got = client.get("/dashboard/prefs", headers=_h()).json()
+        assert got["surface_mode"] == "custom"
+        assert got["surface_color"] == "#123456"
+        assert got["surface_dim"] == 37
+        assert got["overrides"]["textColor"] == "#abcdef"
+        assert got["overrides"]["accentColor"] == "#010203"
+        # A later theme/font save must not wipe surface/colour prefs.
+        client.put("/dashboard/theme", json={"name": "mono"}, headers=_h())
+        again = client.get("/dashboard/prefs", headers=_h()).json()
+        assert again["surface_mode"] == "custom" and again["surface_dim"] == 37
+    finally:
+        client.put("/dashboard/prefs", json=previous, headers=_h())
+
+
+def test_ui_prefs_rejects_invalid_surface_and_oversized_image(client):
+    assert client.put("/dashboard/prefs", json={"surface_mode": "bogus"}, headers=_h()).status_code == 400
+    assert client.put("/dashboard/prefs", json={"surface_color": "red"}, headers=_h()).status_code == 400
+    assert client.put("/dashboard/prefs", json={"surface_dim": 101}, headers=_h()).status_code == 400
+    huge = "data:image/png;base64," + "A" * 4_300_000
+    assert client.put("/dashboard/prefs", json={"surface_image": huge}, headers=_h()).status_code == 400
+
+
 def test_dashboard_plugins_is_empty_list(client):
     r = client.get("/dashboard/plugins", headers=_h())
     assert r.status_code == 200 and r.json() == []

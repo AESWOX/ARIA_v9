@@ -11,6 +11,7 @@ from __future__ import annotations
 from aria import paths
 
 import json
+import os
 import re
 import threading
 from pathlib import Path
@@ -250,22 +251,112 @@ def _apply_config(config: dict[str, Any]) -> None:
             setattr(settings, path, _coerce(path, value))
 
 
+_SURFACE_MODES = {"theme", "white", "textured", "custom", "image"}
+_SURFACE_COLOR_RE = re.compile(r"^#[0-9a-f]{6}$", re.IGNORECASE)
+_SURFACE_IMAGE_RE = re.compile(r"^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=\s]+$", re.IGNORECASE)
+_MAX_SURFACE_IMAGE_CHARS = 4_200_000
+_DASHBOARD_DEFAULTS: dict[str, Any] = {
+    "theme": "default",
+    "font": "theme",
+    "surface_mode": "theme",
+    "surface_color": "#101418",
+    "surface_image": "",
+    "surface_dim": 0,
+    "overrides": {"textColor": "", "windowTextColor": "", "accentColor": ""},
+}
+
+
+def _dashboard_defaults() -> dict[str, Any]:
+    return {
+        "theme": _DASHBOARD_DEFAULTS["theme"],
+        "font": _DASHBOARD_DEFAULTS["font"],
+        "surface_mode": _DASHBOARD_DEFAULTS["surface_mode"],
+        "surface_color": _DASHBOARD_DEFAULTS["surface_color"],
+        "surface_image": _DASHBOARD_DEFAULTS["surface_image"],
+        "surface_dim": _DASHBOARD_DEFAULTS["surface_dim"],
+        "overrides": dict(_DASHBOARD_DEFAULTS["overrides"]),
+    }
+
+
+def _dashboard_prefs_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    prefs = _dashboard_defaults()
+    for key in ("theme", "font"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            prefs[key] = value.strip()[:120]
+    mode = raw.get("surface_mode")
+    if isinstance(mode, str) and mode in _SURFACE_MODES:
+        prefs["surface_mode"] = mode
+    color = raw.get("surface_color")
+    if isinstance(color, str) and _SURFACE_COLOR_RE.fullmatch(color):
+        prefs["surface_color"] = color
+    image = raw.get("surface_image")
+    if isinstance(image, str):
+        if not image:
+            prefs["surface_image"] = ""
+        elif len(image) <= _MAX_SURFACE_IMAGE_CHARS and _SURFACE_IMAGE_RE.fullmatch(image):
+            prefs["surface_image"] = image
+    dim = raw.get("surface_dim")
+    if isinstance(dim, (int, float)) and not isinstance(dim, bool):
+        prefs["surface_dim"] = max(0, min(100, int(dim)))
+    overrides = raw.get("overrides")
+    if isinstance(overrides, dict):
+        for key in ("textColor", "windowTextColor", "accentColor"):
+            value = overrides.get(key)
+            if isinstance(value, str) and (value == "" or _SURFACE_COLOR_RE.fullmatch(value)):
+                prefs["overrides"][key] = value
+    return prefs
+
+
+def _validate_dashboard_prefs(raw: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=422, detail="prefs must be an object")
+    mode = raw.get("surface_mode")
+    if mode is not None and mode not in _SURFACE_MODES:
+        raise HTTPException(status_code=400, detail=f"unknown surface mode: {mode}")
+    color = raw.get("surface_color")
+    if color is not None and (not isinstance(color, str) or not _SURFACE_COLOR_RE.fullmatch(color)):
+        raise HTTPException(status_code=400, detail="surface_color must be #rrggbb")
+    image = raw.get("surface_image")
+    if image is not None:
+        if not isinstance(image, str):
+            raise HTTPException(status_code=400, detail="surface_image must be a string")
+        if image and (len(image) > _MAX_SURFACE_IMAGE_CHARS or not _SURFACE_IMAGE_RE.fullmatch(image)):
+            raise HTTPException(status_code=400, detail="surface_image must be a png/jpeg/webp/gif data URL under 4 MB")
+    dim = raw.get("surface_dim")
+    if dim is not None and (isinstance(dim, bool) or not isinstance(dim, (int, float)) or dim < 0 or dim > 100):
+        raise HTTPException(status_code=400, detail="surface_dim must be 0..100")
+    overrides = raw.get("overrides")
+    if overrides is not None:
+        if not isinstance(overrides, dict):
+            raise HTTPException(status_code=400, detail="overrides must be an object")
+        for key in ("textColor", "windowTextColor", "accentColor"):
+            value = overrides.get(key)
+            if value is not None and (not isinstance(value, str) or (value and not _SURFACE_COLOR_RE.fullmatch(value))):
+                raise HTTPException(status_code=400, detail=f"overrides.{key} must be #rrggbb or empty")
+    return _dashboard_prefs_payload(raw)
+
+
 def _load_dashboard_prefs() -> dict[str, Any]:
+    raw: dict[str, Any] = {}
     if _DASHBOARD_PATH.exists():
         try:
             with _DASHBOARD_PATH.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
             if isinstance(data, dict):
-                return data
+                raw = data
         except Exception:
-            pass
-    return {"theme": "default", "font": "theme"}
+            raw = {}
+    return _dashboard_prefs_payload(raw)
 
 
 def _save_dashboard_prefs(prefs: dict[str, Any]) -> None:
-    _DASHBOARD_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with _DASHBOARD_PATH.open("w", encoding="utf-8") as fh:
-        json.dump(prefs, fh, indent=2)
+    with _LOAD_LOCK:
+        _DASHBOARD_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _DASHBOARD_PATH.with_suffix(".json.tmp")
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(prefs, fh, indent=2, ensure_ascii=False)
+        os.replace(tmp, _DASHBOARD_PATH)
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +480,29 @@ async def dashboard_font_set(payload: dict[str, Any], _: str = Depends(require_r
     prefs["font"] = font
     _save_dashboard_prefs(prefs)
     return {"ok": True, "font": font}
+
+
+@router.get("/dashboard/prefs")
+async def dashboard_prefs_get(_: str = Depends(require_runtime_token)) -> dict[str, Any]:
+    """Full UI preferences: theme, font, surface image/dim, color overrides.
+
+    The browser keeps a localStorage copy for a flash-free start; this file is
+    the durable source of truth across app restarts and profiles.
+    """
+    return _load_dashboard_prefs()
+
+
+@router.put("/dashboard/prefs")
+async def dashboard_prefs_put(
+    payload: dict[str, Any], _: str = Depends(require_runtime_token)
+) -> dict[str, Any]:
+    patch = _validate_dashboard_prefs(payload)
+    prefs = _load_dashboard_prefs()
+    for key, value in patch.items():
+        if key in payload:
+            prefs[key] = value
+    _save_dashboard_prefs(prefs)
+    return {"ok": True, **prefs}
 
 
 @router.get("/dashboard/plugins")

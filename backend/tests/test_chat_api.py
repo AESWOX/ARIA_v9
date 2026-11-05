@@ -66,9 +66,17 @@ def test_round_trip_history_title_and_persistence():
         r2 = c.post(f"/chat/sessions/{sid}/send", json={"content": "How are you?"})
         assert r2.json()["assistant"]["content"] == "Fine, thanks"
 
-        # second call carried the whole conversation, system prompt first
+        # second call carried the whole conversation, system prompt first.
+        # A dynamic system block (language follows the user's message) sits
+        # immediately before the latest user turn.
         sent = [(m.role, m.content) for m in fake.seen[1]]
-        assert sent == [("system", SYSTEM_PROMPT), ("user", "Hello ARIA"), ("assistant", "Hi there"), ("user", "How are you?")]
+        assert sent[0] == ("system", SYSTEM_PROMPT)
+        assert sent[-1] == ("user", "How are you?")
+        assert ("user", "Hello ARIA") in sent and ("assistant", "Hi there") in sent
+        assert any(
+            role == "system" and "Answer only in English" in content
+            for role, content in sent[1:-1]
+        )
 
         # persisted, ordered, retrievable after "restart" (fresh client, same DB)
         c2 = _client(FakeLlm())

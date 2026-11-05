@@ -470,7 +470,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         risk_level=RiskLevel.high,
         null_output_allowed=False,
         requires_approval=True,  # финально решает validators.is_high_risk_command по конкретной команде
-        allowed_roles=("coder", "devops_infra", "image_gen"),
+        allowed_roles=("general", "coder", "devops_infra", "image_gen"),
         idempotency_class=IdempotencyClass.unsafe_write,
         handler=_shell_execute,
     ),

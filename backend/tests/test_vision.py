@@ -364,7 +364,10 @@ class TestVisionDeepSeekBackend:
         assert body["model"] == "deepseek-flash", "v4-pro изображения не принимает"
         assert body["thinking"] == {"type": "disabled"}, "thinking по умолчанию съел бы лимит токенов"
         parts = body["messages"][0]["content"]
-        assert parts[0] == {"type": "text", "text": "what is it"}
+        prompt_text = parts[0]["text"]
+        assert "possible minor" in prompt_text
+        assert "unclear" in prompt_text
+        assert prompt_text.endswith("User question: what is it")
         assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
     async def test_gemini_stays_first_when_its_key_exists(self, deepseek_key):

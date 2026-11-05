@@ -382,13 +382,20 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
         _t = repo.get_task(db, task_id)
         profile = runprofile.get_profile(db, _t.session_id)
         delegation_depth = _t.delegation_depth or 0
-    role_prompt = f"Ты в роли {role.role_id}. {role.description}\nДоступные инструменты: {', '.join(tool_whitelist) or 'нет'}."
+    role_prompt = (
+        f"Ты в роли {role.role_id} в режиме Agent. {role.description}\n"
+        f"Доступные инструменты: {', '.join(tool_whitelist) or 'нет'}."
+    )
     role_prompt += (
         "\nЭто список инструментов ТВОЕЙ РОЛИ, а не всей системы: в реестре ARIA их больше, часть доступна только другим ролям "
         "(write/shell/delegate — у obsidian_keeper, coder, orchestrator). Не называй этот список «всеми инструментами системы». "
         "Число навыков, заметок, задач и т.п. называй только после реального вызова инструмента (skill_lookup возвращает total)."
     )
     role_prompt += _load_persona()
+    # Language follows the task objective, not the UI locale.
+    from aria.core.clarifier import language_instruction
+
+    role_prompt += "\n\n" + language_instruction(task.objective or "")
     # L0 (TZ_COMPLIANCE_V2 §3): контракт после persona; флаг off — старое поведение.
     if bool(getattr(settings, "compliance_prompt_enabled", True)):
         from aria.core.compliance import COMPLIANCE_TEXT
@@ -405,7 +412,7 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
     # memory_search/search_vault call, so chat questions about past notes were
     # answered from nowhere (owner report 04.11).
     try:
-        from aria.memory.store import memory_store as _memory_store
+        from aria.memory import store as _memory_store
 
         _memory = _memory_store.recall_block(task.objective or "")
         if _memory:

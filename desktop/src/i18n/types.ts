@@ -882,6 +882,10 @@ export interface Translations {
     modeCustom: string;
     modeImage: string;
     imageFile: string;
+    chooseImage?: string;
+    removeImage?: string;
+    imageSelected?: string;
+    noImage?: string;
     imageDim: string;
     open: string;
     textColor: string;

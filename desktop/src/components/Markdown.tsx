@@ -1,4 +1,5 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
 
 /**
  * Lightweight markdown renderer for LLM output.
@@ -156,6 +157,38 @@ function parseBlocks(text: string): BlockNode[] {
 /*  Block renderer                                                     */
 /* ------------------------------------------------------------------ */
 
+function CodeBlock({ content, caret }: { content: string; caret?: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard can be blocked; the code stays selectable */
+    }
+  };
+  return (
+    <div className="relative border border-border bg-background-base/80">
+      <button
+        type="button"
+        onClick={() => void copy()}
+        title="Copy code"
+        aria-label="Copy code"
+        className="absolute right-1.5 top-1.5 border border-border bg-background-base/80 p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+      >
+        {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+      </button>
+      <pre className="overflow-x-auto px-3 py-2.5 pr-9 text-xs font-mono leading-relaxed text-foreground">
+        <code className="whitespace-pre">
+          {content}
+          {caret}
+        </code>
+      </pre>
+    </div>
+  );
+}
+
 function Block({
   block,
   highlightTerms,
@@ -167,14 +200,7 @@ function Block({
 }) {
   switch (block.type) {
     case "code":
-      return (
-        <pre className="bg-secondary/60 border border-border px-3 py-2.5 text-xs font-mono leading-relaxed overflow-x-auto">
-          <code>
-            {block.content}
-            {caret}
-          </code>
-        </pre>
-      );
+      return <CodeBlock content={block.content} caret={caret} />;
 
     case "heading": {
       const Tag = `h${Math.min(block.level, 4)}` as "h1" | "h2" | "h3" | "h4";

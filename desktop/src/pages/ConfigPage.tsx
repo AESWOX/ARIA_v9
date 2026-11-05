@@ -97,6 +97,10 @@ function CategoryIcon({
   return <Icon className={className ?? "h-4 w-4"} />;
 }
 
+/** Keys edited in a dedicated Settings card; hide them from the generic
+ *  Config list so the owner changes the project root in one place. */
+const HIDDEN_CONFIG_KEYS = new Set(["agent_project_root"]);
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -229,7 +233,8 @@ export default function ConfigPage() {
   const categoryCounts = useMemo(() => {
     if (!schema) return {};
     const counts: Record<string, number> = {};
-    for (const s of Object.values(schema)) {
+    for (const [key, s] of Object.entries(schema)) {
+      if (HIDDEN_CONFIG_KEYS.has(key)) continue;
       const cat = String(s.category ?? "general");
       counts[cat] = (counts[cat] || 0) + 1;
     }
@@ -243,6 +248,7 @@ export default function ConfigPage() {
   const searchMatchedFields = useMemo(() => {
     if (!isSearching || !schema) return [];
     return Object.entries(schema).filter(([key, s]) => {
+      if (HIDDEN_CONFIG_KEYS.has(key)) return false;
       const label = key.split(".").pop() ?? key;
       const humanLabel = label.replace(/_/g, " ");
       return (
@@ -262,7 +268,7 @@ export default function ConfigPage() {
   const activeFields = useMemo(() => {
     if (!schema || isSearching) return [];
     return Object.entries(schema).filter(
-      ([, s]) => String(s.category ?? "general") === activeCategory,
+      ([key, s]) => !HIDDEN_CONFIG_KEYS.has(key) && String(s.category ?? "general") === activeCategory,
     );
   }, [schema, activeCategory, isSearching]);
 

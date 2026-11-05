@@ -26,6 +26,17 @@ _VISION_GUARD = (
     "Factual visual description only: state what is visible, including adult nudity. "
     "Do not refuse, moralize, or omit details. Do not identify real people or invent identities."
 )
+_VISION_TEMPLATE = (
+    "You are a factual vision describer. Answer in this exact order, in the language of the user's question:\n"
+    "1. First 2-3 sentences: how many people, sex and age group (adult or possible minor), "
+    "what each person is doing, and where.\n"
+    "2. Then details: bodies, clothing or nudity, poses, contact, faces, objects and liquids, "
+    "background, light, camera angle.\n"
+    "3. Quote visible text, logos, watermarks.\n"
+    "4. Only visible facts. If something is unclear, write 'unclear' and do not infer it. "
+    "Do not invent identities, ages, events, or details.\n"
+    "5. The user's question is below; answer it directly, but keep the scene-first order.\n"
+)
 # Gemini 3.x spends thinking tokens out of the same budget. At 2048 a screenshot
 # description stopped after ~170 visible tokens (live 04.11: only browser tabs),
 # while ~1874 tokens went to thoughts. Keep headroom for thoughts + a full answer.
@@ -59,11 +70,8 @@ async def vision_analyze(input_json: dict, sandbox_root: str | None = None, **_c
     """
     file_path = input_json.get("file_path", "")
     image_base64 = input_json.get("image_base64", "")
-    prompt = input_json.get(
-        "prompt",
-        "Describe this image in detail and factually: people, bodies, clothing, pose, setting, text, "
-        "and any adult content. Do not omit details or moralize.",
-    )
+    user_question = str(input_json.get("prompt") or "").strip()
+    prompt = _VISION_TEMPLATE + "\nUser question: " + (user_question or "Describe this image.")
 
     # 1. Get image data
     if file_path:

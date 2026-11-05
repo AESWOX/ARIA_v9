@@ -1205,6 +1205,14 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ font }),
     }),
+  getDashboardPrefs: () =>
+    fetchJSON<DashboardPrefs>("/api/dashboard/prefs"),
+  saveDashboardPrefs: (patch: Partial<DashboardPrefs>) =>
+    fetchJSON<{ ok: boolean } & DashboardPrefs>("/api/dashboard/prefs", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
 
   // ── Admin: MCP servers ──────────────────────────────────────────────
   getMcpServers: () => fetchJSON<{ servers: McpServer[] }>("/api/mcp/servers"),
@@ -2770,6 +2778,20 @@ export interface DashboardThemesResponse {
 export interface DashboardFontResponse {
   /** Active font-override id, or "theme" when no override is set. */
   font: string;
+}
+
+export interface DashboardPrefs {
+  theme: string;
+  font: string;
+  surface_mode: "theme" | "white" | "textured" | "custom" | "image";
+  surface_color: string;
+  surface_image: string;
+  surface_dim: number;
+  overrides: {
+    textColor: string;
+    windowTextColor: string;
+    accentColor: string;
+  };
 }
 
 // ── Dashboard plugin types ─────────────────────────────────────────────

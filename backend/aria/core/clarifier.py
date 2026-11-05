@@ -230,6 +230,21 @@ def detect_language(content: str) -> str:
 
 
 _LANG_NAME = {"ru": "русский", "uk": "украинский", "en": "английский (English)"}
+_LANGUAGE_NAMES = {"ru": "Russian", "uk": "Ukrainian", "en": "English"}
+
+
+def language_name(content: str) -> str:
+    """Human-readable language of the user's message, independent of UI locale."""
+    return _LANGUAGE_NAMES.get(detect_language(content), "English")
+
+
+def language_instruction(content: str) -> str:
+    """Directive used by Chat and Agent so the answer never follows the UI language."""
+    name = language_name(content)
+    return (
+        f"The user's current message is in {name}. Answer only in {name}, "
+        "regardless of the interface language."
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -279,25 +294,43 @@ def _strip_fence(raw: str) -> str:
     return text.strip()
 
 
+def _recent_context_text(context: list[tuple[str, str]] | None) -> str:
+    if not context:
+        return ""
+    lines: list[str] = []
+    for role, text in context[-8:]:
+        clean = " ".join(str(text or "").split())
+        if not clean:
+            continue
+        label = "assistant" if role == "assistant" else "user"
+        lines.append(f"{label}: {clean[:1800]}")
+    if not lines:
+        return ""
+    return "Последние сообщения сессии (не спрашивай то, что уже есть здесь):\n" + "\n".join(lines)
+
+
 async def _ask_model(
     router: ProviderRouter,
     content: str,
     spec: TaskSpec,
     *,
+    context: list[tuple[str, str]] | None = None,
     session_id: object | None = None,
     task_id: object | None = None,
 ) -> dict:
-    """Один запрос к clarifier-роли. Любой сбой = пустой payload, а не падение задачи."""
+    """Один запрос к clarifier-модели. Возвращает payload, а не готовый TaskSpec."""
+    recent = _recent_context_text(context)
     messages = [
         ChatMessage(role="system", content=_prompt_text()),
         ChatMessage(
             role="user",
             content=(
-                f"Запрос владельца: {content}\n\n"
-                f"Язык запроса: {_LANG_NAME[detect_language(content)]}. Все вопросы, варианты ответа "
-                "(включая «Свой вариант»), цель, критерии и допущения пиши на этом же языке.\n\n"
-                f"Уже известный контракт (может быть пустым): {spec.model_dump_json()}\n"
-                f"Раунд уточнения: {spec.clarify_rounds}/{MAX_CLARIFY_ROUNDS}"
+                f"Запрос пользователя: {content}\n\n"
+                f"Отвечай на языке: {_LANG_NAME[detect_language(content)]}. Все вопросы, варианты и допущения "
+                "(включая <Свой вариант>), задавай на этом же языке; не переводи их на английский.\n\n"
+                f"Текущее состояние (может быть пустым): {spec.model_dump_json()}\n"
+                f"Раунд уточнений: {spec.clarify_rounds}/{MAX_CLARIFY_ROUNDS}\n\n"
+                f"{recent}"
             ),
         ),
     ]
@@ -550,6 +583,7 @@ async def run_gate(
     router: ProviderRouter | None = None,
     autonomous: bool = False,
     mode: str = "",
+    context: list[tuple[str, str]] | None = None,
 ) -> ClarifyOutcome:
     """Прогоняет гейт уточнения и приводит задачу к одному из трёх состояний.
 
@@ -571,7 +605,10 @@ async def run_gate(
         or taskspec.is_high_risk(spec.goal or "")
     )
     rounds = int(spec.clarify_rounds or 0)
-    explicit = explicit_goal_and_format(content)
+    # An attachment is already concrete input: asking "what format?" after
+    # "what is on this image?" was the reported empty/duplicate question path.
+    has_attachments = "Attached files:" in (content or "")
+    explicit = explicit_goal_and_format(content) or has_attachments
     research = not explicit and is_research_task(content)
 
     questions: list[dict] = []
@@ -583,7 +620,7 @@ async def run_gate(
         payload: dict = {}
         if router is not None:
             try:
-                payload = await _ask_model(router, content, spec, task_id=task_id)
+                payload = await _ask_model(router, content, spec, context=context, task_id=task_id)
             except Exception as exc:  # noqa: BLE001 — clarifier недоступен, работаем детерминированно
                 logger.warning("clarifier недоступен (%s), гейт работает детерминированно", type(exc).__name__)
                 payload = {}

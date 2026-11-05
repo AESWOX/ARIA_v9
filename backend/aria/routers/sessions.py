@@ -419,9 +419,16 @@ async def post_message(
         emit_task_status(task)
 
     if gate_task_id is not None:
-        # Гейт вне DB-scope: внутри — сетевой вызов clarifier и сообщение с вопросами.
+        # Выходим из DB-scope: дальше идёт вызов модели через clarifier и запись в отдельном scope.
+        with session_scope() as db:
+            recent = repo.list_messages_for_prompt(db, session_id, limit=12)
+            gate_context = [(m.role, m.content) for m in recent if m.content]
         outcome = await clarifier.run_gate(
-            gate_task_id, content, router=getattr(request.app.state, "router", None), mode=mode
+            gate_task_id,
+            content,
+            router=getattr(request.app.state, "router", None),
+            mode=mode,
+            context=gate_context,
         )
         with session_scope() as db:
             task = repo.get_task(db, gate_task_id)

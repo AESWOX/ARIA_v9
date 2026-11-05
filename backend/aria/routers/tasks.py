@@ -139,6 +139,20 @@ async def get_audit_reports(task_id: uuid.UUID, _: str = Depends(require_runtime
         return [serialize_audit(row) for row in repo.list_audit_reports(db, task_id)]
 
 
+def _clarify_echo(answers: list[dict[str, Any]]) -> str:
+    """User-visible echo of clarification answers.
+
+    "Accept assumptions" sends an empty answer list; it must not create the
+    empty "Уточнения: " bubble the owner reported.
+    """
+    answer_text = "; ".join(
+        f"{a.get('field') or a.get('id')}: {a.get('value')}"
+        for a in answers
+        if isinstance(a, dict) and str(a.get("value") or "").strip()
+    )
+    return ("Уточнения: " + answer_text) if answer_text else "Приняты допущения."
+
+
 @router.post("/tasks/{task_id}/clarify")
 async def clarify_task(
     task_id: uuid.UUID,
@@ -319,13 +333,7 @@ async def clarify_task(
         if not spec.is_valid and not spec.clarify_questions:
             raise HTTPException(status_code=500, detail="invariant violated: awaiting_clarification without questions")
         if session is not None:
-            # Запасной путь П.3.2: ответы остаются текстом в чате.
-            repo.append_message(
-                db, session, role="user",
-                content="Уточнения: " + "; ".join(
-                    f"{a.get('field') or a.get('id')}: {a.get('value')}" for a in answers if isinstance(a, dict)
-                ),
-            )
+            repo.append_message(db, session, role="user", content=_clarify_echo(answers))
         result = {
             "ok": True,
             "task_id": str(task_id),
