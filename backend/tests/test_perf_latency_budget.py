@@ -128,6 +128,13 @@ async def test_stream_picks_a_healthy_provider_over_a_cooling_one():
     assert picked is healthy
 
 
+def test_mark_failed_puts_the_stream_provider_on_cooldown():
+    g = Fake("gemini", "free_tier_reasoning", ["ok"])
+    r = _router(g)
+    r.mark_failed(g, 60)
+    assert r.is_cooling(g)
+
+
 def test_chat_timeouts_fit_the_first_token_budget():
-    assert chat_router.CHAT_STREAM_TIMEOUT_SEC <= 12
+    assert chat_router.CHAT_STREAM_TIMEOUT_SEC <= 8
     assert chat_router.CHAT_CALL_TIMEOUT_SEC <= 20

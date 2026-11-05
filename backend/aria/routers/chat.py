@@ -40,7 +40,7 @@ from aria.http_utils import emit_message_created, emit_session_updated, iso, ser
 from aria.llm import compression
 from aria.llm.key_pool import NoAvailableKeys
 from aria.llm.providers.base import ChatMessage, LlmProvider
-from aria.llm.router import ProviderUnavailable, tried_suffix
+from aria.llm.router import TIMEOUT_COOLDOWN_SEC, ProviderUnavailable, tried_suffix
 from aria.memory import store as memory_store
 
 logger = logging.getLogger("local_agent.chat")
@@ -49,11 +49,19 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 # UX-1: отдельная точка замера, чтобы тесты подменяли часы без секундомера.
 _monotonic = time.monotonic
 
-CHAT_PROVIDER_CLASS = "free_tier_reasoning"  # Gemini Flash first, then Groq
-CHAT_FALLBACK_CLASSES = ("standard_reasoning",)  # DeepSeek chat, then Gemini Pro (A20)
+# PERF-1: the owner's working key is DeepSeek. Gemini free-tier streams through the
+# compatibility proxy can hang until the read timeout; use DeepSeek first and keep
+# the free tier as a fallback. An explicit "free" seat in the run profile still wins.
+CHAT_PROVIDER_CLASS = "standard_reasoning"
+CHAT_FALLBACK_CLASSES = ("free_tier_reasoning",)
 # PERF-1: a stuck provider must not hold the chat. First token budget p95 <= 12 s.
-CHAT_STREAM_TIMEOUT_SEC = 12
-CHAT_CALL_TIMEOUT_SEC = 20
+CHAT_STREAM_TIMEOUT_SEC = 8
+CHAT_CALL_TIMEOUT_SEC = 6
+# PERF-1: total time spent walking stream candidates before falling back to one non-stream call.
+STREAM_TOTAL_BUDGET_SEC = 6.0
+# PERF-1: a chat fallback must not walk ten hanging models. Sensitive chats keep a longer budget.
+NONSTREAM_TOTAL_BUDGET_SEC = 20.0
+NONSTREAM_SENSITIVE_BUDGET_SEC = 30.0
 HISTORY_MESSAGES = 40
 HISTORY_CHAR_BUDGET = 60_000
 MAX_CONTENT_CHARS = 20_000
@@ -721,20 +729,26 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
             )
 
     user_msg, user_payload, sensitive = run_with_db_retry(_store_user_message)
+    timing.record("chat_store_user", (time.monotonic() - t_start) * 1000.0)
     if not retry:
         emit_message_created(user_msg, session_id, None)
 
     # 1a) CTX: сжать старую часть истории, если она выросла выше порога токенов.
     # Вне DB-scope: сетевой вызов суммаризатора не держит writer-lock; сбой сжатия чат не роняет.
+    t_compress = time.monotonic()
     try:
         await compression.maybe_compress(session_id, request.app.state.router)
     except Exception:  # noqa: BLE001
         logger.exception("chat: compression failed, continuing with full history")
+    timing.record("chat_compress", (time.monotonic() - t_compress) * 1000.0)
+    t_history = time.monotonic()
     with session_scope() as db:
         history = [(msg.role, msg.content) for msg in repo.list_messages_for_prompt(db, session_id, limit=5000)]
+    timing.record("chat_history", (time.monotonic() - t_history) * 1000.0)
 
     # 1b) long-term memory (H3): «запомни: …» saves a fact; relevant notes go into the system prompt.
     # Outside the DB scope above: the memory store uses its own connection.
+    t_memory = time.monotonic()
     last_user_text = content or user_payload.get("content") or ""
     memory_block = ""
     if not retry:
@@ -746,7 +760,9 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
                 logger.exception("chat: could not save memory")
     if memory_store.enabled():
         memory_block = memory_store.recall_block(last_user_text)
+    timing.record("chat_memory", (time.monotonic() - t_memory) * 1000.0)
     # Automatic vault recall: the owner should not have to ask "check notes".
+    t_vault = time.monotonic()
     try:
         from aria.storage.obsidian_vault import relevant_block as _vault_block
 
@@ -754,6 +770,7 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
     except Exception:  # noqa: BLE001 — notes must not break chat
         logger.exception("chat: vault recall failed")
         vault_block = ""
+    timing.record("chat_vault", (time.monotonic() - t_vault) * 1000.0)
     context_blocks = "\n\n".join(block for block in (memory_block, vault_block) if block)
     from aria.core import recall_honesty
 
@@ -762,6 +779,7 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
         context_blocks = "\n\n".join(block for block in (context_blocks, honesty) if block)
 
     # 2) call the model outside any DB transaction
+    t_prompt = time.monotonic()
     with session_scope() as db:
         profile = runprofile.get_profile(db, session_id)
     chat_class, chat_fallback, chat_prefer = runprofile.chat_target(
@@ -778,6 +796,7 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
     # PR-7: DLP применяется к исходящему промпту и снимается с ответа. Только чат —
     # агентский цикл не трогаем: плейсхолдеры сломали бы пути и команды в tool calls.
     prompt, dlp_applied = _dlp_mask(prompt, session_id)
+    timing.record("chat_prompt", (time.monotonic() - t_prompt) * 1000.0)
     # всё до вызова модели (запись сообщения, сжатие, память, сборка промпта): то, что пользователь ждёт зря
     timing.record("chat_prepare", (time.monotonic() - t_start) * 1000.0)
     return _Prepared(
@@ -811,20 +830,30 @@ def _log_chat_timing(prepared: _Prepared, session_id: uuid.UUID, first_token_at:
 
 async def _run_nonstream(session_id: uuid.UUID, request: Request, prepared: _Prepared) -> dict[str, Any]:
     """Полный не-стрим ответ: route_chat + DLP-restore + проверки + запись ассистента."""
+    budget = NONSTREAM_SENSITIVE_BUDGET_SEC if prepared.sensitive else NONSTREAM_TOTAL_BUDGET_SEC
     try:
-        result = await request.app.state.router.route_chat(
-            prepared.chat_class,
-            prepared.prompt,
-            [],
-            timeout_sec=CHAT_CALL_TIMEOUT_SEC,
-            resilient=True,
-            fallback_classes=prepared.chat_fallback,
-            prefer_provider_id=prepared.chat_prefer,
-            reject_empty=True,
-            purpose="chat",
-            session_id=session_id,
-            sensitive=prepared.sensitive,
+        result = await asyncio.wait_for(
+            request.app.state.router.route_chat(
+                prepared.chat_class,
+                prepared.prompt,
+                [],
+                timeout_sec=CHAT_CALL_TIMEOUT_SEC,
+                resilient=True,
+                fallback_classes=prepared.chat_fallback,
+                prefer_provider_id=prepared.chat_prefer,
+                reject_empty=True,
+                purpose="chat",
+                session_id=session_id,
+                sensitive=prepared.sensitive,
+            ),
+            timeout=budget,
         )
+    except asyncio.TimeoutError as exc:
+        logger.warning("chat: non-stream budget %.0fs exhausted", budget)
+        raise HTTPException(
+            status_code=504,
+            detail="The model did not answer in time. Try again.",
+        ) from exc
     except Exception as exc:  # noqa: BLE001 - mapped to a clear HTTP error below
         logger.warning("chat: model call failed: %s", exc)
         raise _explain_llm_error(exc) from exc
@@ -897,30 +926,37 @@ def _ndjson_line(obj: dict[str, Any]) -> str:
     return json.dumps(obj, ensure_ascii=False) + "\n"
 
 
-def _pick_stream_provider(request: Request, prepared: _Prepared) -> LlmProvider | None:
-    """Прямая выборка провайдера для стрима (router.py не меняется): prefer -> класс -> fallback.
-
-    PERF-1: провайдер «в карантине» (429/5xx/timeout) не получает первый запрос, пока есть
-    живой: иначе каждая реплика начиналась с заведомо провальной попытки в 12–30 с.
-    Stub-провайдеры пропускаются: стримить заглушку бессмысленно — не-стрим путь вернёт NOT_CONFIGURED.
-    """
+def _stream_candidates(request: Request, prepared: _Prepared) -> list[LlmProvider]:
+    """PERF-1: stream failover order — preferred, then healthy class providers, then cooling ones."""
     llm_router = getattr(request.app.state, "router", None)
     if llm_router is None:
-        return None
+        return []
+    seen: set[str] = set()
+    first: list[LlmProvider] = []
+    rest: list[LlmProvider] = []
+
+    def add(provider: LlmProvider | None, target: list[LlmProvider]) -> None:
+        if provider is None or provider.provider_id.startswith("stub"):
+            return
+        if provider.provider_id in seen:
+            return
+        seen.add(provider.provider_id)
+        target.append(provider)
+
     if prepared.chat_prefer:
-        p = llm_router.find_provider(prepared.chat_prefer)
-        if p is not None and not p.provider_id.startswith("stub") and not llm_router.is_cooling(p):
-            return p
-    fallback_choice: LlmProvider | None = None
+        add(llm_router.find_provider(prepared.chat_prefer), first)
     for cls in (prepared.chat_class, *prepared.chat_fallback):
-        for p in llm_router.providers_by_class.get(cls, []):
-            if p.provider_id.startswith("stub"):
-                continue
-            if not llm_router.is_cooling(p):
-                return p
-            if fallback_choice is None:
-                fallback_choice = p
-    return fallback_choice
+        for provider in llm_router.providers_by_class.get(cls, []):
+            add(provider, rest)
+    healthy = [p for p in rest if not llm_router.is_cooling(p)]
+    cooling = [p for p in rest if llm_router.is_cooling(p)]
+    return first + healthy + cooling
+
+
+def _pick_stream_provider(request: Request, prepared: _Prepared) -> LlmProvider | None:
+    """First stream candidate: preferred model, then a healthy provider of the class chain."""
+    candidates = _stream_candidates(request, prepared)
+    return candidates[0] if candidates else None
 
 
 async def _chat_send_stream(session_id: uuid.UUID, payload: dict[str, Any], request: Request) -> StreamingResponse:
@@ -941,76 +977,131 @@ async def _stream_events(session_id: uuid.UUID, request: Request, prepared: _Pre
     Stop (19.2): ``provider.stream()`` идёт в отдельной задаче; генератор гоняется с stop-событием
     сессии и при Stop отменяет задачу, отдавая ``{"type":"stopped"}`` без сохранения ассистента.
     """
-    provider = _pick_stream_provider(request, prepared)
-    if provider is None or prepared.dlp_applied or prepared.sensitive:
+    candidates = _stream_candidates(request, prepared)
+    if not candidates or prepared.dlp_applied or prepared.sensitive:
         result = await _run_nonstream(session_id, request, prepared)
         yield _ndjson_line({"type": "done", "result": result})
         return
 
-    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
     stop_event = asyncio.Event()
-    entry = _ChatStream(stop_event=stop_event)
-    _ACTIVE_STREAMS[session_id] = entry
-
-    async def consume() -> None:
-        try:
-            async for chunk in provider.stream(prepared.prompt, [], CHAT_STREAM_TIMEOUT_SEC):
-                await queue.put(("chunk", chunk))
-                if chunk.final:
-                    return
-            await queue.put(("end", None))
-        except Exception as exc:  # noqa: BLE001 — fallback на не-стрим
-            await queue.put(("error", exc))
-
-    entry.task = asyncio.create_task(consume())
     reply_parts: list[str] = []
     final_usage: dict = {}
     first_token_at: float | None = None
     stopped = False
-    try:
-        while True:
-            getter = asyncio.ensure_future(queue.get())
-            stopper = asyncio.ensure_future(stop_event.wait())
-            await asyncio.wait({getter, stopper}, return_when=asyncio.FIRST_COMPLETED)
-            if stopper.done():
-                stopped = True
-                getter.cancel()
-                break
-            stopper.cancel()
-            kind, payload = getter.result()
-            if kind == "error":
-                logger.warning("chat: stream failed (%s), falling back to non-stream", type(payload).__name__)
-                result = await _run_nonstream(session_id, request, prepared)
-                yield _ndjson_line({"type": "done", "result": result})
+    provider: LlmProvider | None = None
+    stream_deadline = time.monotonic() + STREAM_TOTAL_BUDGET_SEC
+
+    async def fallback_lines() -> AsyncIterator[str]:
+        """Non-stream fallback inside an already-started stream: errors become NDJSON, not a reset."""
+        try:
+            result = await _run_nonstream(session_id, request, prepared)
+        except HTTPException as exc:
+            yield _ndjson_line({"type": "error", "status": exc.status_code, "message": str(exc.detail)})
+        except Exception:  # noqa: BLE001 — the stream is already open
+            logger.exception("chat: non-stream fallback failed")
+            yield _ndjson_line({"type": "error", "status": 502, "message": "The model call failed."})
+        else:
+            yield _ndjson_line({"type": "done", "result": result})
+
+    for candidate in candidates:
+        remaining = stream_deadline - time.monotonic()
+        if remaining <= 0:
+            logger.info("chat: stream budget exhausted before %s, using non-stream", candidate.provider_id)
+            break
+        if stop_event.is_set():
+            stopped = True
+            break
+        provider = candidate
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        entry = _ChatStream(stop_event=stop_event)
+        _ACTIVE_STREAMS[session_id] = entry
+
+        async def consume(target: LlmProvider = candidate, sink: asyncio.Queue = queue) -> None:
+            try:
+                async for chunk in target.stream(prepared.prompt, [], CHAT_STREAM_TIMEOUT_SEC):
+                    await sink.put(("chunk", chunk))
+                    if chunk.final:
+                        return
+                await sink.put(("end", None))
+            except Exception as exc:  # noqa: BLE001 — try the next provider, then non-stream
+                await sink.put(("error", exc))
+
+        entry.task = asyncio.create_task(consume())
+        attempt_failed = False
+        got_delta = False
+        try:
+            while True:
+                getter = asyncio.ensure_future(queue.get())
+                stopper = asyncio.ensure_future(stop_event.wait())
+                await asyncio.wait(
+                    {getter, stopper},
+                    timeout=max(0.001, remaining),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not getter.done() and not stopper.done():
+                    attempt_failed = True
+                    getter.cancel()
+                    break
+                if stopper.done():
+                    stopped = True
+                    getter.cancel()
+                    break
+                stopper.cancel()
+                kind, payload = getter.result()
+                if kind == "error":
+                    attempt_failed = True
+                    break
+                if kind == "end":
+                    break
+                chunk = payload
+                if chunk.text and not chunk.final:
+                    if first_token_at is None:
+                        first_token_at = _monotonic()
+                    got_delta = True
+                    reply_parts.append(chunk.text)
+                    yield _ndjson_line({"type": "delta", "text": chunk.text})
+                if chunk.final:
+                    final_usage = dict(chunk.usage or {})
+                    break
+        finally:
+            entry.task.cancel()
+            _ACTIVE_STREAMS.pop(session_id, None)
+
+        if stopped:
+            break
+        if attempt_failed:
+            try:
+                request.app.state.router.mark_failed(candidate, TIMEOUT_COOLDOWN_SEC)
+            except Exception:  # noqa: BLE001 — cooling is best-effort
+                pass
+            logger.warning("chat: stream failed on %s, trying the next provider", candidate.provider_id)
+            if got_delta:
+                # Частичный текст уже ушёл в UI; полный не-стрим ответ заменит его.
+                async for line in fallback_lines():
+                    yield line
                 return
-            if kind == "end":
-                break
-            chunk = payload
-            if chunk.text and not chunk.final:
-                if first_token_at is None:
-                    first_token_at = _monotonic()
-                reply_parts.append(chunk.text)
-                yield _ndjson_line({"type": "delta", "text": chunk.text})
-            if chunk.final:
-                final_usage = dict(chunk.usage or {})
-                break
-    finally:
-        entry.task.cancel()
-        _ACTIVE_STREAMS.pop(session_id, None)
+            continue
+        if "".join(reply_parts).strip():
+            break
+        try:
+            request.app.state.router.mark_failed(candidate, TIMEOUT_COOLDOWN_SEC)
+        except Exception:  # noqa: BLE001 — cooling is best-effort
+            pass
+        logger.warning("chat: %s produced an empty stream, trying the next provider", candidate.provider_id)
 
     if stopped:
         yield _ndjson_line({"type": "stopped"})
         return
 
-    reply = "".join(reply_parts).strip()
-    if not reply:
-        logger.warning("chat: stream produced an empty reply, falling back to non-stream")
-        result = await _run_nonstream(session_id, request, prepared)
-        yield _ndjson_line({"type": "done", "result": result})
+    if not "".join(reply_parts).strip():
+        async for line in fallback_lines():
+            yield line
         return
-    if provider.provider_id.startswith("stub"):
-        result = await _run_nonstream(session_id, request, prepared)
-        yield _ndjson_line({"type": "done", "result": result})
+
+    reply = "".join(reply_parts).strip()
+    if not reply or provider is None or provider.provider_id.startswith("stub"):
+        async for line in fallback_lines():
+            yield line
         return
 
     # L0 §4/T12: в стриме finish_reason недоступен; детекция по собранному тексту.

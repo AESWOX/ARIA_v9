@@ -860,7 +860,7 @@ export const api = {
       for (const raw of lines) {
         const line = raw.trim();
         if (!line) continue;
-        let evt: { type?: string; text?: string; result?: ChatSendResult };
+        let evt: { type?: string; text?: string; result?: ChatSendResult; message?: string };
         try {
           evt = JSON.parse(line);
         } catch {
@@ -868,6 +868,7 @@ export const api = {
         }
         if (evt.type === "delta" && evt.text) onDelta?.(evt.text);
         else if (evt.type === "done" && evt.result) result = evt.result;
+        else if (evt.type === "error") throw new Error(evt.message || "stream error");
         else if (evt.type === "stopped") stopped = true;
       }
       if (stopped) break;

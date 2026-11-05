@@ -121,11 +121,23 @@ def test_chat_endpoint_survives_gemini_503(monkeypatch):
     monkeypatch.setattr("aria.llm.router.asyncio.sleep", _nosleep)
     c = TestClient(app)
     sid = c.post("/chat/sessions", json={}).json()["session_id"]
+    c.put(
+        f"/chat/sessions/{sid}/profile",
+        json={"style": "solo", "audit": "off", "thinking": "off",
+              "main": {"tier": "free"}, "workers": {}, "auditor": {}},
+    )
     r = c.post(f"/chat/sessions/{sid}/send", json={"content": "hi"})
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["assistant"]["content"] == "answer from deepseek"
-    assert body["provider_id"] == "deepseek-chat" and body["fallback"] is True
+    try:
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["assistant"]["content"] == "answer from deepseek"
+        assert body["provider_id"] == "deepseek-chat" and body["fallback"] is True
+    finally:
+        from aria.db import repository as repo
+        from aria.db.base import session_scope
+
+        with session_scope() as db:
+            repo.set_agent_state(db, "run_profile:default", {}, source="test")
 
 
 # ---- пустой ответ (200 OK без текста и без тулов) = отказ звена, а не успех (15.10, ctx 502) ----

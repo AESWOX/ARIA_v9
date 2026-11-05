@@ -153,6 +153,11 @@ class ProviderRouter:
     def is_cooling(self, provider: LlmProvider) -> bool:
         return self._cooling(provider)
 
+    def mark_failed(self, provider: LlmProvider, seconds: float) -> None:
+        """A stream call failed before the router saw it: count it and cool the provider."""
+        self._on_failure(provider)
+        self._cool(provider, seconds)
+
     @staticmethod
     def _no_keys_cooldown(provider: LlmProvider) -> float:
         pool = getattr(provider, "key_pool", None)
