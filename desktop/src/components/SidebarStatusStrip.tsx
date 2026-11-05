@@ -19,32 +19,36 @@ export function SidebarStatusStrip({ status }: SidebarStatusStripProps) {
   const { activeSessionsLabel, gatewayStatusLabel } = t.app;
 
   return (
-    <Link
-      to="/sessions"
-      title={t.app.statusOverview}
+    <div
       className={cn(
         "block text-left",
         "px-5 pb-2 pt-0.5",
         "text-text-secondary",
-        "transition-colors hover:text-midground",
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground/40",
-        "focus-visible:ring-inset",
+        "font-brand text-xs leading-snug tracking-[0.08em]",
       )}
     >
-      <div className="flex flex-col gap-1 font-brand text-xs leading-snug tracking-[0.08em]">
-        <p className="break-words">
-          <span className="text-text-tertiary">{gatewayStatusLabel}</span>{" "}
-          <span className={cn("font-medium", gw.tone)}>{gw.label}</span>
-        </p>
+      <p className="break-words">
+        <Link
+          to="/channels"
+          title={t.status.gateway}
+          className="text-text-tertiary underline-offset-2 hover:text-midground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground/40 focus-visible:ring-inset"
+        >
+          {gatewayStatusLabel}
+        </Link>{" "}
+        <span className={cn("font-medium", gw.tone)}>{gw.label}</span>
+      </p>
 
-        <p className="break-words">
-          <span className="text-text-tertiary">{activeSessionsLabel}</span>{" "}
-          <span className="tabular-nums text-text-secondary">
-            {status.active_sessions}
-          </span>
-        </p>
-      </div>
-    </Link>
+      <p className="break-words">
+        <Link
+          to="/sessions"
+          title={t.status.activeSessions}
+          className="text-text-tertiary underline-offset-2 hover:text-midground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground/40 focus-visible:ring-inset"
+        >
+          {activeSessionsLabel}
+        </Link>{" "}
+        <span className="tabular-nums text-text-secondary">{status.active_sessions}</span>
+      </p>
+    </div>
   );
 }
 

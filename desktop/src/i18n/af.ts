@@ -59,6 +59,8 @@ export const af: Translations = {
     },
     activeSessionsLabel: "Aktiewe Sessies:",
     gatewayStatusLabel: "Gateway-status:",
+    openChannels: "Maak Channels oop",
+    attachFiles: "Heg lêers aan",
     gatewayStrip: {
       failed: "Begin het misluk",
       off: "Af",

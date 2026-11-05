@@ -90,6 +90,8 @@ export const en: Translations = {
     },
     activeSessionsLabel: "Active Sessions:",
     gatewayStatusLabel: "Gateway Status:",
+    openChannels: "Open Channels",
+    attachFiles: "Attach files",
     gatewayStrip: {
       failed: "Start failed",
       off: "Off",

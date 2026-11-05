@@ -59,6 +59,8 @@ export const hu: Translations = {
     },
     activeSessionsLabel: "Aktív munkamenetek:",
     gatewayStatusLabel: "Átjáró állapota:",
+    openChannels: "Channels megnyitása",
+    attachFiles: "Fájlok csatolása",
     gatewayStrip: {
       failed: "Indítás sikertelen",
       off: "Ki",

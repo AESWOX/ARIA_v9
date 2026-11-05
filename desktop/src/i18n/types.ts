@@ -98,6 +98,8 @@ export interface Translations {
     };
     activeSessionsLabel: string;
     gatewayStatusLabel: string;
+    openChannels: string;
+    attachFiles: string;
     gatewayStrip: {
       failed: string;
       off: string;

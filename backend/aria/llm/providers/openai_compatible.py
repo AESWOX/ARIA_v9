@@ -47,6 +47,9 @@ def _log_http_error(provider_id: str, model: str, resp: httpx.Response) -> None:
 FORBIDDEN_COOLDOWN_SEC = 15 * 60
 DAILY_QUOTA_COOLDOWN_SEC = 60 * 60
 MAX_QUOTA_COOLDOWN_SEC = 24 * 60 * 60
+# PERF-1: one call must not walk the whole key pool (10 keys x 0.7 s + requests = tens of seconds).
+MAX_KEY_ATTEMPTS_PER_CALL = 3
+MAX_404_RETRIES = 1
 _RETRY_DELAY_RE = re.compile(r'"retrydelay":\s*"(\d+(?:\.\d+)?)s"')
 
 _INVALID_KEY_MARKERS = (
@@ -135,7 +138,9 @@ class OpenAICompatibleProvider(LlmProvider):
         return headers
 
     def _max_attempts(self) -> int:
-        return len(self.key_pool) if self.key_pool else 1
+        if not self.key_pool:
+            return 1
+        return min(len(self.key_pool), MAX_KEY_ATTEMPTS_PER_CALL)
 
     def _current_key(self) -> str | None:
         if self.key_pool:
@@ -211,7 +216,7 @@ class OpenAICompatibleProvider(LlmProvider):
 
         last_error: Exception | None = None
         _404_attempts = 0
-        max_404_retries = 4
+        max_404_retries = MAX_404_RETRIES
 
         for _ in range(max(self._max_attempts(), max_404_retries)):
             try:
@@ -280,7 +285,7 @@ class OpenAICompatibleProvider(LlmProvider):
 
         last_error: Exception | None = None
         _404_attempts = 0
-        max_404_retries = 4
+        max_404_retries = MAX_404_RETRIES
 
         for _ in range(max(self._max_attempts(), max_404_retries)):
             try:

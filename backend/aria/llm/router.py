@@ -79,8 +79,10 @@ TIMEOUT_COOLDOWN_SEC = 60.0
 NO_KEYS_COOLDOWN_SEC = 60.0          # если пул ключей не сообщил, когда освободится первый
 NO_KEYS_COOLDOWN_MIN_SEC = 15.0
 NO_KEYS_COOLDOWN_MAX_SEC = 300.0
-RETRY_ATTEMPTS_PER_PROVIDER = 2      # same provider, on 5xx only
-RETRY_BACKOFF_SEC = 1.0              # 1s, then 2s
+RETRY_ATTEMPTS_PER_PROVIDER = 1      # PERF-1: one call per provider, then fail over
+RETRY_BACKOFF_SEC = 1.0              # kept for callers that pass their own backoff
+BREAKER_THRESHOLD = 3                # consecutive failed calls -> open the circuit
+BREAKER_COOLDOWN_SEC = 300.0         # open circuit: skip the provider for 5 minutes
 
 
 def log_cache_usage(provider_id: str, response) -> dict[str, int | None]:
@@ -122,6 +124,8 @@ class ProviderRouter:
     providers_by_class: dict[str, list[LlmProvider]] = field(default_factory=dict)
     # provider_id -> момент (по self.clock), до которого провайдер откладывается в конец очереди
     cooldown_until: dict[str, float] = field(default_factory=dict)
+    # PERF-1: consecutive failed calls per provider; the breaker opens at BREAKER_THRESHOLD.
+    fail_streak: dict[str, int] = field(default_factory=dict)
     clock: callable = time.monotonic
     # П.5.2 ТЗ: семафоры по классам провайдеров (квоты Gemini free-tier / Groq).
     semaphores: dict[str, object] = field(default_factory=dict)
@@ -134,6 +138,20 @@ class ProviderRouter:
         until = self.clock() + seconds
         if until > self.cooldown_until.get(provider.provider_id, 0.0):
             self.cooldown_until[provider.provider_id] = until
+
+    def _on_failure(self, provider: LlmProvider) -> None:
+        """PERF-1 circuit breaker: three failed calls in a row open the circuit for 5 minutes."""
+        streak = self.fail_streak.get(provider.provider_id, 0) + 1
+        self.fail_streak[provider.provider_id] = streak
+        if streak >= BREAKER_THRESHOLD:
+            self._cool(provider, BREAKER_COOLDOWN_SEC)
+
+    def _on_success(self, provider: LlmProvider) -> None:
+        self.fail_streak.pop(provider.provider_id, None)
+        self.cooldown_until.pop(provider.provider_id, None)
+
+    def is_cooling(self, provider: LlmProvider) -> bool:
+        return self._cooling(provider)
 
     @staticmethod
     def _no_keys_cooldown(provider: LlmProvider) -> float:
@@ -184,9 +202,6 @@ class ProviderRouter:
         candidates = self.providers_by_class.get(provider_class, [])
         for provider in candidates:
             ok = await provider.check_connectivity(settings.providers_connectivity_timeout_sec)
-            if not ok:
-                # 1 retry, затем provider_status=offline и немедленное завершение
-                ok = await provider.check_connectivity(settings.providers_connectivity_timeout_sec)
             self._record_provider_status(provider, ProviderStatus.active if ok else ProviderStatus.offline, db=db)
             if ok:
                 return provider
@@ -430,8 +445,6 @@ class ProviderRouter:
         settings = get_settings()
         with timing.stage("connectivity_check"):
             ok = await provider.check_connectivity(settings.providers_connectivity_timeout_sec)
-            if not ok:
-                ok = await provider.check_connectivity(settings.providers_connectivity_timeout_sec)
         self._record_provider_status(provider, ProviderStatus.active if ok else ProviderStatus.offline, db=db)
         return ok
 
@@ -486,15 +499,19 @@ class ProviderRouter:
                     continue
                 for attempt in range(RETRY_ATTEMPTS_PER_PROVIDER):
                     tried += 1
+                    outcome = "ok"
+                    t_attempt = time.monotonic()
                     try:
                         response = await _timed_chat(provider, messages, tools, timeout_sec)
                     except httpx.HTTPStatusError as exc:
                         status = exc.response.status_code
+                        outcome = f"http_{status}"
+                        self._on_failure(provider)
                         last_exc = exc
                         exc.provider_id = provider.provider_id  # чтобы вызывающий мог назвать виновника
                         attempts.append(f"{provider.provider_id} HTTP {status}")
                         if status in ACCOUNT_STATUS:
-                            self.cooldown_until[provider.provider_id] = self.clock() + ACCOUNT_COOLDOWN_SEC
+                            self._cool(provider, ACCOUNT_COOLDOWN_SEC)
                             logger.warning("%s: HTTP %s (account/billing), switching provider for %.0fs", provider.provider_id, status, ACCOUNT_COOLDOWN_SEC)
                             break
                         if status in RETRYABLE_STATUS and attempt + 1 < RETRY_ATTEMPTS_PER_PROVIDER:
@@ -507,10 +524,12 @@ class ProviderRouter:
                             break
                         # 400/401/413/422...: этот провайдер не обслужил запрос (схема тулов, параметры, все ключи
                         # мертвы). Не останавливаемся на первой же ошибке: идём к следующему, пока цепочка не кончится.
-                        self.cooldown_until[provider.provider_id] = self.clock() + OTHER_ERROR_COOLDOWN_SEC
+                        self._cool(provider, OTHER_ERROR_COOLDOWN_SEC)
                         logger.warning("%s: HTTP %s, trying the next provider", provider.provider_id, status)
                         break
                     except (NoAvailableKeys, httpx.TimeoutException, httpx.TransportError) as exc:
+                        outcome = type(exc).__name__
+                        self._on_failure(provider)
                         self._cool(
                             provider,
                             self._no_keys_cooldown(provider) if isinstance(exc, NoAvailableKeys) else TIMEOUT_COOLDOWN_SEC,
@@ -520,26 +539,37 @@ class ProviderRouter:
                         attempts.append(f"{provider.provider_id} {type(exc).__name__}")
                         break
                     except (KeyError, IndexError, TypeError, ValueError) as exc:  # пустой/битый ответ (нет choices, не JSON)
+                        outcome = f"bad_response_{type(exc).__name__}"
+                        self._on_failure(provider)
                         logger.warning("%s: unusable response (%s), switching provider", provider.provider_id, type(exc).__name__)
                         last_exc = exc
                         attempts.append(f"{provider.provider_id} bad response ({type(exc).__name__})")
-                        self.cooldown_until[provider.provider_id] = self.clock() + OTHER_ERROR_COOLDOWN_SEC
+                        self._cool(provider, OTHER_ERROR_COOLDOWN_SEC)
                         break
                     else:
                         if reject_empty and _is_empty_reply(response):
                             # 200 OK, но ни текста, ни вызова тула (reasoning съел лимит, фильтр, сбой): это отказ звена.
                             # Раньше такой ответ возвращался как успех, и чат падал 502, не дойдя до остальной цепочки.
+                            outcome = "empty_reply"
+                            self._on_failure(provider)
                             logger.warning("%s: empty reply (no text, no tool calls), switching provider", provider.provider_id)
                             attempts.append(f"{provider.provider_id} empty reply{_finish_hint(response)}")
                             last_exc = ProviderUnavailable(f"{provider.provider_id} returned an empty reply")
                             break
                         log_cache_usage(provider.provider_id, response)
-                        self.cooldown_until.pop(provider.provider_id, None)  # живой ответ снимает карантин
+                        self._on_success(provider)  # живой ответ снимает карантин и счётчик отказов
                         return RoutingResult(
                             response=response,
                             provider_id=provider.provider_id,
                             degraded_to_free=degraded or (cls != provider_class and cls == "free_tier_reasoning"),
                             fallback=tried > 1,
+                        )
+                    finally:
+                        ms = (time.monotonic() - t_attempt) * 1000.0
+                        timing.record("provider_attempt", ms, ok=outcome == "ok")
+                        logger.info(
+                            "provider_attempt provider=%s class=%s outcome=%s ms=%.0f",
+                            provider.provider_id, cls, outcome, ms,
                         )
         if last_exc is not None and isinstance(last_exc, (httpx.HTTPError, NoAvailableKeys, ProviderUnavailable)):
             # keep the original error so callers map it as before (429 -> 429, timeout -> 504, ...)

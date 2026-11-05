@@ -87,6 +87,8 @@ export const ru: Translations = {
     },
     activeSessionsLabel: "Активные сессии:",
     gatewayStatusLabel: "Статус шлюза:",
+    openChannels: "Открыть Channels",
+    attachFiles: "Прикрепить файлы",
     gatewayStrip: {
       failed: "Ошибка запуска",
       off: "Отключён",

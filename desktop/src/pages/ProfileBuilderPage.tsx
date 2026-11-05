@@ -566,7 +566,7 @@ export default function ProfileBuilderPage() {
               )}
               <ReviewRow
                 label="MCP servers"
-                value={mcpServers.length ? mcpServers.map((s) => s.name).join(", ") : "None"}
+                value={mcpServers.length ? mcpServers.map((s) => s.name).join(", ") : "—"}
               />
             </div>
           )}

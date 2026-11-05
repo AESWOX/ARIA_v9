@@ -59,6 +59,8 @@ export const tr: Translations = {
     },
     activeSessionsLabel: "Aktif Oturumlar:",
     gatewayStatusLabel: "Ağ Geçidi Durumu:",
+    openChannels: "Channels'ı aç",
+    attachFiles: "Dosya ekle",
     gatewayStrip: {
       failed: "Başlatma başarısız",
       off: "Kapalı",

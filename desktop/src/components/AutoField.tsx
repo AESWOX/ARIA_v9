@@ -122,7 +122,7 @@ export function AutoField({
         <Select value={String(value ?? "")} onValueChange={(v) => onChange(v)}>
           {options.map((opt) => (
             <SelectOption key={opt} value={opt}>
-              {opt || "(none)"}
+              {opt || "—"}
             </SelectOption>
           ))}
         </Select>

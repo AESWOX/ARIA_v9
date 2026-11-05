@@ -122,7 +122,7 @@ def _tool_output_preview(msg: m.Message) -> dict[str, Any] | None:
 
 
 def serialize_message(msg: m.Message) -> dict[str, Any]:
-    return {
+    payload = {
         "id": str(msg.id),
         "role": msg.role,
         "content": msg.content,
@@ -130,6 +130,14 @@ def serialize_message(msg: m.Message) -> dict[str, Any]:
         "created_at": iso(msg.created_at),
         "tool_output": _tool_output_preview(msg),
     }
+    meta = msg.content_json if isinstance(msg.content_json, dict) else {}
+    if meta.get("notice"):
+        payload["content_json"] = {
+            "notice": meta["notice"],
+            "action": meta.get("action"),
+            "action_path": meta.get("action_path"),
+        }
+    return payload
 
 
 def serialize_tool_call(call: m.ToolCall) -> dict[str, Any]:

@@ -59,6 +59,8 @@ export const ko: Translations = {
     },
     activeSessionsLabel: "활성 세션:",
     gatewayStatusLabel: "게이트웨이 상태:",
+    openChannels: "Channels 열기",
+    attachFiles: "파일 첨부",
     gatewayStrip: {
       failed: "시작 실패",
       off: "꺼짐",

@@ -59,6 +59,8 @@ export const uk: Translations = {
     },
     activeSessionsLabel: "Активні сесії:",
     gatewayStatusLabel: "Стан шлюзу:",
+    openChannels: "Відкрити Channels",
+    attachFiles: "Прикріпити файли",
     gatewayStrip: {
       failed: "Помилка запуску",
       off: "Вимкнено",

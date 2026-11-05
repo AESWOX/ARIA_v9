@@ -177,7 +177,7 @@ _FORMAT_RE = re.compile(
     r"в\s+файл|in\s+a\s+file|"
     r"в\s+формате|as\s+(?:a\s+)?(?:json|csv|markdown|table)|"
     r"ответ\w*\s+(?:текстом|строкой)|"
-    r"(?:на|по|in)\s+(?:python|go|golang|rust|javascript|typescript|java|bash|powershell|c\+\+)|"
+    r"(?:на|по|in)\s+(?:python|go|golang|rust|javascript|typescript|java|bash|powershell|c\+\+|react|vue|svelte|next\.?js|node|django|fastapi|flutter|kotlin|swift|c#|csharp|html|css)|"
     r"\.(?:md|txt|json|csv|py|go|js|ts|tsx|html|ya?ml|sql|ps1)\b|"
     r"\bjson\b|\bcsv\b|\bmarkdown\b"
     r")",
@@ -189,7 +189,8 @@ _GOAL_VERB_RE = re.compile(
     r"открой|открыть|собери|собрать|сделай|сделать|напиши|написать|создай|создать|"
     r"проверь|проверить|прочитай|прочитать|покажи|показать|выведи|вывести|"
     r"сохрани|сохранить|запусти|запустить|переведи|перевести|составь|составить|"
-    r"сформируй|посчитай|исправь|починить|open|find|fetch|build|create|write|read|"
+    r"сформируй|посчитай|исправь|починить|сверстай|сверстать|верстай|верстать|"
+    r"open|find|fetch|build|create|write|read|"
     r"check|run|save|make|list|summari[sz]e|generate|fix"
     r")\b",
     re.IGNORECASE,
@@ -215,6 +216,27 @@ def explicit_goal_and_format(content: str) -> bool:
 def is_research_task(content: str) -> bool:
     """L3: исследовательская задача не блокируется вопросами на этапе clarify."""
     return bool(_RESEARCH_RE.search(content or ""))
+
+
+_CONTINUATION_RE = re.compile(
+    r"^\s*(?:а\s+)?(?:теперь|дальше|затем|потом|ещё|еще|также|и\s+ещё|и\s+еще|"
+    r"добавь|добавить|продолжи|продолжить|then|now|also|next|add|continue)\b",
+    re.IGNORECASE,
+)
+_PRONOUN_RE = re.compile(
+    r"\b(?:это|этот|эта|эти|его|её|ее|их|там|туда|него|неё|нее|them|it|that|those)\b",
+    re.IGNORECASE,
+)
+
+
+def continues_dialog(content: str, context: list[tuple[str, str]] | None) -> bool:
+    """Rule 0: a message that continues the dialog or points with a pronoun is not a new task."""
+    if not context:
+        return False
+    text = content or ""
+    if _CONTINUATION_RE.search(text):
+        return True
+    return bool(_PRONOUN_RE.search(text))
 
 
 def detect_language(content: str) -> str:
@@ -608,7 +630,11 @@ async def run_gate(
     # An attachment is already concrete input: asking "what format?" after
     # "what is on this image?" was the reported empty/duplicate question path.
     has_attachments = "Attached files:" in (content or "")
-    explicit = explicit_goal_and_format(content) or has_attachments
+    explicit = (
+        explicit_goal_and_format(content)
+        or has_attachments
+        or continues_dialog(content, context)
+    )
     research = not explicit and is_research_task(content)
 
     questions: list[dict] = []

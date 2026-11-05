@@ -59,6 +59,8 @@ export const ga: Translations = {
     },
     activeSessionsLabel: "Seisiúin gníomhacha:",
     gatewayStatusLabel: "Stádas an gateway:",
+    openChannels: "Oscail Channels",
+    attachFiles: "Ceangail comhaid",
     gatewayStrip: {
       failed: "Theip ar an tús",
       off: "As",

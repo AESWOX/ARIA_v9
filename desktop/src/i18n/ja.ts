@@ -59,6 +59,8 @@ export const ja: Translations = {
     },
     activeSessionsLabel: "アクティブなセッション:",
     gatewayStatusLabel: "ゲートウェイの状態:",
+    openChannels: "Channels を開く",
+    attachFiles: "ファイルを添付",
     gatewayStrip: {
       failed: "起動に失敗しました",
       off: "オフ",

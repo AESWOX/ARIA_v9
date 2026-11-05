@@ -70,13 +70,17 @@ async def test_after_persistent_503_next_request_skips_the_provider():
     r = _router(g, q)
     await _route(r)
     await _route(r)
-    assert g.calls == 2, "the 503 retries must not be repeated on every request"
+    assert g.calls == 1, "the failed provider must not be paid again on the next request"
     assert r.cooldown_until["gemini"] == 1000.0 + TRANSIENT_COOLDOWN_SEC
 
 
 async def test_recovered_503_does_not_trigger_cooldown():
     g = Fake("gemini", "free_tier_reasoning", [_status_error(503), "ok"])
     r = _router(g)
+    try:
+        await _route(r)
+    except httpx.HTTPStatusError:
+        pass
     assert (await _route(r)).response.text == "ok"
     assert "gemini" not in r.cooldown_until
 

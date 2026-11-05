@@ -59,6 +59,8 @@ export const es: Translations = {
     },
     activeSessionsLabel: "Sesiones activas:",
     gatewayStatusLabel: "Estado del Gateway:",
+    openChannels: "Abrir Channels",
+    attachFiles: "Adjuntar archivos",
     gatewayStrip: {
       failed: "Inicio fallido",
       off: "Apagado",

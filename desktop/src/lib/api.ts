@@ -2330,6 +2330,12 @@ export interface ChatMsg {
   created_at: string | null;
   /** UI: expandable process row for role="tool". */
   tool_output?: ChatMsgToolOutput | null;
+  /** Notice card marker (e.g. telegram_not_connected) returned by the backend. */
+  content_json?: {
+    notice: string;
+    action?: string | null;
+    action_path?: string | null;
+  } | null;
 }
 
 export type RunMode = "agent" | "plan";

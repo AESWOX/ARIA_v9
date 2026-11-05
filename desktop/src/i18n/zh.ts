@@ -58,6 +58,8 @@ export const zh: Translations = {
     },
     activeSessionsLabel: "活跃会话：",
     gatewayStatusLabel: "网关状态：",
+    openChannels: "打开 Channels",
+    attachFiles: "添加文件",
     gatewayStrip: {
       failed: "启动失败",
       off: "关闭",

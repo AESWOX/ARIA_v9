@@ -105,6 +105,7 @@ export default function NativeChatPage() {
   const [costTodayUnpriced, setCostTodayUnpriced] = useState(0);
   const profileDirty = useRef(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -534,8 +535,8 @@ export default function NativeChatPage() {
   return (
     <div
       className={cn(
-        "grid min-h-[420px] min-w-0 gap-3",
-        focus ? "h-[calc(var(--vh-avail,100vh)_-_6rem)] grid-cols-1" : "h-[calc(var(--vh-avail,100vh)_-_9rem)] md:grid-cols-[240px_minmax(0,1fr)]",
+        "grid min-h-0 min-w-0 flex-1 gap-3",
+        focus ? "grid-cols-1" : "md:grid-cols-[240px_minmax(0,1fr)]",
       )}
     >
       {/* ---------------- sessions ---------------- */}
@@ -679,6 +680,14 @@ export default function NativeChatPage() {
                 </div>
                 {meta && (
                   <div className="px-1 text-[10px] text-muted-foreground">{meta}</div>
+                )}
+                {m.content_json?.notice === "telegram_not_connected" && (
+                  <Link
+                    to={m.content_json.action_path || "/channels"}
+                    className="border border-border px-2 py-1 text-xs underline hover:bg-foreground/5"
+                  >
+                    {t.app.openChannels}
+                  </Link>
                 )}
               </div>
             );
@@ -831,6 +840,25 @@ export default function NativeChatPage() {
             void addFiles(e.dataTransfer.files);
           }}
         >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              void addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <Button
+            ghost
+            aria-label={t.app.attachFiles}
+            title={t.app.attachFiles}
+            disabled={sending || runBusy(run)}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
           <textarea
             className="min-h-[56px] flex-1 resize-none border border-border bg-background/40 px-3 py-2 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/30"
             placeholder={

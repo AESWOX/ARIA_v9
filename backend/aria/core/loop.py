@@ -411,6 +411,8 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
     # Automatic memory/notes recall: the agent used to require an explicit
     # memory_search/search_vault call, so chat questions about past notes were
     # answered from nowhere (owner report 04.11).
+    _memory = ""
+    _vault = ""
     try:
         from aria.memory import store as _memory_store
 
@@ -427,6 +429,14 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
             role_prompt += "\n\n" + _vault
     except Exception:  # noqa: BLE001 — notes must not break the task
         logger.warning("agent vault recall failed for task %s", task_id, exc_info=True)
+    try:
+        from aria.core import recall_honesty
+
+        _honesty = recall_honesty.missing_note(task.objective or "", [_memory, _vault])
+        if _honesty:
+            role_prompt += "\n\n" + _honesty
+    except Exception:  # noqa: BLE001 — a note must not break the task
+        logger.warning("agent recall honesty note failed for task %s", task_id, exc_info=True)
     _hint = runprofile.thinking_hint(profile)
     if _hint:
         role_prompt += "\n\n" + _hint

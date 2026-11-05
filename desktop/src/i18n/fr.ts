@@ -59,6 +59,8 @@ export const fr: Translations = {
     },
     activeSessionsLabel: "Sessions actives:",
     gatewayStatusLabel: "État de la passerelle:",
+    openChannels: "Ouvrir Channels",
+    attachFiles: "Joindre des fichiers",
     gatewayStrip: {
       failed: "Échec du démarrage",
       off: "Désactivé",

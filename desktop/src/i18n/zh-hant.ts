@@ -59,6 +59,8 @@ export const zhHant: Translations = {
     },
     activeSessionsLabel: "使用中工作階段：",
     gatewayStatusLabel: "閘道狀態：",
+    openChannels: "開啟 Channels",
+    attachFiles: "附加檔案",
     gatewayStrip: {
       failed: "啟動失敗",
       off: "關閉",

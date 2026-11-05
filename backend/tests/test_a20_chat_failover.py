@@ -47,17 +47,18 @@ async def _route(r, **kw):
     )
 
 
-async def test_503_is_retried_on_same_provider():
-    g = Fake("gemini", "free_tier_reasoning", [_status_error(503), "ok"])
-    res = await _route(_router(g))
-    assert res.response.text == "ok" and g.calls == 2 and res.provider_id == "gemini"
+async def test_503_moves_to_the_next_provider_without_retry():
+    g = Fake("gemini", "free_tier_reasoning", [_status_error(503), "never"])
+    q = Fake("groq", "free_tier_reasoning", ["ok"])
+    res = await _route(_router(g, q))
+    assert res.response.text == "ok" and g.calls == 1 and res.provider_id == "groq"
 
 
 async def test_persistent_503_fails_over_to_next_provider_in_class():
     g = Fake("gemini", "free_tier_reasoning", [_status_error(503)] * 2)
     q = Fake("groq", "free_tier_reasoning", ["from groq"])
     res = await _route(_router(g, q))
-    assert res.provider_id == "groq" and res.fallback is True and g.calls == 2
+    assert res.provider_id == "groq" and res.fallback is True and g.calls == 1
 
 
 async def test_falls_back_to_deepseek_class():

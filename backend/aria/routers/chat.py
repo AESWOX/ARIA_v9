@@ -29,7 +29,7 @@ from sqlalchemy import func, select
 
 from aria.api.auth import require_runtime_token
 from aria.config import get_settings
-from aria.core import runprofile, timing
+from aria.core import runprofile, telegram_gate, timing
 from aria.core.compliance import COMPLIANCE_TEXT
 from aria.core.persona import PERSONA_TEXT
 from aria.db import models as m
@@ -51,9 +51,9 @@ _monotonic = time.monotonic
 
 CHAT_PROVIDER_CLASS = "free_tier_reasoning"  # Gemini Flash first, then Groq
 CHAT_FALLBACK_CLASSES = ("standard_reasoning",)  # DeepSeek chat, then Gemini Pro (A20)
-# A stuck provider must not hold the chat for three minutes: fail over sooner.
-CHAT_STREAM_TIMEOUT_SEC = 30
-CHAT_CALL_TIMEOUT_SEC = 40
+# PERF-1: a stuck provider must not hold the chat. First token budget p95 <= 12 s.
+CHAT_STREAM_TIMEOUT_SEC = 12
+CHAT_CALL_TIMEOUT_SEC = 20
 HISTORY_MESSAGES = 40
 HISTORY_CHAR_BUDGET = 60_000
 MAX_CONTENT_CHARS = 20_000
@@ -94,6 +94,51 @@ _TERMINAL_TASK_STATUSES = {
 # P0 A3: только эти статусы означают «задача реально идёт». awaiting_attention / needs_rework /
 # approved / draft больше не блокируют Chat→Agent молчаливым return None.
 _RUNNING_TASK_STATUSES = {TaskStatus.in_progress, TaskStatus.under_audit}
+
+
+async def _telegram_notice(session_id: uuid.UUID, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Personal Telegram data without a linked bot: answer with a card, never from memory."""
+    content = str(payload.get("content") or "").strip()
+    if not content or payload.get("retry"):
+        return None
+    notice = telegram_gate.blocked_notice(content, get_settings())
+    if notice is None:
+        return None
+
+    def _store() -> tuple[Any, dict[str, Any], Any, dict[str, Any]]:
+        with session_scope() as db:
+            session = repo.get_session(db, session_id)
+            if session is None:
+                raise HTTPException(status_code=404, detail="session not found")
+            user_msg = repo.append_message(
+                db, session, role="user", content=content, source_trust=SourceTrust.trusted
+            )
+            assistant = repo.append_message(
+                db,
+                session,
+                role="assistant",
+                content=notice["text"],
+                source_trust=SourceTrust.trusted,
+                content_json={
+                    "notice": notice["notice"],
+                    "action": "open_channels",
+                    "action_path": "/channels",
+                },
+            )
+            session.updated_at = datetime.now(timezone.utc)
+            if (session.title or "") in DEFAULT_TITLES:
+                session.title = content.replace("\n", " ")[:60]
+            return user_msg, serialize_message(user_msg), assistant, serialize_message(assistant)
+
+    user_msg, user_payload, assistant_msg, assistant_payload = run_with_db_retry(_store)
+    emit_message_created(user_msg, session_id, None)
+    emit_message_created(assistant_msg, session_id, None)
+    return {
+        "ok": True,
+        "mode": "telegram_not_connected",
+        "user": user_payload,
+        "assistant": assistant_payload,
+    }
 
 
 async def _switch_to_agent(session_id: uuid.UUID, payload: dict[str, Any], request: Request) -> dict[str, Any] | None:
@@ -584,6 +629,18 @@ async def chat_send(
     # chat_total: весь хендлер, от запроса до сохранённого ответа (4xx/5xx считаются как errors).
     # Не декоратор: при ``from __future__ import annotations`` FastAPI разбирает аннотации в globals обёртки.
     with timing.stage("chat_total"):
+        telegram = await _telegram_notice(session_id, payload)
+        if telegram is not None:
+            if payload.get("stream"):
+                async def _telegram_events() -> AsyncIterator[str]:
+                    yield _ndjson_line({"type": "done", "result": telegram})
+
+                return StreamingResponse(
+                    _telegram_events(),
+                    media_type="application/x-ndjson",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
+            return telegram
         switched = await _switch_to_agent(session_id, payload, request)
         if switched is not None:
             if payload.get("stream"):
@@ -698,6 +755,11 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
         logger.exception("chat: vault recall failed")
         vault_block = ""
     context_blocks = "\n\n".join(block for block in (memory_block, vault_block) if block)
+    from aria.core import recall_honesty
+
+    honesty = recall_honesty.missing_note(last_user_text, [memory_block, vault_block])
+    if honesty:
+        context_blocks = "\n\n".join(block for block in (context_blocks, honesty) if block)
 
     # 2) call the model outside any DB transaction
     with session_scope() as db:
@@ -838,6 +900,8 @@ def _ndjson_line(obj: dict[str, Any]) -> str:
 def _pick_stream_provider(request: Request, prepared: _Prepared) -> LlmProvider | None:
     """Прямая выборка провайдера для стрима (router.py не меняется): prefer -> класс -> fallback.
 
+    PERF-1: провайдер «в карантине» (429/5xx/timeout) не получает первый запрос, пока есть
+    живой: иначе каждая реплика начиналась с заведомо провальной попытки в 12–30 с.
     Stub-провайдеры пропускаются: стримить заглушку бессмысленно — не-стрим путь вернёт NOT_CONFIGURED.
     """
     llm_router = getattr(request.app.state, "router", None)
@@ -845,13 +909,18 @@ def _pick_stream_provider(request: Request, prepared: _Prepared) -> LlmProvider 
         return None
     if prepared.chat_prefer:
         p = llm_router.find_provider(prepared.chat_prefer)
-        if p is not None and not p.provider_id.startswith("stub"):
+        if p is not None and not p.provider_id.startswith("stub") and not llm_router.is_cooling(p):
             return p
+    fallback_choice: LlmProvider | None = None
     for cls in (prepared.chat_class, *prepared.chat_fallback):
         for p in llm_router.providers_by_class.get(cls, []):
-            if not p.provider_id.startswith("stub"):
+            if p.provider_id.startswith("stub"):
+                continue
+            if not llm_router.is_cooling(p):
                 return p
-    return None
+            if fallback_choice is None:
+                fallback_choice = p
+    return fallback_choice
 
 
 async def _chat_send_stream(session_id: uuid.UUID, payload: dict[str, Any], request: Request) -> StreamingResponse:
