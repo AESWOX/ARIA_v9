@@ -56,9 +56,10 @@ function SeatSelect({
 }
 
 export function TeamPanel({
-  profile, models, disabled, notes, onChange,
+  profile, models, disabled, notes, onChange, allowBoss = true, onRequestPlan,
 }: {
   profile: RunProfile; models: ChatModels | null; disabled: boolean; notes: string[]; onChange: (p: RunProfile) => void;
+  allowBoss?: boolean; onRequestPlan?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -94,13 +95,23 @@ export function TeamPanel({
             </span>
             {(["solo", "boss"] as const).map((st) => (
               <button
-                type="button" key={st} disabled={disabled} onClick={() => set("style", st)}
-                className={cn("border border-border px-2 py-0.5", profile.style === st ? "bg-foreground/10 font-medium" : "text-muted-foreground")}
-                title={st === "solo" ? "One model does the whole task" : "A boss model plans and hands steps to helper models. Works in Agent / Plan modes only"}
+                type="button" key={st} disabled={disabled || (!allowBoss && st === "boss")} onClick={() => set("style", st)}
+                className={cn("border border-border px-2 py-0.5", profile.style === st ? "bg-foreground/10 font-medium" : "text-muted-foreground", !allowBoss && st === "boss" && "opacity-50")}
+                title={st === "solo" ? "One model does the whole task" : allowBoss ? "A boss model plans and hands steps to helper models. Works in Plan mode only" : "Boss + helpers work in Plan mode"}
               >
                 {st === "solo" ? "One model" : "Boss + helpers"}
               </button>
             ))}
+            {!allowBoss && (
+              <span className="text-muted-foreground">
+                Boss + helpers work in Plan mode.
+                {onRequestPlan && (
+                  <button type="button" className="ml-1 underline" onClick={onRequestPlan}>
+                    Switch to Plan
+                  </button>
+                )}
+              </span>
+            )}
             <label
               className="flex items-center gap-1"
               title="Off: pick a model class (strong/medium/free/fast) and the router chooses a concrete model with fallback. On: pin exact provider models."

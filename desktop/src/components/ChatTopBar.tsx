@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, Copy, Maximize2, Minimize2, Loader2, Info } from "lucide-react";
-import type { ChatModels, ChatUsage, RunProfile, ProfileSeat } from "@/lib/api";
+import type { ChatUsage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 /* Top bar of the chat: what you are talking to and how, at a glance, plus the
@@ -8,23 +8,9 @@ import { cn } from "@/lib/utils";
    conversation the whole window). Purely presentational: all state lives in
    NativeChatPage. */
 
-const TIER_SHORT: Record<string, string> = { premium: "Strong", standard: "Medium", free: "Free", fast: "Fast" };
-
 /** D-38: under ten cents two decimals would read as $0.00; keep four there. */
 export function formatUsd(value: number): string {
   return value < 0.1 ? value.toFixed(4) : value.toFixed(2);
-}
-const AUDIT_SHORT = { off: "no check", light: "quick check", strict: "strict check" } as const;
-const THINK_SHORT = { off: "fast", medium: "balanced", high: "deep" } as const;
-
-export function seatLabel(seat: ProfileSeat | undefined, models: ChatModels | null): string {
-  if (!seat) return "auto";
-  if (seat.model) {
-    const found = models?.models.find((m) => m.id === seat.model || m.model === seat.model);
-    return found?.model ?? seat.model;
-  }
-  if (seat.tier) return TIER_SHORT[seat.tier] ?? seat.tier;
-  return "auto";
 }
 
 function Chip({ children, title, tone }: { children: React.ReactNode; title?: string; tone?: "warn" }) {
@@ -42,12 +28,10 @@ function Chip({ children, title, tone }: { children: React.ReactNode; title?: st
 }
 
 export function ChatTopBar({
-  title, mode, profile, models, busy, waiting, costToday, costTodayUnpriced, usage, focus, inspectorOpen, onCopyChat, onToggleInspector, onToggleFocus,
+  title, mode, busy, waiting, costToday, costTodayUnpriced, usage, focus, inspectorOpen, onCopyChat, onToggleInspector, onToggleFocus,
 }: {
   title: string;
   mode: string;
-  profile: RunProfile | null;
-  models: ChatModels | null;
   busy: boolean;
   waiting: boolean;
   costToday: number | null;
@@ -79,14 +63,6 @@ export function ChatTopBar({
         </Chip>
       )}
       <Chip title="Mode">{mode}</Chip>
-      {profile && (
-        <>
-          <Chip title="Main model (who plans / answers)">{seatLabel(profile.main, models)}</Chip>
-          <Chip title="Thinking / check">
-            {THINK_SHORT[profile.thinking]} · {AUDIT_SHORT[profile.audit]}
-          </Chip>
-        </>
-      )}
       {usage?.context_pct != null && (
         <Chip title="Session context used (prompt tokens / model window)">
           ctx {usage.context_pct}%

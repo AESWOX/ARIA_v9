@@ -299,7 +299,31 @@ export const defaultLargeTheme: DashboardTheme = {
   },
 };
 
+export const blackTheme: DashboardTheme = {
+  ...defaultTheme,
+  name: "black",
+  label: "Black",
+  description: "Deep black - the default 0.2.1 look",
+};
+
+export const whiteTheme: DashboardTheme = {
+  ...ariaBlueTheme,
+  name: "white",
+  label: "White",
+  description: "Light canvas with dark text",
+};
+
+export const grayTheme: DashboardTheme = {
+  ...monoTheme,
+  name: "gray",
+  label: "Gray",
+  description: "Neutral gray without a colour accent",
+};
+
 export const BUILTIN_THEMES: Record<string, DashboardTheme> = {
+  black: blackTheme,
+  white: whiteTheme,
+  gray: grayTheme,
   default: defaultTheme,
   "default-large": defaultLargeTheme,
   "aria-blue": ariaBlueTheme,

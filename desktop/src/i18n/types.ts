@@ -859,6 +859,26 @@ export interface Translations {
     sentAt: string;
     tookSeconds: string;
   };
+  chatComposer: {
+    model: string;
+    thinking: string;
+    advanced: string;
+    auto: string;
+    noKey: string;
+    thinkingFast: string;
+    thinkingBalanced: string;
+    thinkingDeep: string;
+    mode: string;
+    send: string;
+    stop: string;
+    useForNew: string;
+    newChatTab: string;
+    closeTab: string;
+    close: string;
+    reset: string;
+    placeholderChat: string;
+    placeholderPlan: string;
+  };
 
   // UI-2: session inspector in chat.
   chatInspector: {

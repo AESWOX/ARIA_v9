@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { BUILTIN_THEMES, defaultTheme } from "./presets";
+import { BUILTIN_THEMES, blackTheme } from "./presets";
 import { applyThemeOverrides, readThemeOverrides, saveThemeOverrides } from "./overrides";
 import { readSurface, saveSurface } from "./surface";
 import {
@@ -461,7 +461,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       return (
         BUILTIN_THEMES[name] ??
         userThemeDefs[name] ??
-        defaultTheme
+        blackTheme
       );
     },
     [userThemeDefs],
@@ -653,8 +653,8 @@ export function useTheme(): ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: defaultTheme,
-  themeName: "default",
+  theme: blackTheme,
+  themeName: "black",
   availableThemes: Object.values(BUILTIN_THEMES).map((t) => ({
     name: t.name,
     label: t.label,

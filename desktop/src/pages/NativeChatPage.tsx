@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { AlertTriangle, Check, Loader2, MessageCircle, Plus, RotateCcw, Send, Square, X } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { AlertTriangle, Check, Loader2, RotateCcw, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { CHAT_MODES, normalizeChatMode, type ChatMode } from "@/lib/chat-modes";
 import { formatLocalTime, processingSeconds } from "@/lib/message-timing";
@@ -12,6 +12,8 @@ import { Markdown } from "@/components/Markdown";
 import { TeamPanel } from "@/components/TeamPanel";
 import { TaskSpecPanel, type ClarifyQuestion } from "@/components/TaskSpecPanel";
 import { ChatTopBar } from "@/components/ChatTopBar";
+import { ChatComposer } from "@/components/ChatComposer";
+import { SessionTabs } from "@/components/SessionTabs";
 import { SessionInspector } from "@/components/SessionInspector";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 
@@ -75,6 +77,7 @@ function runBusy(run: RunState | null): boolean {
 
 export default function NativeChatPage() {
   const { t, locale } = useI18n();
+  const [searchParams] = useSearchParams();
   const [status, setStatus] = useState<ChatStatus | null>(null);
   const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -99,13 +102,16 @@ export default function NativeChatPage() {
   const [profile, setProfile] = useState<RunProfile | null>(null);
   const [models, setModels] = useState<ChatModels | null>(null);
   const [profileNotes, setProfileNotes] = useState<string[]>([]);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [savingDefault, setSavingDefault] = useState(false);
+  const [openIds, setOpenIds] = useState<string[]>([]);
+  const prefsLoaded = useRef(false);
   const [seen, setSeen] = useState<SeenMap>(() => loadSeen());
   const [focus, setFocus] = useState<boolean>(() => loadFocus());
   const [costToday, setCostToday] = useState<number | null>(null);
   const [costTodayUnpriced, setCostTodayUnpriced] = useState(0);
   const profileDirty = useRef(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -223,16 +229,30 @@ export default function NativeChatPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [st, list] = await Promise.all([api.chatStatus(), api.chatSessions()]);
+        const [st, list, prefs] = await Promise.all([
+          api.chatStatus(),
+          api.chatSessions(),
+          api.getDashboardPrefs().catch(() => null),
+        ]);
         if (cancelled) return;
         setStatus(st);
         setSessions(list);
-        if (list.length > 0) {
-          setActiveId(list[0].id);
-          setMessages(await api.chatMessages(list[0].id));
+        const stored = (prefs?.open_tabs ?? []).filter((id) => list.some((row) => row.id === id));
+        setOpenIds(stored.length > 0 ? stored : list.slice(0, 8).map((row) => row.id));
+        const resume = searchParams.get("resume");
+        const wanted =
+          resume && list.some((row) => row.id === resume)
+            ? resume
+            : prefs?.active_tab && list.some((row) => row.id === prefs.active_tab)
+              ? prefs.active_tab
+              : list[0]?.id ?? null;
+        prefsLoaded.current = true;
+        if (wanted) {
+          setActiveId(wanted);
+          setMessages(await api.chatMessages(wanted));
           // After a reload the run state is what brings back the clarification card (PRD-3)
           // and resumes polling of a task that is still running.
-          const state = await api.runState(list[0].id).catch(() => null);
+          const state = await api.runState(wanted).catch(() => null);
           if (!cancelled && state) setRun(state);
         }
       } catch (e) {
@@ -245,6 +265,22 @@ export default function NativeChatPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!prefsLoaded.current) return;
+    const timer = window.setTimeout(() => {
+      void api.saveDashboardPrefs({ open_tabs: openIds, active_tab: activeId }).catch(() => undefined);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [openIds, activeId]);
+
+  useEffect(() => {
+    if (!prefsLoaded.current || sessions.length === 0) return;
+    setOpenIds((prev) => {
+      const next = prev.filter((id) => sessions.some((row) => row.id === id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [sessions]);
 
   // PRD-3: the clarification card survives a reload and a session switch. While the task waits
   // for answers the server returns the open questions with the run state; once it stops
@@ -315,6 +351,7 @@ export default function NativeChatPage() {
   const openSession = async (id: string) => {
     if (sending || id === activeId) return;
     setActiveId(id);
+    setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
     setError(null);
     setMessages([]);
     setRun(null);
@@ -326,6 +363,46 @@ export default function NativeChatPage() {
       /* no run info: the session is shown as plain chat history */
     }
   };
+
+  const closeTab = (id: string) => {
+    const index = openIds.indexOf(id);
+    const next = openIds.filter((item) => item !== id);
+    setOpenIds(next);
+    if (id !== activeId) return;
+    const neighbor = next[Math.min(index, next.length - 1)] ?? null;
+    if (neighbor) void openSession(neighbor);
+    else newChat();
+  };
+
+  const renameTab = async (id: string, title: string) => {
+    try {
+      await api.renameSession(id, title);
+      setSessions((prev) => prev.map((row) => (row.id === id ? { ...row, title } : row)));
+    } catch (e) {
+      setError(errMessage(e));
+    }
+  };
+
+  const saveDefaultProfile = async () => {
+    if (!profile) return;
+    setSavingDefault(true);
+    try {
+      const saved = await api.chatSaveDefaultProfile(profile);
+      setProfile(saved.profile);
+      setProfileNotes(saved.notes);
+      profileDirty.current = false;
+    } catch (e) {
+      setError(errMessage(e));
+    } finally {
+      setSavingDefault(false);
+    }
+  };
+
+  const resumeId = searchParams.get("resume");
+  useEffect(() => {
+    if (resumeId && sessions.some((row) => row.id === resumeId)) void openSession(resumeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeId, sessions.length]);
 
   const newChat = () => {
     if (sending) return;
@@ -345,6 +422,7 @@ export default function NativeChatPage() {
     if (!sid) {
       sid = (await api.chatCreate(text.slice(0, 60))).session_id;
       setActiveId(sid);
+      setOpenIds((prev) => (prev.includes(sid as string) ? prev : [...prev, sid as string]));
     }
     await syncProfile(sid);
     setMessages((prev) => [
@@ -457,7 +535,7 @@ export default function NativeChatPage() {
     const outgoingText = outgoing(text);
     try {
       if (mode !== "chat" && !retry) {
-        await sendRun(outgoingText, mode);
+        await sendRun(outgoingText, "agent");
         setInput("");
         setAttachments([]);
         return;
@@ -467,6 +545,7 @@ export default function NativeChatPage() {
       if (!sid) {
         sid = (await api.chatCreate()).session_id;
         setActiveId(sid);
+        setOpenIds((prev) => (prev.includes(sid as string) ? prev : [...prev, sid as string]));
       }
       await syncProfile(sid);
       if (!retry) {
@@ -494,8 +573,8 @@ export default function NativeChatPage() {
       // 19.4b B2: запросу нужен инструмент — бэкенд перевёл сессию в Agent.
       // Переключаем вкладку и включаем опрос запуска: шаги и ответ придут существующим polling.
       const returnedMode = (sent as { mode?: unknown }).mode;
-      if (returnedMode && normalizeChatMode(returnedMode) === "agent") {
-        setMode("agent");
+      if (returnedMode && normalizeChatMode(returnedMode) === "plan") {
+        setMode("plan");
         setRun(await api.runState(sid).catch(() => null));
       }
       // П.3.1 ТЗ: бэкенд вернул пакет уточнений -> показываем карточку, а не просто текст.
@@ -523,81 +602,30 @@ export default function NativeChatPage() {
     }
   };
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void send(false);
-    }
-  };
-
   const notConfigured = status !== null && !status.configured;
 
   return (
-    <div
-      className={cn(
-        "grid min-h-0 min-w-0 flex-1 gap-3",
-        focus ? "grid-cols-1" : "md:grid-cols-[240px_minmax(0,1fr)]",
-      )}
-    >
-      {/* ---------------- sessions ---------------- */}
-      <div className={cn("min-h-0 flex-col gap-2 border border-border bg-background/40 p-2", focus ? "hidden" : "flex")}>
-        <Button size="sm" onClick={newChat} disabled={sending}>
-          <Plus className="mr-1 h-3 w-3" /> New chat
-        </Button>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {sessions.length === 0 && !loading && (
-            <p className="p-2 text-xs text-muted-foreground">No chats yet.</p>
-          )}
-          {sessions.map((s) => {
-            const ind = rowIndicator(s, activeId, seen);
-            return (
-            <button
-              type="button"
-              key={s.id}
-              onClick={() => void openSession(s.id)}
-              className={cn(
-                "block w-full truncate px-2 py-1.5 text-left text-xs hover:bg-foreground/5",
-                s.id === activeId && "bg-foreground/10",
-              )}
-              title={s.title}
-            >
-              <MessageCircle className="mr-1 inline h-3 w-3 text-muted-foreground" />
-              {s.title || "Untitled"}
-              <span className="ml-1 text-muted-foreground">({s.message_count})</span>
-              {ind === "approve" && (
-                <span className="ml-1 inline-flex items-center gap-1 text-amber-500" title="Waiting for your Approve / Reject">
-                  <span className="relative inline-flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500 opacity-75" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
-                  </span>
-                  needs you
-                </span>
-              )}
-              {ind === "unread" && (
-                <span className="ml-1 inline-flex items-center gap-1 text-emerald-500" title="New reply you have not read">
-                  <span className="relative inline-flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-                  </span>
-                  new
-                </span>
-              )}
-              {ind === "busy" && (
-                <Loader2 className="ml-1 inline h-3 w-3 animate-spin text-muted-foreground" aria-label="Working" />
-              )}
-            </button>
-            );
-          })}
-        </div>
-      </div>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+      <SessionTabs
+        sessions={sessions}
+        openIds={openIds}
+        activeId={activeId}
+        draftActive={activeId === null}
+        indicator={(id) => {
+          const row = sessions.find((item) => item.id === id);
+          return row ? rowIndicator(row, activeId, seen) : null;
+        }}
+        onOpen={(id) => void openSession(id)}
+        onClose={closeTab}
+        onNew={newChat}
+        onRename={(id, title) => void renameTab(id, title)}
+      />
 
       {/* ---------------- conversation ---------------- */}
       <div className="flex min-h-0 min-w-0 flex-col border border-border bg-background/40">
         <ChatTopBar
           title={sessions.find((x) => x.id === activeId)?.title ?? ""}
           mode={CHAT_MODES.find((md) => md.id === mode)?.label ?? mode}
-          profile={profile}
-          models={models}
           busy={runBusy(run) || sending}
           waiting={(run?.attention.length ?? 0) > 0}
           costToday={costToday}
@@ -787,109 +815,31 @@ export default function NativeChatPage() {
           </div>
         )}
 
-        <div className="flex items-center gap-1 border-t border-border px-2 pt-2" role="radiogroup" aria-label="Mode">
-          {CHAT_MODES.map((md) => (
-            <button
-              type="button"
-              key={md.id}
-              role="radio"
-              aria-checked={mode === md.id}
-              title={md.hint}
-              disabled={sending}
-              onClick={() => setMode(md.id)}
-              className={cn(
-                "border border-border px-2 py-0.5 text-xs",
-                mode === md.id ? "bg-foreground/10 font-medium" : "text-muted-foreground hover:bg-foreground/5",
-              )}
-            >
-              {md.label}
-            </button>
-          ))}
-          <span className="ml-2 truncate text-xs text-muted-foreground">
-            {CHAT_MODES.find((md) => md.id === mode)?.hint}
-          </span>
-        </div>
-        {(attachments.length > 0 || uploading) && (
-          <div className="flex flex-wrap items-center gap-1 px-2 pt-2">
-            {attachments.map((a, i) => (
-              <span
-                key={`${a.path}-${i}`}
-                className="flex items-center gap-1 border border-border px-2 py-0.5 text-xs"
-              >
-                {a.name}
-                <button
-                  type="button"
-                  aria-label="Remove attachment"
-                  onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-            {uploading && <span className="text-xs text-muted-foreground">{t.common.loading}</span>}
-          </div>
-        )}
-        <div
-          className="flex gap-2 p-2"
-          onDragOver={(e) => {
-            if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+        <ChatComposer
+          input={input}
+          onInputChange={setInput}
+          attachments={attachments}
+          uploading={uploading}
+          onAddFiles={(files) => void addFiles(files)}
+          onRemoveAttachment={(index) => setAttachments((prev) => prev.filter((_, j) => j !== index))}
+          sending={sending}
+          busy={runBusy(run)}
+          mode={mode}
+          onModeChange={setMode}
+          profile={profile}
+          profileNotes={profileNotes}
+          models={models}
+          onChangeProfile={changeProfile}
+          onSaveDefault={() => void saveDefaultProfile()}
+          savingDefault={savingDefault}
+          onSend={() => void send(false)}
+          onStop={() => {
+            if (activeId) void api.chatStop(activeId).catch(() => undefined);
           }}
-          onDrop={(e) => {
-            if (e.dataTransfer.files.length === 0) return;
-            e.preventDefault();
-            void addFiles(e.dataTransfer.files);
-          }}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              void addFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          <Button
-            ghost
-            aria-label={t.app.attachFiles}
-            title={t.app.attachFiles}
-            disabled={sending || runBusy(run)}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-          <textarea
-            className="min-h-[56px] flex-1 resize-none border border-border bg-background/40 px-3 py-2 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/30"
-            placeholder={
-              mode === "chat"
-                ? "Message ARIA...  (Enter to send, Shift+Enter for a new line; drop or paste files)"
-                : "Describe the task...  (Enter to start, Shift+Enter for a new line; drop or paste files)"
-            }
-            value={input}
-            disabled={sending || runBusy(run)}
-            onChange={(e) => setInput(e.target.value)}
-            onPaste={(e) => {
-              if (e.clipboardData.files.length === 0) return;
-              e.preventDefault();
-              void addFiles(e.clipboardData.files);
-            }}
-            onKeyDown={onKeyDown}
-          />
-          {mode === "chat" && sending && activeId && (
-            <Button
-              ghost
-              onClick={() => void api.chatStop(activeId).catch(() => undefined)}
-              aria-label="Stop"
-              title="Stop the answer (the chat stays open)"
-            >
-              <Square className="h-4 w-4" />
-            </Button>
-          )}
-          <Button onClick={() => void send(false)} disabled={sending || runBusy(run) || !input.trim()} aria-label="Send">
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </Button>
-        </div>
+          advancedOpen={advancedOpen}
+          onToggleAdvanced={() => setAdvancedOpen((open) => !open)}
+          error={null}
+        />
           </div>
           {inspectorOpen && (
             <aside className="flex w-[340px] shrink-0 flex-col overflow-y-auto border-l border-border bg-background/40">
