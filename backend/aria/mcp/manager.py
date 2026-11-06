@@ -32,7 +32,7 @@ logger = logging.getLogger("local_agent.mcp")
 MAX_TEXT = 20000
 MAX_TOOL_NAME = 64
 CONNECT_TIMEOUT = 45.0
-MCP_ROLES: tuple[str, ...] = ("general", "orchestrator")
+MCP_ROLES: tuple[str, ...] = ("general", "orchestrator", "coder")
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 _CONN_FIELDS = ("url", "command", "args", "env", "headers")
 

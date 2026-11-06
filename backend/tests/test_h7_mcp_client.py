@@ -255,7 +255,7 @@ def test_only_allowed_roles_see_mcp_tools(data_dir):
         return mgr.tool_names_for_role("general"), mgr.tool_names_for_role("coder"), mgr.tool_names_for_role("qa_auditor")
 
     general, coder, auditor = _with_manager(data_dir, _fake_cfg(), body)
-    assert "mcp__fake__echo" in general and coder == () and auditor == ()
+    assert "mcp__fake__echo" in general and "mcp__fake__echo" in coder and auditor == ()
 
 
 def test_big_and_error_results_are_normalized(data_dir):
