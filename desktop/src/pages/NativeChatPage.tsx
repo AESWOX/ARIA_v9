@@ -9,12 +9,11 @@ import type { ChatModels, ChatMsg, ChatSessionRow, ChatStatus, ChatUsage, RunPro
 import { cn } from "@/lib/utils";
 import { Button } from "@vendor/ui/ui/components/button";
 import { Markdown } from "@/components/Markdown";
-import { TeamPanel } from "@/components/TeamPanel";
-import { TaskSpecPanel, type ClarifyQuestion } from "@/components/TaskSpecPanel";
+import type { ClarifyQuestion } from "@/components/TaskSpecPanel";
+import { WorkPanel } from "@/components/WorkPanel";
 import { ChatTopBar } from "@/components/ChatTopBar";
 import { ChatComposer } from "@/components/ChatComposer";
 import { SessionTabs } from "@/components/SessionTabs";
-import { SessionInspector } from "@/components/SessionInspector";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 
 /* ------------------------------------------------------------------ */
@@ -858,19 +857,19 @@ export default function NativeChatPage() {
         />
           </div>
           {inspectorOpen && (
-            <aside className="flex w-[340px] shrink-0 flex-col overflow-y-auto border-l border-border bg-background/40">
-              <SessionInspector
-                usage={usage}
+            <aside className="flex w-[360px] shrink-0 flex-col overflow-hidden border-l border-border bg-background/40">
+              <WorkPanel
                 title={sessions.find((x) => x.id === activeId)?.title ?? ""}
-                onClose={() => setInspectorOpen(false)}
-              />
-              <TaskSpecPanel
-                key={run?.task_id ?? "none"}
                 taskId={run?.task_id ?? null}
                 taskStatus={run?.status ?? null}
                 sessionId={activeId}
                 questions={taskQuestions}
+                messages={messages}
+                attachments={attachments}
+                usage={usage}
                 busy={mode !== "chat" && (runBusy(run) || sending)}
+                mode={mode}
+                onClose={() => setInspectorOpen(false)}
                 onAnswered={async () => {
                   setTaskQuestions(null);
                   if (activeId) {
@@ -879,18 +878,8 @@ export default function NativeChatPage() {
                   }
                 }}
                 onError={(m) => setError(m)}
+                onSwitchToPlan={() => setMode("plan")}
               />
-              {profile && (
-                <TeamPanel
-                  profile={profile}
-                  models={models}
-                  disabled={sending || runBusy(run)}
-                  notes={profileNotes}
-                  onChange={changeProfile}
-                  allowBoss={mode === "plan"}
-                  onRequestPlan={() => setMode("plan")}
-                />
-              )}
             </aside>
           )}
         </div>

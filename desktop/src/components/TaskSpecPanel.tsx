@@ -42,7 +42,7 @@ function depsText(step: PlanStepView, L: Labels): string {
 }
 
 export function TaskSpecPanel({
-  taskId, taskStatus, questions, labels, busy = false, onAnswered, onError,
+  taskId, taskStatus, questions, labels, busy = false, onAnswered, onError, defaultOpen = false,
 }: {
   taskId: string | null;
   taskStatus?: string | null;
@@ -52,6 +52,7 @@ export function TaskSpecPanel({
   busy?: boolean;
   onAnswered?: () => void;
   onError?: (m: string) => void;
+  defaultOpen?: boolean;
 }) {
   const { t } = useI18n();
   const L: Labels = labels ?? ((t as unknown as { taskSpec?: Labels }).taskSpec ?? {});
@@ -60,7 +61,7 @@ export function TaskSpecPanel({
   const [plan, setPlan] = useState<TaskPlanView | null>(null);
   const [children, setChildren] = useState<ChildTask[]>([]);
   const [audits, setAudits] = useState<AuditRow[]>([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
 
   const load = async () => {
     if (!taskId) return;

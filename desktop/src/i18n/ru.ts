@@ -806,6 +806,17 @@ export const ru: Translations = {
     placeholderChat: "Сообщение ARIA… (Enter — отправить, Shift+Enter — новая строка)",
     placeholderPlan: "Опиши задачу… (Enter — запустить, Shift+Enter — новая строка)",
   },
+  chatPanel: {
+    plan: "План",
+    files: "Файлы",
+    info: "Инфо",
+    noPlan: "Плана пока нет. Отправь задачу в режиме Plan.",
+    openFiles: "Открыть Files",
+    openLogs: "Открыть папку логов",
+    touchedFiles: "Затронутые файлы",
+    attachments: "Вложения",
+    switchToPlan: "Переключить в Plan",
+  },
   // UI-2: session inspector in chat.
   chatInspector: {
     context: "Контекст",

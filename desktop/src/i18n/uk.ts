@@ -778,6 +778,17 @@ export const uk: Translations = {
     placeholderChat: "Message ARIA... (Enter to send, Shift+Enter for a new line)",
     placeholderPlan: "Describe the task... (Enter to start, Shift+Enter for a new line)",
   },
+  chatPanel: {
+    plan: "Plan",
+    files: "Files",
+    info: "Info",
+    noPlan: "No plan yet. Send a task in Plan mode.",
+    openFiles: "Open Files",
+    openLogs: "Open logs folder",
+    touchedFiles: "Files touched",
+    attachments: "Attachments",
+    switchToPlan: "Switch to Plan",
+  },
   // UI-2: session inspector in chat.
   chatInspector: {
     context: "Контекст",

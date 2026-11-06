@@ -47,10 +47,12 @@ export function SessionInspector({
   usage,
   title,
   onClose,
+  embedded = false,
 }: {
   usage: ChatUsage | null;
   title: string;
   onClose: () => void;
+  embedded?: boolean;
 }) {
   const { t, locale } = useI18n();
   const copy = t.chatInspector;
@@ -61,21 +63,23 @@ export function SessionInspector({
   const toggle = (section: Section) => setOpen((current) => (current === section ? null : section));
 
   return (
-    <div className="border-b border-border bg-background/60 px-3 py-2 text-xs">
-      <div className="mb-1 flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate font-medium" title={title}>
-          {title || "—"}
-        </span>
-        <button
-          type="button"
-          onClick={onClose}
-          title={t.common.close}
-          aria-label={t.common.close}
-          className="border border-border p-1 text-muted-foreground hover:bg-foreground/5"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
+    <div className={cn("bg-background/60 px-3 py-2 text-xs", !embedded && "border-b border-border")}>
+      {!embedded && (
+        <div className="mb-1 flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate font-medium" title={title}>
+            {title || "—"}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            title={t.common.close}
+            aria-label={t.common.close}
+            className="border border-border p-1 text-muted-foreground hover:bg-foreground/5"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       <SectionHeader label={t.sessions.overview} open={open === "overview"} onToggle={() => toggle("overview")} />
       {open === "overview" && (
