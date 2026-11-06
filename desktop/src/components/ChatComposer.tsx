@@ -161,6 +161,7 @@ export function ChatComposer({
 
         <textarea
           ref={textareaRef}
+          rows={1}
           className="min-h-[36px] w-full resize-none bg-transparent px-2 py-1 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none"
           placeholder={mode === "plan" ? t.chatComposer.placeholderPlan : t.chatComposer.placeholderChat}
           value={input}
