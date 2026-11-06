@@ -113,7 +113,7 @@ def test_workers_use_workers_seat_and_not_pricier_than_boss():
     # исполнение: даже если в сохранённом профиле исполнитель дороже (старые данные) — берётся модель босса
     bad = {"style": "boss", "main": {"model": "std-a"}, "workers": {"model": "prem-a"}}
     assert runprofile.resolve_for_task(bad, "subagent_execution", 1, r) == ("standard_reasoning", "std-a")
-    assert runprofile.root_role(prof) == "orchestrator" and runprofile.root_role({"style": "solo"}) == "general"
+    assert runprofile.root_role(prof) == "orchestrator" and runprofile.root_role({"style": "solo"}) == "coder"
 
 
 def test_audit_levels():
