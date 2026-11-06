@@ -778,10 +778,7 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
     try:
         from aria.storage.obsidian_vault import relevant_block as _vault_block
 
-        vault_block = await asyncio.wait_for(
-            asyncio.to_thread(_vault_block, last_user_text),
-            timeout=1.5,
-        )
+        vault_block = _vault_block(last_user_text)
     except Exception:  # noqa: BLE001 — notes must not break chat
         logger.exception("chat: vault recall failed")
         vault_block = ""

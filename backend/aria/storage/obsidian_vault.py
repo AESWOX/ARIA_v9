@@ -200,7 +200,13 @@ def save_binary_asset(file_name: str, content: bytes, subdir: str = ".assets") -
     }
 
 
-def search_vault(pattern: str, max_results: int = 20, folder: str = "", only_paths: set[str] | None = None) -> dict:
+def search_vault(
+    pattern: str,
+    max_results: int = 20,
+    folder: str = "",
+    only_paths: set[str] | None = None,
+    time_budget_sec: float | None = None,
+) -> dict:
     """Case-insensitive substring search across all notes with positional metadata.
 
     Each match includes file_path, line, column, snippet, and textual context so
@@ -210,8 +216,11 @@ def search_vault(pattern: str, max_results: int = 20, folder: str = "", only_pat
     pattern_lower = pattern.lower()
     matches: list[dict] = []
     files_scanned = 0
+    deadline = time.monotonic() + time_budget_sec if time_budget_sec else None
 
     for fpath in sorted(root.rglob("*.md")):
+        if deadline is not None and time.monotonic() > deadline:
+            break
         parts = fpath.relative_to(root).parts
         if any(p.startswith(".") for p in parts):
             continue
@@ -274,7 +283,7 @@ def relevant_block(query: str, limit: int = 3, snippet_chars: int = 200) -> str:
     if cached and time.monotonic() - cached[0] < _RECALL_TTL_SEC:
         return cached[1]
     try:
-        found = search_vault(text, max_results=max(limit * 3, limit))
+        found = search_vault(text, max_results=max(limit * 3, limit), time_budget_sec=1.5)
     except Exception:  # noqa: BLE001 — notes must not break a chat/agent turn
         return ""
     lines: list[str] = []

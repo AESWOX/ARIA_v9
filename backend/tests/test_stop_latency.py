@@ -40,7 +40,8 @@ async def _wait_running(runner: TaskRunner, key: str, sec: float = 10.0) -> bool
     return False
 
 
-def test_cancel_of_running_task_finishes_within_budget():
+def test_cancel_of_running_task_finishes_within_budget(monkeypatch):
+    monkeypatch.setattr("aria.storage.obsidian_vault.relevant_block", lambda *a, **k: "")
     task_id = _make_task(objective="stop latency running")
     runner = _runner(1)
     took: list[float] = []
@@ -65,6 +66,7 @@ def test_cancel_of_running_task_finishes_within_budget():
 
 
 def test_cancel_stops_all_parallel_tasks_within_budget(monkeypatch):
+    monkeypatch.setattr("aria.storage.obsidian_vault.relevant_block", lambda *a, **k: "")
     # TaskRunner drops to 1 worker when little RAM is free; this test needs all 3 running in parallel.
     monkeypatch.setattr("aria.core.taskrunner.available_ram_mb", lambda: None)
     ids = [_make_task(objective=f"stop latency parallel {i}") for i in range(3)]
