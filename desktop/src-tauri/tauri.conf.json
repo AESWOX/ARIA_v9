@@ -20,8 +20,8 @@
         "decorations": false,
         "backgroundColor": "#041c1c",
         "transparent": false,
-        "minWidth": 1180,
-        "minHeight": 760
+        "minWidth": 760,
+        "minHeight": 520
       }
     ],
     "security": {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Copy, Maximize2, Minimize2, Minus, Square, X } from "lucide-react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Copy, Maximize2, Minimize2, Minus, PanelLeft, PanelRight, Square, X } from "lucide-react";
+import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
+import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 
 /** Height of the custom title bar, px. Mirrored into the --chrome-h CSS variable. */
 export const CHROME_HEIGHT = 36;
@@ -75,6 +76,20 @@ export function WindowChrome() {
     [run, fullscreen],
   );
 
+  const snap = useCallback(
+    (side: "left" | "right") =>
+      run(async (win) => {
+        const monitor = await currentMonitor();
+        if (!monitor) return;
+        const area = monitor.workArea;
+        const half = Math.floor(area.size.width / 2);
+        const x = side === "left" ? area.position.x : area.position.x + half;
+        await win.setPosition(new PhysicalPosition(x, area.position.y));
+        await win.setSize(new PhysicalSize(half, area.size.height));
+      }),
+    [run],
+  );
+
   useEffect(() => {
     if (!shell) return;
     const onKey = (event: KeyboardEvent) => {
@@ -93,11 +108,34 @@ export function WindowChrome() {
 
   return (
     <div className="window-chrome" data-tauri-drag-region role="toolbar" aria-label="Window">
-      <div className="window-chrome__title" data-tauri-drag-region>
+      <div
+        className="window-chrome__title"
+        data-tauri-drag-region
+        onDoubleClick={() => void run((win) => win.toggleMaximize())}
+        title={maximized ? "Restore" : "Maximize"}
+      >
         <span className="window-chrome__dot" data-tauri-drag-region />
         <span data-tauri-drag-region>ARIA</span>
       </div>
       <div className="window-chrome__buttons">
+        <button
+          type="button"
+          className="window-chrome__btn"
+          aria-label="Snap left"
+          title="Snap to left half (Win+Left)"
+          onClick={() => void snap("left")}
+        >
+          <PanelLeft size={14} />
+        </button>
+        <button
+          type="button"
+          className="window-chrome__btn"
+          aria-label="Snap right"
+          title="Snap to right half (Win+Right)"
+          onClick={() => void snap("right")}
+        >
+          <PanelRight size={14} />
+        </button>
         <button
           type="button"
           className="window-chrome__btn"

@@ -60,6 +60,9 @@ def test_remote_capability_is_loopback_only_and_window_apis_only():
         "core:window:allow-set-fullscreen",
         "core:window:allow-is-fullscreen",
         "core:window:allow-close",
+        "core:window:allow-set-position",
+        "core:window:allow-set-size",
+        "core:window:allow-current-monitor",
     }
     assert needed <= set(cap["permissions"])
     # никаких updater/fs/shell для страницы, которую отдаёт локальный бэкенд
@@ -73,6 +76,17 @@ def test_window_chrome_component_exposes_all_four_controls():
     assert "data-tauri-drag-region" in src
     assert '"Escape"' in src and '"F11"' in src
     assert "isTauriShell()" in src and "if (!shell) return null" in src  # в браузере шапки нет
+
+
+def test_window_can_snap_to_half_screen():
+    conf = json.loads(_read(DESKTOP / "src-tauri" / "tauri.conf.json"))
+    win = conf["app"]["windows"][0]
+    # Half of a 1920px display is 960 logical px; a larger minWidth blocks Aero Snap.
+    assert win["minWidth"] <= 960
+    src = _read(SRC / "components" / "WindowChrome.tsx")
+    assert 'snap("left")' in src and 'snap("right")' in src
+    assert "onDoubleClick" in src
+    assert "currentMonitor" in src and "setSize" in src and "setPosition" in src
 
 
 def test_full_height_layouts_account_for_the_title_bar():
