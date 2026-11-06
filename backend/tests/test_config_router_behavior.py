@@ -183,7 +183,7 @@ def test_verify_pin_returns_bool(client):
 def test_themes_catalog(client):
     body = client.get("/dashboard/themes", headers=_h()).json()
     names = {t["name"] for t in body["themes"]}
-    assert len(names) == 11 and {"default", "black", "white", "gray"} <= names
+    assert len(names) == 12 and {"default", "black", "white", "gray", "hermes"} <= names
     assert body["active"] in names
     assert all(t["label"] and t["description"] for t in body["themes"])
 

@@ -9,11 +9,12 @@ import type { ChatModels, ChatMsg, ChatSessionRow, ChatStatus, ChatUsage, RunPro
 import { cn } from "@/lib/utils";
 import { Button } from "@vendor/ui/ui/components/button";
 import { Markdown } from "@/components/Markdown";
-import type { ClarifyQuestion } from "@/components/TaskSpecPanel";
+import { TaskSpecPanel, type ClarifyQuestion } from "@/components/TaskSpecPanel";
 import { WorkPanel } from "@/components/WorkPanel";
 import { ChatTopBar } from "@/components/ChatTopBar";
 import { ChatComposer } from "@/components/ChatComposer";
 import { SessionTabs } from "@/components/SessionTabs";
+import { ChatSessionsPanel } from "@/components/ChatSessionsPanel";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 
 /* ------------------------------------------------------------------ */
@@ -353,6 +354,7 @@ export default function NativeChatPage() {
   }, [sending]);
 
   const elapsedSeconds = sendStartedAt === null ? null : Math.max(0, (clock - sendStartedAt) / 1000);
+  const awaitingClarification = run?.status === "awaiting_clarification";
 
   const openSession = async (id: string) => {
     if (sending || id === activeId) return;
@@ -540,14 +542,14 @@ export default function NativeChatPage() {
   const send = async (retry = false) => {
     const text = input.trim();
     if (sending || (!retry && !text && attachments.length === 0)) return;
-    if (runBusy(run)) return;
+    if (runBusy(run) && !awaitingClarification) return;
     setSending(true);
     setSendStartedAt(Date.now());
     setClock(Date.now());
     setError(null);
     const outgoingText = outgoing(text);
     try {
-      if (mode !== "chat" && !retry) {
+      if ((mode !== "chat" || awaitingClarification) && !retry) {
         await sendRun(outgoingText, "agent");
         setInput("");
     setDrafts({});
@@ -620,7 +622,17 @@ export default function NativeChatPage() {
   const notConfigured = status !== null && !status.configured;
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+    <div className="flex min-h-0 min-w-0 flex-1 gap-2">
+      <ChatSessionsPanel
+        sessions={sessions}
+        activeId={activeId}
+        seen={seen}
+        busy={sending || runBusy(run)}
+        focus={focus}
+        onOpen={(id) => void openSession(id)}
+        onNew={newChat}
+      />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
       <SessionTabs
         sessions={sessions}
         openIds={openIds}
@@ -637,7 +649,7 @@ export default function NativeChatPage() {
       />
 
       {/* ---------------- conversation ---------------- */}
-      <div className="flex min-h-0 min-w-0 flex-col border border-border bg-background/40">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col border border-border bg-background/40">
         <ChatTopBar
           title={sessions.find((x) => x.id === activeId)?.title ?? ""}
           mode={CHAT_MODES.find((md) => md.id === mode)?.label ?? mode}
@@ -758,6 +770,27 @@ export default function NativeChatPage() {
               {elapsedSeconds != null && <span>{elapsedSeconds.toFixed(1)} s</span>}
             </div>
           )}
+          {run?.task_id && taskQuestions && taskQuestions.length > 0 && (
+            <div className="border border-amber-500/40 bg-amber-500/10">
+              <TaskSpecPanel
+                key={`${run.task_id}-${taskQuestions.length}`}
+                taskId={run.task_id}
+                taskStatus={run.status}
+                sessionId={activeId}
+                questions={taskQuestions}
+                busy={runBusy(run)}
+                defaultOpen
+                onAnswered={async () => {
+                  setTaskQuestions(null);
+                  if (activeId) {
+                    await loadMessages(activeId);
+                    setRun(await api.runState(activeId).catch(() => null));
+                  }
+                }}
+                onError={(m) => setError(m)}
+              />
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
 
@@ -838,7 +871,7 @@ export default function NativeChatPage() {
           onAddFiles={(files) => void addFiles(files)}
           onRemoveAttachment={(index) => setAttachments((prev) => prev.filter((_, j) => j !== index))}
           sending={sending}
-          busy={runBusy(run)}
+          busy={runBusy(run) && !awaitingClarification}
           mode={mode}
           onModeChange={setMode}
           profile={profile}
@@ -883,6 +916,7 @@ export default function NativeChatPage() {
             </aside>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

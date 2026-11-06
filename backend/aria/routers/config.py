@@ -48,6 +48,7 @@ _BUILTIN_THEMES: tuple[tuple[str, str, str], ...] = (
     ("black", "Black", "Deep black — the default 0.2.1 look"),
     ("white", "White", "Light canvas with dark text"),
     ("gray", "Gray", "Neutral gray without a colour accent"),
+    ("hermes", "Hermes (optional)", "Legacy Hermes look with the hero backdrop"),
 )
 
 _BUILTIN_THEME_NAMES = {name for name, _, _ in _BUILTIN_THEMES}
@@ -268,6 +269,7 @@ _DASHBOARD_DEFAULTS: dict[str, Any] = {
     "overrides": {"textColor": "", "windowTextColor": "", "accentColor": ""},
     "open_tabs": [],
     "active_tab": None,
+    "theme_schema": 2,
 }
 
 
@@ -282,6 +284,7 @@ def _dashboard_defaults() -> dict[str, Any]:
         "overrides": dict(_DASHBOARD_DEFAULTS["overrides"]),
         "open_tabs": list(_DASHBOARD_DEFAULTS["open_tabs"]),
         "active_tab": _DASHBOARD_DEFAULTS["active_tab"],
+        "theme_schema": _DASHBOARD_DEFAULTS["theme_schema"],
     }
 
 
@@ -322,6 +325,9 @@ def _dashboard_prefs_payload(raw: dict[str, Any]) -> dict[str, Any]:
     active = raw.get("active_tab")
     if isinstance(active, str) and len(active) <= 64:
         prefs["active_tab"] = active
+    schema = raw.get("theme_schema")
+    if isinstance(schema, int) and not isinstance(schema, bool):
+        prefs["theme_schema"] = schema
     return prefs
 
 
@@ -373,6 +379,15 @@ def _load_dashboard_prefs() -> dict[str, Any]:
                 raw = data
         except Exception:
             raw = {}
+    try:
+        schema = int(raw.get("theme_schema") or 0)
+    except (TypeError, ValueError):
+        schema = 0
+    if schema < 2:
+        # 0.2.1: old Hermes/Midnight saves move to Black once; choosing a theme again
+        # writes theme_schema=2 and is preserved.
+        raw["theme"] = "black"
+        raw["theme_schema"] = 2
     return _dashboard_prefs_payload(raw)
 
 
@@ -489,6 +504,7 @@ async def dashboard_theme_set(payload: dict[str, Any], _: str = Depends(require_
         raise HTTPException(status_code=400, detail=f"unknown theme: {name}")
     prefs = _load_dashboard_prefs()
     prefs["theme"] = name
+    prefs["theme_schema"] = 2
     _save_dashboard_prefs(prefs)
     return {"ok": True, "theme": name}
 

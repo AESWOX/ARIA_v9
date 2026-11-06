@@ -303,7 +303,14 @@ export const blackTheme: DashboardTheme = {
   ...defaultTheme,
   name: "black",
   label: "Black",
-  description: "Deep black - the default 0.2.1 look",
+  description: "Deep black — the default 0.2.1 look",
+  palette: {
+    background: { hex: "#0a0a0a", alpha: 1 },
+    midground: { hex: "#f2f2f2", alpha: 1 },
+    foreground: { hex: "#ffffff", alpha: 0 },
+    warmGlow: "rgba(255, 255, 255, 0.12)",
+    noiseOpacity: 0.6,
+  },
 };
 
 export const whiteTheme: DashboardTheme = {
@@ -320,6 +327,20 @@ export const grayTheme: DashboardTheme = {
   description: "Neutral gray without a colour accent",
 };
 
+export const hermesTheme: DashboardTheme = {
+  ...midnightTheme,
+  name: "hermes",
+  label: "Hermes (optional)",
+  description: "Legacy Hermes look with the hero backdrop",
+  componentStyles: {
+    ...(midnightTheme.componentStyles ?? {}),
+    backdrop: {
+      ...(midnightTheme.componentStyles?.backdrop ?? {}),
+      "filler-opacity": "0.033",
+    },
+  },
+};
+
 export const BUILTIN_THEMES: Record<string, DashboardTheme> = {
   black: blackTheme,
   white: whiteTheme,
@@ -332,4 +353,5 @@ export const BUILTIN_THEMES: Record<string, DashboardTheme> = {
   mono: monoTheme,
   cyberpunk: cyberpunkTheme,
   rose: roseTheme,
+  hermes: hermesTheme,
 };

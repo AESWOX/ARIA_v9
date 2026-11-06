@@ -576,6 +576,8 @@ export interface Translations {
   theme: {
     title: string;
     switchTheme: string;
+    /** Optional-themes group label (locales fall back to English). */
+    optional?: string;
     /** Font-override section (optional — locales fall back to English). */
     fontTitle?: string;
     fontDefault?: string;

@@ -119,11 +119,24 @@ export function ThemeSettingsDialog({
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground">{copy.theme}</span>
             <select className={selectClass} value={themeName} onChange={(e) => setTheme(e.target.value)}>
-              {availableThemes.map((th) => (
-                <option key={th.name} value={th.name}>
-                  {th.label}
-                </option>
-              ))}
+              <optgroup label="Main">
+                {availableThemes
+                  .filter((th) => ["black", "white", "gray"].includes(th.name))
+                  .map((th) => (
+                    <option key={th.name} value={th.name}>
+                      {th.label}
+                    </option>
+                  ))}
+              </optgroup>
+              <optgroup label="Optional">
+                {availableThemes
+                  .filter((th) => !["black", "white", "gray"].includes(th.name))
+                  .map((th) => (
+                    <option key={th.name} value={th.name}>
+                      {th.label}
+                    </option>
+                  ))}
+              </optgroup>
             </select>
           </label>
 

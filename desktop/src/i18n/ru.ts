@@ -512,6 +512,7 @@ export const ru: Translations = {
   theme: {
     title: "Тема",
     switchTheme: "Сменить тему",
+    optional: "Опционально",
   },
 
   achievements: {

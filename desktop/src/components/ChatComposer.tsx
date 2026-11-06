@@ -81,7 +81,7 @@ export function ChatComposer({
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, 52), 168)}px`;
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 36), 168)}px`;
   }, [input]);
 
   useEffect(() => {
@@ -161,7 +161,7 @@ export function ChatComposer({
 
         <textarea
           ref={textareaRef}
-          className="min-h-[52px] w-full resize-none bg-transparent px-2 py-1 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none"
+          className="min-h-[36px] w-full resize-none bg-transparent px-2 py-1 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none"
           placeholder={mode === "plan" ? t.chatComposer.placeholderPlan : t.chatComposer.placeholderChat}
           value={input}
           disabled={disabled}

@@ -61,7 +61,7 @@ export function TeamPanel({
   profile: RunProfile; models: ChatModels | null; disabled: boolean; notes: string[]; onChange: (p: RunProfile) => void;
   allowBoss?: boolean; onRequestPlan?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [advanced, setAdvanced] = useState(false);
   if (!models) return null;
   const set = <K extends keyof RunProfile>(key: K, value: RunProfile[K]) => onChange({ ...profile, [key]: value });

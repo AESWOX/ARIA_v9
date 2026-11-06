@@ -561,6 +561,7 @@ export const en: Translations = {
   theme: {
     title: "Theme",
     switchTheme: "Switch theme",
+    optional: "Optional",
     fontTitle: "Font",
     fontDefault: "Theme default",
     fontDefaultHint: "Use the active theme's font",

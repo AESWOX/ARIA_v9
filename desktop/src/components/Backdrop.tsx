@@ -73,7 +73,7 @@ export function Backdrop() {
             // default behaviour unchanged when no theme customises these.
             mixBlendMode:
               "var(--component-backdrop-filler-blend-mode, difference)",
-            opacity: "var(--component-backdrop-filler-opacity, 0.033)",
+            opacity: "var(--component-backdrop-filler-opacity, 0)",
             backgroundImage: "var(--theme-asset-bg)",
             backgroundSize: "var(--component-backdrop-background-size, cover)",
             backgroundPosition:

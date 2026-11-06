@@ -176,53 +176,59 @@ function ThemeSwitcherOptions({
   setTheme,
   themeName,
 }: ThemeSwitcherOptionsProps) {
+  const { t } = useI18n();
+  const primaryNames = new Set(["black", "white", "gray"]);
+  const primary = availableThemes.filter((th) => primaryNames.has(th.name));
+  const optional = availableThemes.filter((th) => !primaryNames.has(th.name));
+
+  const renderTheme = (th: ThemeListEntry) => {
+    const isActive = th.name === themeName;
+    const paletteTheme = BUILTIN_THEMES[th.name] ?? th.definition;
+
+    return (
+      <ListItem
+        active={isActive}
+        aria-selected={isActive}
+        className="gap-3"
+        key={th.name}
+        onClick={() => {
+          setTheme(th.name);
+          close();
+        }}
+        role="option"
+      >
+        {paletteTheme ? <ThemeSwatch theme={paletteTheme} /> : <PlaceholderSwatch />}
+
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <Typography brand className="truncate text-display text-xs tracking-wide">
+            {th.label}
+          </Typography>
+          {th.description && (
+            <Typography className="truncate text-xs tracking-normal text-text-tertiary">
+              {th.description}
+            </Typography>
+          )}
+        </div>
+
+        <Check
+          className={cn(
+            "h-3 w-3 shrink-0 text-midground",
+            isActive ? "opacity-100" : "opacity-0",
+          )}
+        />
+      </ListItem>
+    );
+  };
+
   return (
     <>
-      {availableThemes.map((th) => {
-        const isActive = th.name === themeName;
-        const paletteTheme = BUILTIN_THEMES[th.name] ?? th.definition;
-
-        return (
-          <ListItem
-            active={isActive}
-            aria-selected={isActive}
-            className="gap-3"
-            key={th.name}
-            onClick={() => {
-              setTheme(th.name);
-              close();
-            }}
-            role="option"
-          >
-            {paletteTheme ? (
-              <ThemeSwatch theme={paletteTheme} />
-            ) : (
-              <PlaceholderSwatch />
-            )}
-
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <Typography
-                brand
-                className="truncate text-display text-xs tracking-wide"
-              >
-                {th.label}
-              </Typography>
-              {th.description && (
-                <Typography className="truncate text-xs tracking-normal text-text-tertiary">
-                  {th.description}
-                </Typography>
-              )}
-            </div>
-
-            <Check
-              className={cn(
-                "h-3 w-3 shrink-0 text-midground",
-                isActive ? "opacity-100" : "opacity-0",
-              )}
-            />
-          </ListItem>
-        );
-      })}
+      {primary.map(renderTheme)}
+      {optional.length > 0 && (
+        <div className="mt-1 border-t border-current/20 px-3 pb-1 pt-2 text-[10px] uppercase tracking-[0.12em] text-text-tertiary">
+          {t.theme?.optional ?? "Optional"}
+        </div>
+      )}
+      {optional.map(renderTheme)}
     </>
   );
 }
