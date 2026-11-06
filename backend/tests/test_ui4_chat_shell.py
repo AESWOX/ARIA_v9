@@ -10,9 +10,11 @@ def test_chat_copies_only_the_transcript_and_has_a_right_sidebar():
     page = (SRC / "pages" / "NativeChatPage.tsx").read_text(encoding="utf-8")
     assert "copyChatText" in page
     assert "onCopyChat" in page
-    assert "w-[340px]" in page
-    assert "<TaskSpecPanel" in page
-    assert "<SessionInspector" in page
+    assert "w-[360px]" in page
+    assert "<WorkPanel" in page
+    work = (SRC / "components" / "WorkPanel.tsx").read_text(encoding="utf-8")
+    assert "<TaskSpecPanel" in work
+    assert "<SessionInspector" in work
 
 
 def test_topbar_has_the_copy_button():
