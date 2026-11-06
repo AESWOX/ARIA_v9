@@ -901,6 +901,12 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(profile),
     }),
+  telegramConnect: (token: string, channel: string) =>
+    fetchJSON<{ ok: boolean; channel: string; token_saved: boolean }>("/api/messaging/telegram/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, channel }),
+    }),
   chatSessionProfile: (sessionId: string) =>
     fetchJSON<{ profile: RunProfile; saved: boolean }>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/profile`),
   // ---- Agent / Plan runs (backend: routers/sessions.py, one door via TaskRunner) ----

@@ -15,6 +15,7 @@ import { ChatTopBar } from "@/components/ChatTopBar";
 import { ChatComposer } from "@/components/ChatComposer";
 import { SessionTabs } from "@/components/SessionTabs";
 import { ChatSessionsPanel } from "@/components/ChatSessionsPanel";
+import { TelegramConnect } from "@/components/TelegramConnect";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 
 /* ------------------------------------------------------------------ */
@@ -737,12 +738,15 @@ export default function NativeChatPage() {
                   <div className="px-1 text-[10px] text-muted-foreground">{meta}</div>
                 )}
                 {m.content_json?.notice === "telegram_not_connected" && (
-                  <Link
-                    to={m.content_json.action_path || "/channels"}
-                    className="border border-border px-2 py-1 text-xs underline hover:bg-foreground/5"
-                  >
-                    {t.app.openChannels}
-                  </Link>
+                  <div className="w-full max-w-[560px] space-y-1">
+                    <Link
+                      to={m.content_json.action_path || "/channels"}
+                      className="inline-block border border-border px-2 py-1 text-xs underline hover:bg-foreground/5"
+                    >
+                      {t.app.openChannels}
+                    </Link>
+                    <TelegramConnect />
+                  </div>
                 )}
               </div>
             );

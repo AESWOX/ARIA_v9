@@ -129,7 +129,7 @@ async def _telegram_notice(session_id: uuid.UUID, payload: dict[str, Any]) -> di
                 source_trust=SourceTrust.trusted,
                 content_json={
                     "notice": notice["notice"],
-                    "action": "open_channels",
+                    "action": "connect_telegram",
                     "action_path": "/channels",
                 },
             )
@@ -778,7 +778,10 @@ async def _prepare_chat(session_id: uuid.UUID, payload: dict[str, Any], request:
     try:
         from aria.storage.obsidian_vault import relevant_block as _vault_block
 
-        vault_block = _vault_block(last_user_text)
+        vault_block = await asyncio.wait_for(
+            asyncio.to_thread(_vault_block, last_user_text),
+            timeout=1.5,
+        )
     except Exception:  # noqa: BLE001 — notes must not break chat
         logger.exception("chat: vault recall failed")
         vault_block = ""

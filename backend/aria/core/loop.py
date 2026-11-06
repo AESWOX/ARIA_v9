@@ -424,7 +424,10 @@ async def execute_agent_loop(task_id: uuid.UUID, router: ProviderRouter, sandbox
     try:
         from aria.storage.obsidian_vault import relevant_block as _vault_block
 
-        _vault = _vault_block(task.objective or "")
+        _vault = await asyncio.wait_for(
+            asyncio.to_thread(_vault_block, task.objective or ""),
+            timeout=1.5,
+        )
         if _vault:
             role_prompt += "\n\n" + _vault
     except Exception:  # noqa: BLE001 — notes must not break the task

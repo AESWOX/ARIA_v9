@@ -38,14 +38,20 @@ def is_linked(settings: object) -> bool:
 def notice_text(lang: str = "ru") -> str:
     if str(lang).lower().startswith("en"):
         return (
-            "Telegram is not connected: I have no access to your account or messages. "
-            "Connect the bot in Settings → Channels (BotFather token) and I will be able to "
-            "read incoming messages. Public channels already work via t.me/s — send a link."
+            "Telegram is not connected: I have no access to your account or messages.\n"
+            "How to connect:\n"
+            "1. Open @BotFather → /newbot → copy the token.\n"
+            "2. Add the bot as an admin to your channel or chat.\n"
+            "3. Enter the token and the channel as @name below.\n"
+            "Public channels already work via t.me/s — send a link."
         )
     return (
-        "Telegram не подключён: у меня нет доступа к твоему аккаунту и сообщениям. "
-        "Подключи бота в Settings → Channels (токен от BotFather), и я смогу читать входящие. "
-        "Публичные каналы уже работают через t.me/s — пришли ссылку."
+        "Telegram не подключён: у меня нет доступа к твоему аккаунту и сообщениям.\n"
+        "Как подключить:\n"
+        "1. Открой @BotFather → /newbot → скопируй токен.\n"
+        "2. Добавь бота админом в свой канал или чат.\n"
+        "3. Введи токен и канал через @ (например @my_channel) в форме ниже.\n"
+        "Публичные каналы уже работают через t.me/s — просто пришли ссылку."
     )
 
 
