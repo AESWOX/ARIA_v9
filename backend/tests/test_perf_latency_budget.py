@@ -5,6 +5,7 @@ import types
 
 import httpx
 
+from aria.core.runprofile import chat_target
 from aria.llm.key_pool import KeyPool
 from aria.llm.providers.base import LlmProvider, LlmResponse
 from aria.llm.providers.openai_compatible import (
@@ -138,3 +139,66 @@ def test_mark_failed_puts_the_stream_provider_on_cooldown():
 def test_chat_timeouts_fit_the_first_token_budget():
     assert chat_router.CHAT_STREAM_TIMEOUT_SEC <= 8
     assert chat_router.CHAT_CALL_TIMEOUT_SEC <= 20
+
+
+def test_default_chat_target_is_deepseek_first():
+    assert chat_router.CHAT_PROVIDER_CLASS == "standard_reasoning"
+    assert chat_router.CHAT_FALLBACK_CLASSES == ("free_tier_reasoning",)
+    target = chat_target(
+        None,
+        None,
+        chat_router.CHAT_PROVIDER_CLASS,
+        chat_router.CHAT_FALLBACK_CLASSES,
+    )
+    assert target == ("standard_reasoning", ("free_tier_reasoning",), None)
+
+
+def test_an_explicit_free_seat_still_wins_over_deepseek_first():
+    cls, fallback, prefer = chat_target(
+        {"main": {"tier": "free"}},
+        None,
+        chat_router.CHAT_PROVIDER_CLASS,
+        chat_router.CHAT_FALLBACK_CLASSES,
+    )
+    assert (cls, prefer) == ("free_tier_reasoning", None)
+    assert fallback == ("standard_reasoning",)
+
+
+async def test_preferred_failure_is_flagged_as_fallback():
+    preferred = Fake("deepseek-chat", "standard_reasoning", [_status_error(503)])
+    backup = Fake("gemini-flash", "standard_reasoning", ["backup-ok"])
+    r = _router(preferred, backup)
+    result = await r.route_chat(
+        "standard_reasoning", [], [], resilient=True,
+        prefer_provider_id="deepseek-chat", retry_backoff_sec=0,
+    )
+    assert result.provider_id == "gemini-flash"
+    assert result.response.text == "backup-ok"
+    assert result.fallback is True
+    assert backup.calls == 1
+    assert preferred.calls >= 1
+
+
+def test_a_cooling_provider_is_retried_after_the_cooldown():
+    a = Fake("a", "free_tier_reasoning", ["ok"])
+    b = Fake("b", "free_tier_reasoning", ["ok"])
+    r = _router(a, b)
+    r.mark_failed(a, 60)
+    assert r.is_cooling(a)
+    assert r._ordered([a, b]) == [b, a]
+    r._now[0] += 61
+    assert not r.is_cooling(a)
+    assert r._ordered([a, b]) == [a, b]
+
+
+def test_the_preferred_model_leads_the_stream_candidates():
+    preferred = Fake("deepseek-chat", "standard_reasoning", ["ok"])
+    other = Fake("gemini-flash", "free_tier_reasoning", ["ok"])
+    router = _router(other, preferred)
+    request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(router=router)))
+    prepared = types.SimpleNamespace(
+        chat_prefer="deepseek-chat",
+        chat_class="standard_reasoning",
+        chat_fallback=("free_tier_reasoning",),
+    )
+    assert chat_router._stream_candidates(request, prepared)[0] is preferred

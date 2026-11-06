@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from aria.api.auth import token_store
 from aria.main import app
+from aria.routers import config as config_router
 
 LOWERCASE_SECRETS = (
     "deepseek_api_key",
@@ -310,3 +311,20 @@ def test_transform_selection_unknown_instruction_keeps_text(client):
 def test_requires_runtime_token(client):
     assert client.get("/config").status_code in (401, 403)
     assert client.put("/config", json={"config": {}}).status_code in (401, 403)
+
+
+def test_ui_prefs_persist_to_disk_not_only_memory(client):
+    previous = client.get("/dashboard/prefs", headers=_h()).json()
+    try:
+        r = client.put(
+            "/dashboard/prefs",
+            json={"theme": "gray", "font": "inter", "surface_dim": 42},
+            headers=_h(),
+        )
+        assert r.status_code == 200
+        on_disk = config_router._load_dashboard_prefs()
+        assert on_disk["theme"] == "gray"
+        assert on_disk["font"] == "inter"
+        assert on_disk["surface_dim"] == 42
+    finally:
+        client.put("/dashboard/prefs", json=previous, headers=_h())

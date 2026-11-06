@@ -89,3 +89,29 @@ def test_default_profile_endpoint_works_without_a_session():
         assert c.get("/chat/profile").json()["profile"]["main"]["tier"] == "standard"
     finally:
         _cleanup()
+
+
+def test_explicit_false_keeps_the_default_untouched():
+    c = _client()
+    a = _new_session(c)
+    try:
+        r = c.put(f"/chat/sessions/{a}/profile?use_for_new=false", json=_profile("free"))
+        assert r.status_code == 200
+        assert c.get(f"/chat/sessions/{a}/profile").json()["profile"]["main"]["tier"] == "free"
+        assert c.get("/chat/profile").json()["profile"]["main"] == {}
+    finally:
+        _cleanup(a)
+
+
+def test_two_sessions_keep_independent_profiles():
+    c = _client()
+    a = _new_session(c)
+    b = _new_session(c)
+    try:
+        c.put(f"/chat/sessions/{a}/profile", json=_profile("free"))
+        c.put(f"/chat/sessions/{b}/profile", json=_profile("premium"))
+        assert c.get(f"/chat/sessions/{a}/profile").json()["profile"]["main"]["tier"] == "free"
+        assert c.get(f"/chat/sessions/{b}/profile").json()["profile"]["main"]["tier"] == "premium"
+        assert c.get("/chat/profile").json()["profile"]["main"] == {}
+    finally:
+        _cleanup(a, b)

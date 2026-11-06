@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -56,5 +57,43 @@ def test_connect_requires_a_channel():
     try:
         r = c.post("/messaging/telegram/connect", json={"token": "123456789:" + "A" * 35, "channel": ""})
         assert r.status_code == 400
+    finally:
+        _cleanup()
+
+
+@pytest.mark.parametrize("token", [
+    "",
+    "bad",
+    "12345:" + "A" * 35,
+    "123456789:" + "A" * 29,
+    "abcdefghi:" + "A" * 35,
+])
+def test_malformed_tokens_are_rejected(token):
+    c = _client()
+    try:
+        r = c.post("/messaging/telegram/connect", json={"token": token, "channel": "@chan"})
+        assert r.status_code == 400
+    finally:
+        _cleanup()
+
+
+@pytest.mark.parametrize("channel", ["", "ab", "bad channel!"])
+def test_malformed_channels_are_rejected(channel):
+    c = _client()
+    try:
+        r = c.post("/messaging/telegram/connect", json={"token": "123456789:" + "A" * 35, "channel": channel})
+        assert r.status_code == 400
+    finally:
+        _cleanup()
+
+
+def test_the_response_never_contains_the_token():
+    c = _client()
+    token = "123456789:" + "A" * 35
+    try:
+        r = c.post("/messaging/telegram/connect", json={"token": token, "channel": "chan"})
+        assert r.status_code == 200, r.text
+        assert token not in r.text
+        assert r.json()["channel"] == "@chan"
     finally:
         _cleanup()

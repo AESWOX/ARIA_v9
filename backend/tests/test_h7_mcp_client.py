@@ -408,3 +408,8 @@ def test_agent_pauses_for_owner_approval_on_mcp_write_tool(data_dir, tmp_path, m
         assert task.status == TaskStatus.awaiting_attention
         assert [i.type.value for i in items] == ["mcp_tool_approval"]
         assert items[0].payload_json["tool_name"] == "mcp__fake__write_thing" and items[0].payload_json["arguments"] == {"v": "x"}
+
+
+def test_mcp_roles_include_the_coder_used_by_plan():
+    assert set(mcp_manager.MCP_ROLES) == {"general", "orchestrator", "coder"}
+    assert "qa_auditor" not in mcp_manager.MCP_ROLES

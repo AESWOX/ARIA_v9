@@ -1,6 +1,7 @@
 """Telegram gate: personal account questions get a card, public channels still work."""
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -108,3 +109,31 @@ def test_public_channel_message_reaches_the_model(monkeypatch):
         assert len(fake.seen) == 1
     finally:
         _cleanup(sid)
+
+
+@pytest.mark.parametrize("text", [
+    "Что мне писали в телеграм за сегодня?",
+    "покажи мои сообщения в телеграм",
+    "прочитай мою переписку в телеграм",
+    "покажи мои телеграм сообщения",
+    "my telegram messages",
+    "telegram account",
+])
+def test_personal_phrasings_are_recognised(text):
+    assert telegram_gate.is_personal_request(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "Прочитай публичный канал t.me/durov и перескажи последний пост",
+    "что пишут в @durov",
+    "https://t.me/s/durov",
+])
+def test_public_links_are_never_gated(text):
+    assert telegram_gate.is_personal_request(text) is False
+    assert telegram_gate.blocked_notice(text, get_settings()) is None
+
+
+def test_the_card_text_follows_the_message_language():
+    assert "t.me/s" in telegram_gate.notice_text("ru")
+    english = telegram_gate.notice_text("en")
+    assert "not connected" in english and "How to connect" in english

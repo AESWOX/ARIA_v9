@@ -128,3 +128,45 @@ def test_chat_prompt_has_no_note_when_memory_matches(monkeypatch, env):
         assert "память: делали лендинг" in prompt
     finally:
         _cleanup(sid)
+
+
+@pytest.mark.parametrize("text", [
+    "мы такое делали?",
+    "а мы это генерили раньше?",
+    "did we do this before?",
+    "do you remember the flux config?",
+])
+def test_recall_questions_are_recognised(text):
+    assert recall_honesty.is_recall_question(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "что такое SSRF",
+    "сколько будет 2+2",
+    "прочитай https://example.com",
+])
+def test_ordinary_questions_are_not_recall(text):
+    assert recall_honesty.is_recall_question(text) is False
+
+
+def test_recall_note_is_language_aware():
+    russian = recall_honesty.missing_note("мы такое делали?", ["", "  "])
+    english = recall_honesty.missing_note("did we do this before?", ["", ""])
+    assert russian.startswith("Проверка памяти")
+    assert english.startswith("Recall check")
+    assert recall_honesty.missing_note("что такое SSRF", []) == ""
+
+
+def test_rule_zero_needs_context_and_catches_pronouns():
+    context = [("user", "Сделай лендинг на React"), ("assistant", "Готово")]
+    assert clarifier.continues_dialog("а теперь добавь тёмную тему", None) is False
+    assert clarifier.continues_dialog("а теперь добавь тёмную тему", context) is True
+    assert clarifier.continues_dialog("сделай её красной", context) is True
+    assert clarifier.continues_dialog("посчитай налог за 2025 год", context) is False
+
+
+def test_language_instruction_matches_the_message():
+    assert clarifier.language_name("write a poem") == "English"
+    assert clarifier.language_name("Зроби звіт") == "Ukrainian"
+    assert clarifier.language_name("сделай отчёт") == "Russian"
+    assert "Answer only in Russian" in clarifier.language_instruction("сделай отчёт")
